@@ -29,7 +29,9 @@ Dieselbe Formel wie Rush, damit der Server sie prüfen kann. Die Rangliste ist n
 
 ## Orbit Drift
 
-Solo-Tunnel. Das Schiff bleibt unten in der Mitte, die Bahn biegt und wird enger. **A / D**, **← / →** oder **Wischen** lenken. Wer die leuchtende Spur verlässt, verliert eine von drei Hüllen. Der dritte Treffer beendet den Run.
+Solo-Tunnel. Das Schiff bleibt unten in der Mitte, die Bahn biegt und wird enger. **A / D**, **← / →** oder **Wischen** lenken. Wer die leuchtende Spur verlässt, verliert eine von drei Hüllen. Trümmer, Barrieren und Wand-Spikes im Tunnel kosten dieselbe Hülle. Der dritte Treffer beendet den Run.
+
+Vor dem Start wählst du **Einfach · Mittel · Schwer · Baba** (deutsch, eigener Screen). **Mittel** ist schneller und enger als die alte einzelne Rampe und hat Hindernisse. **Einfach** bleibt weit, langsam und mit wenigen Trümmern. Höher heißt mehr Tempo, schärfere Kurven, schmalere Bahn, dichtere Hindernisse. Der Grad liegt lokal unter `orbit-drift-difficulty` und ändert den Rush-Grad nicht.
 
 Ringe in der Bahn sind die Orbs der gemeinsamen Formel. Wer ein Tor knapp an der Wand passiert und danach noch lebt, bekommt einen Near-Miss. Ketten funktionieren wie bei Rush. Angezeigt wird die Strecke in km; die Punkte bleiben an der Zeit hängen, damit der Server sie prüfen kann.
 
@@ -37,7 +39,7 @@ Ringe in der Bahn sind die Orbs der gemeinsamen Formel. Wer ein Tor knapp an der
 score = floor(Sekunden) × 10 + Ringe × 100 + comboBonus + nearMisses × 75
 ```
 
-Eine Rampe, kein Schwierigkeits-Picker. Die Rangliste ist nur `game=drift` (Top 50). Der lokale Rekord liegt unter `orbit-drift-best`. Pause, Mute, Auto-Submit und YOU-Badge wie bei Rush und Mirror. Kein zweites Konto.
+Die Rangliste ist nur `game=drift` (Top 50), gefiltert wie Rush nach `difficulty` (`einfach|mittel|schwer|baba`, plus Alle). Alte Drift-Läufe ohne eigenen Grad stehen auf Mittel. Lokale Rekorde: `orbit-drift-best-<grad>` (der alte Schlüssel `orbit-drift-best` zählt als Mittel). Pause, Mute, Auto-Submit und YOU-Badge wie bei Rush und Mirror. Kein zweites Konto.
 
 ## Orbit Ärger
 
@@ -89,7 +91,7 @@ Die Skill-Bestenliste bleibt bei 30 Requests/Minute und einem POST alle 2 Sekund
 
 **Orbit Rush** is a mobile-first Canvas 2D reflex game. You auto-orbit a planet and steer the radius with A/D, arrow keys, or a horizontal drag. Collect orbs, dodge debris, chain combos and near-misses. A finished run saves to the top 50 under your pilot name. The first game over asks for that name once; later visits show “Welcome back” and submit on their own.
 
-v1.4 opens on an **Orbit Arcade** hub with four games. **Orbit Mirror** and **Orbit Drift** each post to their own top 50 (`game=mirror`, `game=drift`). Drift is a solo neon tunnel: steer with A/D, arrows, or a drag, stay in the lane, and lose one of three hull points when you hit a wall. **Orbit Ärger** is a 2–4 player Mensch-ärgere-dich-nicht room on the same host: one D1 row per room, HTTP polling every ~1.8s (1s while waiting for someone else to roll), no Durable Objects or WebSockets. Your own roll is in the POST response; the die tumbles from the click until that face lands. Ärger wins are not leaderboard rows. `VITE_API_BASE` empty means the page calls `/api` on the same host. Local play uses `data/scores.json` plus `data/aerger-rooms.json`. Production uses Cloudflare D1 on the same host: https://orbit-rush.selimv18.workers.dev
+v1.4 opens on an **Orbit Arcade** hub with four games. **Orbit Mirror** and **Orbit Drift** each post to their own top 50 (`game=mirror`, `game=drift`). Drift is a solo neon tunnel: steer with A/D, arrows, or a drag, stay in the lane, and lose one of three hull points on a wall or on debris, barriers, and side spikes. Before each run you pick Einfach, Mittel, Schwer, or Baba; Mittel is faster and tighter than the original single ramp. **Orbit Ärger** is a 2–4 player Mensch-ärgere-dich-nicht room on the same host: one D1 row per room, HTTP polling every ~1.8s (1s while waiting for someone else to roll), no Durable Objects or WebSockets. Your own roll is in the POST response; the die tumbles from the click until that face lands. Ärger wins are not leaderboard rows. `VITE_API_BASE` empty means the page calls `/api` on the same host. Local play uses `data/scores.json` plus `data/aerger-rooms.json`. Production uses Cloudflare D1 on the same host: https://orbit-rush.selimv18.workers.dev
 
 ## Spielen
 
@@ -180,9 +182,10 @@ Am besten Hochformat, etwa 390×844.
 - `GET /api/scores` → Rush Top 50 `{ rank, name, score, ts, difficulty, mode, dailyDate, clientId, game }`
 - `GET /api/scores?game=rush`, `?game=mirror` und `?game=drift` — getrennte Top 50. Ohne `game` gilt `rush`.
 - `GET /api/scores?difficulty=baba` → `einfach|mittel|schwer|baba` auf der Rush-Liste (Daily-Einträge sind hier nicht dabei)
+- `GET /api/scores?game=drift&difficulty=schwer` → dieselbe Difficulty-Spalte, nur die Drift-Liste. Ohne `difficulty` zeigt Drift alle Grade.
 - `GET /api/scores?mode=daily&dailyDate=YYYY-MM-DD` — Daily bleibt Rush
 - `POST /api/scores` `{ name, score, survivalMs, orbs, comboBonus, nearMisses, difficulty?, mode?, dailyDate?, clientId?, game? }`
-- `game` ist `rush`, `mirror` oder `drift`. Fehlt es, wird `rush` gespeichert. Mirror und Drift nutzen dieselbe Punkteformel; `difficulty` ist dabei `mittel` (eine Rampe). Drift schreibt keine neue Spalte.
+- `game` ist `rush`, `mirror` oder `drift`. Fehlt es, wird `rush` gespeichert. Mirror und Drift nutzen dieselbe Punkteformel. Mirror bleibt eine Rampe (`difficulty` mittel). Drift speichert `einfach|mittel|schwer|baba` wie Rush; fehlt der Wert, bleibt der Default `mittel`. Keine neue Spalte.
 
 `clientId` ist optional (UUID v4). Ältere Clients lassen es weg; die Spalte bleibt dann `null`. Der Browser speichert Name (`orbit-rush-name`) und Id (`orbit-rush-client-id`). Eigene Zeilen mit derselben Id — oder ältere Zeilen nur mit demselben Namen — bekommen ein **YOU**. Nach dem ersten Namen speichert jeder beendete Run automatisch; ein erneutes Senden ist nur noch „Change name“.
 

@@ -279,14 +279,22 @@ async function main() {
       tile?.click();
       const menu = document.getElementById('screen-drift');
       const copy = menu?.innerText || '';
-      window.__ORBIT_RUSH__.startDrift();
+      document.getElementById('btn-drift-play')?.click();
+      const picker = document.getElementById('screen-drift-diff');
+      const pickerCopy = picker?.innerText || '';
+      const pickerOpen = !!(picker && !picker.classList.contains('hidden'));
+      picker?.querySelector('[data-drift-diff="schwer"]')?.click();
+      document.getElementById('btn-drift-diff-start')?.click();
       const d = window.__ORBIT_RUSH__.drift;
       return {
         blurb,
         menuWasOpen: !!(menu && copy.includes('Halt die Bahn')),
+        pickerOpen,
+        labels: pickerCopy,
         running: !!d?.running,
         hull: d?.hull,
-        german: copy.includes('SPIELEN') || copy.includes('Halt die Bahn'),
+        difficulty: d?.difficultyId,
+        german: copy.includes('SPIELEN') && pickerCopy.includes('Schwer') && pickerCopy.includes('Einfach'),
       };
     })()`,
     returnByValue: true,
@@ -326,13 +334,26 @@ async function main() {
     expression: `(() => {
       document.getElementById('btn-lb-over')?.click();
       const heading = document.getElementById('lb-heading')?.textContent;
+      const filters = document.getElementById('lb-filters');
+      const filtersOpen = !!(filters && !filters.classList.contains('hidden'));
+      const filterLabels = [...(filters?.querySelectorAll('.lb-filter') || [])]
+        .filter((btn) => !btn.classList.contains('hidden'))
+        .map((btn) => btn.textContent);
       document.getElementById('btn-lb-back')?.click();
       document.getElementById('btn-over-hub')?.click();
       const hub = !document.getElementById('screen-hub').classList.contains('hidden');
       const games = ['btn-hub-rush', 'btn-hub-mirror', 'btn-hub-aerger', 'btn-hub-drift'].map((id) => !!document.getElementById(id));
       document.getElementById('btn-hub-aerger')?.click();
       const aerger = !document.getElementById('screen-aerger').classList.contains('hidden');
-      return { heading, hub, games, aerger, status: document.getElementById('submit-status')?.textContent };
+      return {
+        heading,
+        filtersOpen,
+        filterLabels,
+        hub,
+        games,
+        aerger,
+        status: document.getElementById('submit-status')?.textContent,
+      };
     })()`,
     returnByValue: true,
   });
@@ -344,13 +365,21 @@ async function main() {
   const driftOk =
     dv?.running === true &&
     dv?.hull === 3 &&
+    dv?.difficulty === 'schwer' &&
+    dv?.pickerOpen === true &&
     dv?.blurb?.includes('Tunnel') &&
+    dv?.german === true &&
     ovd?.over === true &&
     ovd?.title === 'BAHN VERLASSEN' &&
-    ovd?.badge === 'Drift' &&
+    ovd?.badge === 'Schwer' &&
     typeof ovd?.formula === 'string' &&
     ovd.formula.includes('× 10') &&
     db?.heading === 'DRIFT TOP 50' &&
+    db?.filtersOpen === true &&
+    Array.isArray(db?.filterLabels) &&
+    db.filterLabels.includes('Alle') &&
+    db.filterLabels.includes('Schwer') &&
+    !db.filterLabels.includes('Daily') &&
     db?.hub === true &&
     Array.isArray(db?.games) &&
     db.games.every(Boolean) &&

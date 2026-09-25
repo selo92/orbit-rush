@@ -214,9 +214,9 @@
           <p class="eyebrow">TUNNEL-RUN</p>
           <h1 class="logo">ORBIT<span>DRIFT</span></h1>
           <p class="tagline">Halt die Bahn. Der Tunnel driftet.</p>
-          <p class="tagline">A/D, Pfeile oder Wischen. Drei Treffer, dann ist Schluss.</p>
+          <p class="tagline">Wähle den Grad. Trümmer, Barrieren und Spikes kosten Hülle.</p>
           <p id="drift-best" class="best-line">
-            Rekord: <strong id="drift-best-val">—</strong>
+            Rekord (Mittel): <strong id="drift-best-val">—</strong>
           </p>
           <button type="button" id="btn-drift-play" class="btn primary pulse">SPIELEN</button>
           <button type="button" id="btn-drift-lb" class="btn ghost">BESTENLISTE</button>
@@ -229,11 +229,41 @@
           <p class="eyebrow">BAHN HALTEN</p>
           <h2>Bleib in der Spur</h2>
           <p class="tagline">
-            A und D, die Pfeile oder ein Wisch lenken das Schiff. Die leuchtende Bahn biegt ab.
-            Knapp an der Wand gibt Stilpunkte. Jeder Treffer kostet Hülle — der dritte beendet den Run.
+            A und D, die Pfeile oder ein Wisch lenken das Schiff. Die Bahn wird enger und biegt ab.
+            Trümmer, Barrieren und Wand-Spikes liegen im Tunnel. Knapp vorbei gibt Stilpunkte.
+            Jeder Treffer kostet Hülle — der dritte beendet den Run.
           </p>
           <button type="button" id="btn-drift-onboard" class="btn primary">VERSTANDEN</button>
           <button type="button" id="btn-drift-onboard-skip" class="btn ghost">SPÄTER</button>
+        </div>
+      </section>
+
+      <section id="screen-drift-diff" class="screen hidden">
+        <div class="panel diff-panel drift-diff-panel">
+          <p class="eyebrow">SCHWIERIGKEIT</p>
+          <h2>WIE HART?</h2>
+          <p class="tagline diff-hint">Tempo, Kurven und Hindernisse.</p>
+          <div id="drift-diff-options" class="diff-options" role="radiogroup" aria-label="Schwierigkeit">
+            <button type="button" class="diff-chip" data-drift-diff="einfach" aria-pressed="false">
+              <span class="diff-label">Einfach</span>
+              <span class="diff-blurb">Langsam · weite Bahn · wenige Trümmer</span>
+            </button>
+            <button type="button" class="diff-chip" data-drift-diff="mittel" aria-pressed="true">
+              <span class="diff-label">Mittel</span>
+              <span class="diff-blurb">Schneller · engere Kurven · Hindernisse</span>
+            </button>
+            <button type="button" class="diff-chip" data-drift-diff="schwer" aria-pressed="false">
+              <span class="diff-label">Schwer</span>
+              <span class="diff-blurb">Hohes Tempo · enge Bahn · viele Barrieren</span>
+            </button>
+            <button type="button" class="diff-chip baba" data-drift-diff="baba" aria-pressed="false">
+              <span class="diff-label">Baba</span>
+              <span class="diff-blurb">⚠ Extrem · Spikes · kaum Luft</span>
+            </button>
+          </div>
+          <p id="drift-diff-best" class="best-line muted">Rekord auf Mittel: <strong id="drift-diff-best-val">—</strong></p>
+          <button type="button" id="btn-drift-diff-start" class="btn primary pulse">START</button>
+          <button type="button" id="btn-drift-diff-back" class="btn ghost">ZURÜCK</button>
         </div>
       </section>
 

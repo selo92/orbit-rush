@@ -482,6 +482,16 @@ try {
   assert(!rushAfterDrift.data.scores.some((s) => s.name === 'DriftPilot'), 'drift score stays off rush');
   const mirrorAfterDrift = await api('/api/scores?game=mirror', { ip: '203.0.113.97' });
   assert(!mirrorAfterDrift.data.scores.some((s) => s.name === 'DriftPilot'), 'drift score stays off mirror');
+  assert(
+    driftBoard.data.scores.some((s) => s.name === 'DriftPilot' && s.difficulty === 'mittel'),
+    'drift default difficulty stays mittel'
+  );
+  const driftMittel = await api('/api/scores?game=drift&difficulty=mittel', { ip: '203.0.113.97' });
+  assert(driftMittel.data.scores.some((s) => s.name === 'DriftPilot'), 'drift difficulty filter includes mittel');
+  const driftSchwer = await api('/api/scores?game=drift&difficulty=schwer', { ip: '203.0.113.97' });
+  assert(!driftSchwer.data.scores.some((s) => s.name === 'DriftPilot'), 'drift difficulty filter excludes other grades');
+  const rushMittel = await api('/api/scores?difficulty=mittel', { ip: '203.0.113.97' });
+  assert(!rushMittel.data.scores.some((s) => s.name === 'DriftPilot'), 'drift difficulty filter does not leak onto rush');
 
   const notAScore = await api('/api/scores', {
     method: 'POST',

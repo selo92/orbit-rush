@@ -828,9 +828,39 @@ h2 {
 
 .hub-panel,
 .mirror-panel,
-.drift-panel {
+.drift-panel,
+.drift-diff-panel {
   max-height: calc(100vh - 28px - var(--safe-top) - var(--safe-bottom));
   overflow-y: auto;
+}
+
+.drift-diff-panel h2 {
+  color: #7dffa8;
+  text-shadow: 0 0 18px rgba(125, 255, 168, 0.35);
+}
+
+#drift-diff-options .diff-chip .diff-label {
+  color: #7dffa8;
+}
+
+#drift-diff-options .diff-chip[aria-pressed='true'] {
+  border-color: #7dffa8;
+  box-shadow:
+    0 0 0 1px rgba(125, 255, 168, 0.4),
+    0 0 20px rgba(125, 255, 168, 0.22);
+  background: rgba(125, 255, 168, 0.08);
+}
+
+#drift-diff-options .diff-chip.baba .diff-label {
+  color: #ff4d6d;
+}
+
+#drift-diff-options .diff-chip.baba[aria-pressed='true'] {
+  border-color: #ff4d6d;
+  box-shadow:
+    0 0 0 1px rgba(255, 77, 109, 0.55),
+    0 0 28px rgba(255, 43, 214, 0.45);
+  background: rgba(255, 43, 214, 0.12);
 }
 
 .hub-tiles {

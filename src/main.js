@@ -4,7 +4,7 @@
  */
 import { Game, formatFormula, computeScore, NEAR_MISS_POINTS, COMBO_STEP } from './game.js';
 import { MirrorGame } from './mirror.js';
-import { DriftGame } from './drift.js';
+import { DriftGame, getDriftDifficulty } from './drift.js';
 import { mountAerger } from './aerger-ui.js';
 import {
   DIFFICULTIES,
@@ -47,6 +47,8 @@ const LS_MIRROR_BEST = 'orbit-mirror-best';
 const LS_MIRROR_STREAK = 'orbit-mirror-streak';
 const LS_MIRROR_ONBOARD = 'orbit-mirror-onboard-v1';
 const LS_DRIFT_BEST = 'orbit-drift-best';
+const LS_DRIFT_BEST_PREFIX = 'orbit-drift-best-';
+const LS_DRIFT_DIFF = 'orbit-drift-difficulty';
 const LS_DRIFT_ONBOARD = 'orbit-drift-onboard-v1';
 const SHARE_NOTE = '(Orbit Rush — play locally / LiveCodes)';
 
@@ -67,6 +69,7 @@ const screens = {
   mirrorOnboard: $('screen-mirror-onboard'),
   drift: $('screen-drift'),
   driftOnboard: $('screen-drift-onboard'),
+  driftDiff: $('screen-drift-diff'),
   aerger: $('screen-aerger'),
 };
 
@@ -106,6 +109,8 @@ let runMode = 'normal';
 let dailyDate = utcDateString();
 /** @type {import('./difficulty.js').DifficultyId} */
 let selectedDifficulty = loadSavedDifficulty();
+/** @type {import('./difficulty.js').DifficultyId} */
+let driftDifficulty = loadDriftDifficulty();
 /** @type {string} */
 let selectedSkin = normalizeSkin(loadSavedSkin());
 
@@ -137,6 +142,24 @@ function saveDifficulty(id) {
   selectedDifficulty = d;
   try {
     localStorage.setItem(LS_DIFF, d);
+  } catch {
+    /* ignore */
+  }
+}
+
+function loadDriftDifficulty() {
+  try {
+    return normalizeDifficulty(localStorage.getItem(LS_DRIFT_DIFF) || DEFAULT_DIFFICULTY);
+  } catch {
+    return DEFAULT_DIFFICULTY;
+  }
+}
+
+function saveDriftDifficulty(id) {
+  const d = normalizeDifficulty(id);
+  driftDifficulty = d;
+  try {
+    localStorage.setItem(LS_DRIFT_DIFF, d);
   } catch {
     /* ignore */
   }
@@ -248,25 +271,42 @@ function refreshHub() {
   }
 }
 
-function getDriftBest() {
+function getDriftBest(id = driftDifficulty) {
+  const d = normalizeDifficulty(id);
   try {
-    return Math.max(0, Math.floor(Number(localStorage.getItem(LS_DRIFT_BEST)) || 0));
+    const per = Math.max(0, Math.floor(Number(localStorage.getItem(LS_DRIFT_BEST_PREFIX + d)) || 0));
+    if (per > 0) return per;
+    if (d === 'mittel') {
+      const legacy = Math.max(0, Math.floor(Number(localStorage.getItem(LS_DRIFT_BEST)) || 0));
+      if (legacy > 0) {
+        localStorage.setItem(LS_DRIFT_BEST_PREFIX + 'mittel', String(legacy));
+        return legacy;
+      }
+    }
+    return 0;
   } catch {
     return 0;
   }
 }
 
-function setDriftBest(score) {
+function setDriftBest(score, id = driftDifficulty) {
+  const d = normalizeDifficulty(id);
   try {
-    localStorage.setItem(LS_DRIFT_BEST, String(Math.floor(score)));
+    localStorage.setItem(LS_DRIFT_BEST_PREFIX + d, String(Math.floor(score)));
+    if (d === 'mittel') localStorage.setItem(LS_DRIFT_BEST, String(Math.floor(score)));
   } catch {
     /* ignore */
   }
 }
 
 function refreshDriftMenu() {
-  const best = getDriftBest();
+  const best = getDriftBest(driftDifficulty);
+  const label = getDriftDifficulty(driftDifficulty).label;
   const bestEl = $('drift-best-val');
+  const line = $('drift-best');
+  if (line?.childNodes[0]?.nodeType === 3) {
+    line.childNodes[0].textContent = `Rekord (${label}): `;
+  }
   if (bestEl) bestEl.textContent = best > 0 ? String(best) : '—';
 }
 
@@ -383,7 +423,7 @@ function refreshTitleBest() {
 }
 
 function syncDiffChips() {
-  document.querySelectorAll('.diff-chip').forEach((btn) => {
+  document.querySelectorAll('#diff-options .diff-chip').forEach((btn) => {
     const id = btn.getAttribute('data-diff');
     btn.setAttribute('aria-pressed', id === selectedDifficulty ? 'true' : 'false');
   });
@@ -408,6 +448,42 @@ function openDifficultyPicker() {
   runMode = 'normal';
   syncDiffChips();
   showScreen('diff');
+}
+
+function syncDriftDiffChips() {
+  document.querySelectorAll('#drift-diff-options .diff-chip').forEach((btn) => {
+    const id = btn.getAttribute('data-drift-diff');
+    btn.setAttribute('aria-pressed', id === driftDifficulty ? 'true' : 'false');
+  });
+  const best = getDriftBest(driftDifficulty);
+  const label = getDriftDifficulty(driftDifficulty).label;
+  const line = $('drift-diff-best');
+  if (line?.childNodes[0]?.nodeType === 3) {
+    line.childNodes[0].textContent = `Rekord auf ${label}: `;
+  }
+  const val = $('drift-diff-best-val');
+  if (val) val.textContent = best > 0 ? String(best) : '—';
+  const startBtn = $('btn-drift-diff-start');
+  if (startBtn) {
+    if (driftDifficulty === 'baba') {
+      startBtn.textContent = 'BABA STARTEN';
+      startBtn.classList.add('baba-start');
+    } else {
+      startBtn.textContent = 'START';
+      startBtn.classList.remove('baba-start');
+    }
+  }
+  if (!drift.running) {
+    drift.setDifficulty(driftDifficulty);
+    drift.resetState();
+    if (drift.w) drift.ensureTrack();
+  }
+}
+
+function openDriftDifficulty() {
+  activeGame = 'drift';
+  syncDriftDiffChips();
+  showScreen('driftDiff');
 }
 
 function renderOnboardStep() {
@@ -565,8 +641,9 @@ function setOverDiffBadge(result) {
     return;
   }
   if (result.game === 'drift') {
-    badge.textContent = 'Drift';
-    badge.className = 'diff-badge drift';
+    const d = normalizeDifficulty(result.difficulty || driftDifficulty);
+    badge.textContent = getDriftDifficulty(d).label;
+    badge.className = `diff-badge ${d}`;
     return;
   }
   if (result.daily) {
@@ -674,7 +751,8 @@ function buildShareText(result) {
   }
   if (result?.game === 'drift') {
     const km = Number(result.distanceKm || 0).toFixed(2);
-    return `Orbit Drift — ${score} Punkte — ${km} km — schlag mich!`;
+    const tag = getDriftDifficulty(result.difficulty || driftDifficulty).label;
+    return `Orbit Drift [${tag}] — ${score} Punkte — ${km} km — schlag mich!`;
   }
   let tag;
   if (result?.daily) {
@@ -768,15 +846,16 @@ function showGameOver(result) {
   let isNew = false;
   let best = 0;
   if (driftRun) {
-    const prev = getDriftBest();
+    const diff = normalizeDifficulty(result.difficulty || driftDifficulty);
+    const prev = getDriftBest(diff);
     isNew = result.score > prev;
-    if (isNew) setDriftBest(result.score);
+    if (isNew) setDriftBest(result.score, diff);
     best = Math.max(prev, result.score);
     const km = Number(result.distanceKm || 0);
     $('over-streak-val').textContent = `${km.toFixed(2)} km`;
     const ob = $('over-best');
     if (ob.childNodes[0] && ob.childNodes[0].nodeType === 3) {
-      ob.childNodes[0].textContent = 'Rekord: ';
+      ob.childNodes[0].textContent = `Rekord (${getDriftDifficulty(diff).label}): `;
     }
   } else if (mirrorRun) {
     const prev = getMirrorBest();
@@ -827,6 +906,7 @@ function showGameOver(result) {
       result.nearMisses,
       result.score
     );
+  $('over-new-best').textContent = driftRun ? '★ NEUER REKORD ★' : '★ NEW PERSONAL BEST ★';
   $('over-new-best').classList.toggle('hidden', !isNew || result.score <= 0);
   $('over-best').classList.toggle('hidden', best <= 0);
   $('over-best-val').textContent = String(best);
@@ -884,7 +964,8 @@ const drift = new DriftGame(canvas, {
     pwrSlow.classList.add('hidden');
     pwrMagnet.classList.add('hidden');
     const hearts = '●'.repeat(Math.max(0, hull)) + '○'.repeat(Math.max(0, 3 - hull));
-    hudMode.textContent = `HÜLLE ${hearts}`;
+    const grade = getDriftDifficulty(drift.difficultyId).label.toUpperCase();
+    hudMode.textContent = `${grade} · HÜLLE ${hearts}`;
     hudMode.classList.remove('hidden');
   },
   onGameOver(result) {
@@ -996,14 +1077,15 @@ function beginDrift() {
   pwrShield.classList.add('hidden');
   pwrSlow.classList.add('hidden');
   pwrMagnet.classList.add('hidden');
-  hudMode.textContent = 'HÜLLE ●●●';
+  const grade = getDriftDifficulty(driftDifficulty).label.toUpperCase();
+  hudMode.textContent = `${grade} · HÜLLE ●●●`;
   hudMode.classList.remove('hidden');
   touchHint.textContent = 'Wischen zum Lenken';
   touchHint.classList.add('hidden');
   touchHint.classList.remove('fade-fast');
   void touchHint.offsetWidth;
   touchHint.classList.remove('hidden');
-  drift.start();
+  drift.start(driftDifficulty);
 }
 
 function startDrift() {
@@ -1014,7 +1096,7 @@ function startDrift() {
     showScreen('driftOnboard');
     return;
   }
-  beginDrift();
+  openDriftDifficulty();
 }
 
 function beginRun(opts = {}) {
@@ -1092,6 +1174,8 @@ function openLeaderboard(from, gameId = 'rush') {
   lbGame = gameId === 'mirror' || gameId === 'drift' ? gameId : 'rush';
   if (lbGame === 'rush') {
     lbFilter = runMode === 'daily' ? 'daily' : selectedDifficulty || 'all';
+  } else if (lbGame === 'drift') {
+    lbFilter = driftDifficulty || 'all';
   }
   syncLbFilters();
   showScreen('lb');
@@ -1100,7 +1184,10 @@ function openLeaderboard(from, gameId = 'rush') {
 
 function syncLbFilters() {
   document.querySelectorAll('.lb-filter').forEach((btn) => {
-    btn.classList.toggle('active', btn.getAttribute('data-filter') === lbFilter);
+    const filter = btn.getAttribute('data-filter');
+    btn.classList.toggle('hidden', filter === 'daily' && lbGame !== 'rush');
+    btn.classList.toggle('active', filter === lbFilter);
+    if (filter === 'all') btn.textContent = lbGame === 'drift' ? 'Alle' : 'All';
   });
 }
 
@@ -1111,18 +1198,29 @@ async function renderLeaderboard() {
   empty.classList.add('hidden');
   const heading = $('lb-heading');
   const filters = $('lb-filters');
-  if (lbGame === 'mirror' || lbGame === 'drift') {
-    if (heading) heading.textContent = lbGame === 'drift' ? 'DRIFT TOP 50' : 'MIRROR TOP 50';
+  if (lbGame === 'mirror') {
+    if (heading) heading.textContent = 'MIRROR TOP 50';
     filters?.classList.add('hidden');
+  } else if (lbGame === 'drift') {
+    if (heading) heading.textContent = 'DRIFT TOP 50';
+    if (lbFilter === 'daily') lbFilter = driftDifficulty || 'all';
+    filters?.classList.remove('hidden');
+    syncLbFilters();
   } else {
     if (heading) heading.textContent = 'GLOBAL TOP 50';
     filters?.classList.remove('hidden');
+    syncLbFilters();
   }
   try {
     let scores;
     let source;
-    if (lbGame === 'mirror' || lbGame === 'drift') {
-      const res = await fetchScores({ game: lbGame });
+    if (lbGame === 'mirror') {
+      const res = await fetchScores({ game: 'mirror' });
+      scores = res.scores;
+      source = res.source;
+    } else if (lbGame === 'drift') {
+      const filter = !lbFilter || lbFilter === 'all' ? undefined : lbFilter;
+      const res = await fetchScores(filter ? { difficulty: filter, game: 'drift' } : { game: 'drift' });
       scores = res.scores;
       source = res.source;
     } else if (lbFilter === 'daily') {
@@ -1139,10 +1237,17 @@ async function renderLeaderboard() {
     list.innerHTML = '';
     if (!scores.length) {
       empty.classList.remove('hidden');
-      empty.textContent =
-        source === 'local'
-          ? 'No scores yet (local demo). Be the first.'
-          : 'No scores yet — be the first.';
+      if (lbGame === 'drift') {
+        empty.textContent =
+          source === 'local'
+            ? 'Noch keine Punkte (lokal). Sei der Erste.'
+            : 'Noch keine Punkte — sei der Erste.';
+      } else {
+        empty.textContent =
+          source === 'local'
+            ? 'No scores yet (local demo). Be the first.'
+            : 'No scores yet — be the first.';
+      }
       return;
     }
     for (const row of scores) {
@@ -1168,10 +1273,7 @@ async function renderLeaderboard() {
       if (lbGame === 'mirror') {
         badge.className = 'diff-badge mirror';
         badge.textContent = 'Mirror';
-      } else if (lbGame === 'drift') {
-        badge.className = 'diff-badge drift';
-        badge.textContent = 'Drift';
-      } else if (row.mode === 'daily' || lbFilter === 'daily') {
+      } else if (row.mode === 'daily' || (lbGame === 'rush' && lbFilter === 'daily')) {
         badge.className = 'diff-badge daily';
         badge.textContent = row.dailyDate ? `Daily ${String(row.dailyDate).slice(5)}` : 'Daily';
       } else {
@@ -1210,11 +1312,19 @@ $('btn-diff-back').addEventListener('click', () => {
   showScreen('title');
 });
 
-document.querySelectorAll('.diff-chip').forEach((btn) => {
+document.querySelectorAll('#diff-options .diff-chip').forEach((btn) => {
   btn.addEventListener('click', () => {
     audio.click();
     selectedDifficulty = normalizeDifficulty(btn.getAttribute('data-diff'));
     syncDiffChips();
+  });
+});
+
+document.querySelectorAll('#drift-diff-options .diff-chip').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    audio.click();
+    driftDifficulty = normalizeDifficulty(btn.getAttribute('data-drift-diff'));
+    syncDriftDiffChips();
   });
 });
 
@@ -1459,12 +1569,21 @@ $('btn-drift-hub').addEventListener('click', () => {
 $('btn-drift-onboard').addEventListener('click', () => {
   audio.click();
   markDriftOnboard();
-  beginDrift();
+  openDriftDifficulty();
 });
 $('btn-drift-onboard-skip').addEventListener('click', () => {
   audio.click();
   markDriftOnboard();
+  openDriftDifficulty();
+});
+$('btn-drift-diff-start').addEventListener('click', () => {
+  saveDriftDifficulty(driftDifficulty);
   beginDrift();
+});
+$('btn-drift-diff-back').addEventListener('click', () => {
+  audio.click();
+  refreshDriftMenu();
+  showScreen('drift');
 });
 $('btn-over-hub').addEventListener('click', () => {
   audio.click();
@@ -1477,6 +1596,7 @@ refreshHub();
 showScreen('hub');
 game.resize();
 mirror.resize();
+drift.setDifficulty(driftDifficulty);
 drift.resize();
 if (typeof game.seedStars === 'function') game.seedStars();
 idleDraw();
@@ -1498,6 +1618,8 @@ window.__ORBIT_RUSH__ = {
   startDaily,
   startMirror,
   startDrift,
+  beginDrift,
+  openDriftDifficulty,
   showHub,
   beginRun,
   openDifficultyPicker,
@@ -1523,6 +1645,13 @@ window.__ORBIT_RUSH__ = {
   setDifficulty(id) {
     saveDifficulty(id);
     syncDiffChips();
+  },
+  setDriftDifficulty(id) {
+    saveDriftDifficulty(id);
+    syncDriftDiffChips();
+  },
+  get driftDifficulty() {
+    return driftDifficulty;
   },
   setSkin(id) {
     if (!skinIsUnlocked(id)) return false;
