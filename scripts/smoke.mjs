@@ -180,6 +180,110 @@ assert((skinMod.DEFAULT_SKIN || skinMod.DEFAULT_SKIN) === 'cyan', 'default cyan 
   assert(easy.rMax - easy.rMin > baba.rMax - baba.rMin, 'difficulty radius spans still differ');
 }
 
+const scoresMod = await import(path.join(root, 'shared', 'scores.js'));
+assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
+assert(scoresMod.normalizeGame('nope') === 'rush', 'unknown game defaults to rush');
+{
+  const mixed = [
+    { name: 'R', score: 10, ts: 1, difficulty: 'mittel', mode: 'normal' },
+    { name: 'M', score: 50, ts: 2, difficulty: 'mittel', mode: 'normal', game: 'mirror' },
+  ];
+  const onlyM = scoresMod.selectBoard(mixed, { game: 'mirror' });
+  assert(onlyM.length === 1 && onlyM[0].name === 'M' && onlyM[0].game === 'mirror', 'mirror board');
+  const onlyR = scoresMod.selectBoard(mixed, {});
+  assert(onlyR.length === 1 && onlyR[0].name === 'R' && onlyR[0].game === 'rush', 'default board is rush');
+  const badGame = scoresMod.validatePostBody({
+    name: 'A',
+    score: 10,
+    survivalMs: 1000,
+    orbs: 0,
+    comboBonus: 0,
+    nearMisses: 0,
+    game: 'nope',
+  });
+  assert(!badGame.ok && badGame.error === 'Invalid game (rush|mirror)', 'reject bad game');
+  const okGame = scoresMod.validatePostBody({
+    name: 'A',
+    score: 10,
+    survivalMs: 1000,
+    orbs: 0,
+    comboBonus: 0,
+    nearMisses: 0,
+  });
+  assert(okGame.ok && okGame.value.game === 'rush', 'post defaults to rush');
+  const qMirror = scoresMod.validateScoresQuery(new URLSearchParams('game=mirror'));
+  assert(qMirror.ok && qMirror.game === 'mirror', 'query mirror');
+  const qBad = scoresMod.validateScoresQuery(new URLSearchParams('game=both'));
+  assert(!qBad.ok, 'query bad game');
+}
+
+{
+  const listeners = {};
+  globalThis.window = {
+    devicePixelRatio: 1,
+    addEventListener(type, fn) {
+      (listeners[type] ||= []).push(fn);
+    },
+    removeEventListener() {},
+  };
+  const { MirrorGame, mirrorRadius } = await import(path.join(root, 'src', 'mirror.js'));
+  const audio = new Proxy({}, { get: () => () => {} });
+  function makeMirror(w, h) {
+    const canvas = {
+      width: w,
+      height: h,
+      style: {},
+      parentElement: {
+        getBoundingClientRect: () => ({ width: w, height: h, left: 0, top: 0 }),
+      },
+      getContext() {
+        return { setTransform() {} };
+      },
+      addEventListener(type, fn) {
+        (listeners[type] ||= []).push(fn);
+      },
+      removeEventListener() {},
+      setPointerCapture() {},
+    };
+    const m = new MirrorGame(canvas, { audio, onGameOver() {}, onHud() {} });
+    m.resize();
+    const mid = (m.rMin + m.rMax) / 2;
+    m.intent = mid;
+    m.intentTarget = mid;
+    m.radius = mirrorRadius(mid, m.rMin, m.rMax);
+    m.alive = true;
+    return m;
+  }
+
+  const m = makeMirror(390, 844);
+  const start = m.radius;
+  const span = m.rMax - m.rMin;
+  m.input.left = true;
+  m.update(0.2);
+  assert(m.radius > start + span * 0.35, 'left input moves the ship outward');
+  assert(m.intent < start - span * 0.35, 'left input moves the reflex ghost inward');
+  assert(
+    m.score === computeScore(m.survivalMs, m.orbsCollected, m.comboBonus, m.nearMisses),
+    'mirror score matches the shared formula'
+  );
+
+  const drag = makeMirror(390, 844);
+  drag.bindInput();
+  const dragStart = drag.radius;
+  listeners.pointerdown.at(-1)({ pointerId: 3, clientX: 40 });
+  listeners.pointermove.at(-1)({ pointerId: 3, clientX: 40 + 90 });
+  assert(drag.radius < dragStart - 15, 'drag right moves the ship inward');
+
+  const threat = makeMirror(390, 844);
+  threat.ramp = 0.1;
+  let placed = false;
+  for (let i = 0; i < 8 && !placed; i++) placed = threat.spawnShard();
+  assert(placed, 'a fair shard can spawn from mid orbit');
+  const shard = threat.shards.at(-1);
+  assert(Math.abs(threat.radius - shard.r) < shard.hitR - 1, 'shard covers the current ship radius');
+  assert(Math.abs(shard.safeR - shard.r) >= shard.hitR, 'shard leaves a safe pocket');
+}
+
 const env = { ...process.env, PORT: String(PORT) };
 const scoresPath = path.join(root, 'data', 'scores.json');
 const backup = fs.existsSync(scoresPath) ? fs.readFileSync(scoresPath, 'utf8') : '[]';
@@ -201,7 +305,7 @@ child.stderr.on('data', (d) => {
 try {
   await waitHealth(`http://127.0.0.1:${PORT}/api/health`);
   const health = await fetch(`http://127.0.0.1:${PORT}/api/health`).then((r) => r.json());
-  assert(health.version === '1.3' || health.version === '1.3.0', 'api version 1.3');
+  assert(health.version === '1.4' || health.version === '1.4.0', 'api version 1.4');
 
   const survivalMs = 32000;
   const orbs = 2;
@@ -227,6 +331,7 @@ try {
   assert(post.ok, `post failed: ${JSON.stringify(body)}`);
   assert(Array.isArray(body.scores), 'scores array');
   assert(body.scores.some((s) => s.difficulty === 'schwer'), 'posted difficulty on list');
+  assert(body.scores.every((s) => s.game === 'rush'), 'omitted game stays on the rush board');
 
   await new Promise((r) => setTimeout(r, 2100));
   const badDiff = await fetch(`http://127.0.0.1:${PORT}/api/scores`, {
@@ -368,6 +473,37 @@ try {
 
   const getBadFilter = await fetch(`http://127.0.0.1:${PORT}/api/scores?difficulty=ultra`);
   assert(getBadFilter.status === 400, 'bad filter rejected');
+
+  await new Promise((r) => setTimeout(r, 2100));
+  const mirrorScore = computeScore(12000, 2, 50, 1);
+  const mirrorPost = await fetch(`http://127.0.0.1:${PORT}/api/scores`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: 'MirrorPilot',
+      score: mirrorScore,
+      survivalMs: 12000,
+      orbs: 2,
+      comboBonus: 50,
+      nearMisses: 1,
+      game: 'mirror',
+      clientId: 'd4e5f6a7-b8c9-4d01-8abc-def012345678',
+    }),
+  });
+  const mirrorBody = await mirrorPost.json();
+  assert(mirrorPost.ok, `mirror post failed: ${JSON.stringify(mirrorBody)}`);
+  assert(mirrorBody.scores.every((s) => s.game === 'mirror'), 'express mirror board');
+  assert(mirrorBody.scores.some((s) => s.name === 'MirrorPilot'), 'express mirror pilot');
+
+  const rushBoard = await fetch(`http://127.0.0.1:${PORT}/api/scores?game=rush`).then((r) => r.json());
+  assert(rushBoard.scores.every((s) => s.game === 'rush'), 'express rush filter');
+  assert(!rushBoard.scores.some((s) => s.name === 'MirrorPilot'), 'express keeps mirror off rush');
+  const defaultBoard = await fetch(`http://127.0.0.1:${PORT}/api/scores`).then((r) => r.json());
+  assert(!defaultBoard.scores.some((s) => s.name === 'MirrorPilot'), 'express default game is rush');
+  const mirrorBoard = await fetch(`http://127.0.0.1:${PORT}/api/scores?game=mirror`).then((r) => r.json());
+  assert(mirrorBoard.scores.some((s) => s.name === 'MirrorPilot'), 'express mirror filter');
+  const badGame = await fetch(`http://127.0.0.1:${PORT}/api/scores?game=puzzle`);
+  assert(badGame.status === 400, 'express rejects bad game filter');
 
   console.log('SMOKE OK', {
     formula: score,

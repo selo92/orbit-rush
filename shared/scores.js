@@ -17,9 +17,18 @@ export const COMBO_MAX = 5;
 export const DIFFICULTY_ENUM = new Set(['einfach', 'mittel', 'schwer', 'baba']);
 export const DEFAULT_DIFFICULTY = 'mittel';
 export const MODE_ENUM = new Set(['normal', 'daily']);
+export const GAME_ENUM = new Set(['rush', 'mirror']);
+export const DEFAULT_GAME = 'rush';
 
 export function normalizeMode(m) {
   return m === 'daily' ? 'daily' : 'normal';
+}
+
+/** Missing or unknown values stay on the Rush board so older rows and clients keep working. */
+export function normalizeGame(g) {
+  const s = typeof g === 'string' ? g.toLowerCase().trim() : '';
+  if (GAME_ENUM.has(s)) return s;
+  return DEFAULT_GAME;
 }
 
 export function isValidDailyDate(s) {
@@ -82,6 +91,7 @@ export function mapRow(e, i) {
     mode: normalizeMode(e.mode),
     dailyDate: e.dailyDate || null,
     clientId: id.ok ? id.clientId : null,
+    game: normalizeGame(e.game),
   };
 }
 
@@ -89,9 +99,12 @@ export function mapRow(e, i) {
  * Same filtering as GET /api/scores.
  * mode: 'daily' | 'normal' | null (null = no mode query)
  * difficulty: enum | null (null = all)
+ * game: 'rush' | 'mirror' (missing = rush). Boards are never mixed.
  */
-export function selectBoard(scores, { mode = null, dailyDate = null, difficulty = null } = {}) {
+export function selectBoard(scores, { mode = null, dailyDate = null, difficulty = null, game = null } = {}) {
   let list = Array.isArray(scores) ? [...scores] : [];
+  const boardGame = normalizeGame(game);
+  list = list.filter((e) => normalizeGame(e.game) === boardGame);
   if (mode === 'daily') {
     list = list.filter((e) => normalizeMode(e.mode) === 'daily');
     if (dailyDate) list = list.filter((e) => e.dailyDate === dailyDate);
@@ -116,6 +129,7 @@ export function validateScoresQuery(searchParams) {
   const modeRaw = typeof searchParams.get('mode') === 'string' ? searchParams.get('mode').toLowerCase().trim() : '';
   const dailyDateRaw = searchParams.get('dailyDate') ? String(searchParams.get('dailyDate')).trim() : '';
   const filterRaw = searchParams.get('difficulty') ? String(searchParams.get('difficulty')) : '';
+  const gameRaw = searchParams.get('game') ? String(searchParams.get('game')).toLowerCase().trim() : '';
 
   if (modeRaw && !MODE_ENUM.has(modeRaw)) {
     return { ok: false, status: 400, error: 'Invalid mode (normal|daily)' };
@@ -126,11 +140,15 @@ export function validateScoresQuery(searchParams) {
   if (filterRaw && filterRaw !== 'all' && !DIFFICULTY_ENUM.has(filterRaw.toLowerCase().trim())) {
     return { ok: false, status: 400, error: 'Invalid difficulty filter' };
   }
+  if (gameRaw && !GAME_ENUM.has(gameRaw)) {
+    return { ok: false, status: 400, error: 'Invalid game (rush|mirror)' };
+  }
 
   const mode = modeRaw ? normalizeMode(modeRaw) : null;
   const dailyDate = dailyDateRaw || null;
   const difficulty = filterRaw && filterRaw !== 'all' ? normalizeDifficulty(filterRaw) : null;
-  return { ok: true, mode, dailyDate, difficulty };
+  const game = gameRaw ? normalizeGame(gameRaw) : DEFAULT_GAME;
+  return { ok: true, mode, dailyDate, difficulty, game };
 }
 
 export function validatePostBody(body) {
@@ -161,6 +179,15 @@ export function validatePostBody(body) {
     }
     dailyDate = rawDate;
     difficulty = 'schwer';
+  }
+
+  let game = DEFAULT_GAME;
+  if (reqBody.game != null && reqBody.game !== '') {
+    const rawGame = String(reqBody.game).toLowerCase().trim();
+    if (!GAME_ENUM.has(rawGame)) {
+      return { ok: false, status: 400, error: 'Invalid game (rush|mirror)' };
+    }
+    game = rawGame;
   }
 
   const clientParsed = normalizeClientId(reqBody.clientId);
@@ -222,6 +249,7 @@ export function validatePostBody(body) {
       mode,
       dailyDate,
       clientId: clientParsed.clientId,
+      game,
     },
   };
 }
@@ -235,15 +263,17 @@ export function findRecentDuplicate(scores, value, key, now) {
       normalizeDifficulty(e.difficulty) === value.difficulty &&
       normalizeMode(e.mode) === value.mode &&
       (value.mode !== 'daily' || e.dailyDate === value.dailyDate) &&
+      normalizeGame(e.game) === normalizeGame(value.game) &&
       now - e.ts < 10_000
   );
 }
 
 export function boardQueryForPost(value) {
+  const game = normalizeGame(value.game);
   if (value.mode === 'daily') {
-    return { mode: 'daily', dailyDate: value.dailyDate, difficulty: null };
+    return { mode: 'daily', dailyDate: value.dailyDate, difficulty: null, game };
   }
-  return { mode: 'normal', dailyDate: null, difficulty: value.difficulty };
+  return { mode: 'normal', dailyDate: null, difficulty: value.difficulty, game };
 }
 
 /** SHA-256 hex prefix, same 16 chars as the local Express server. */

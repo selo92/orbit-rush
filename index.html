@@ -7,21 +7,21 @@
       content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
     />
     <meta name="theme-color" content="#050510" />
-    <meta name="description" content="Orbit Rush – dodge debris, collect orbs, climb the leaderboard." />
+    <meta name="description" content="Orbit Rush arcade — Orbit Rush and Orbit Mirror. Steer, mirror your reflexes, climb two leaderboards." />
     <title>Orbit Rush</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='10' fill='%2300f0ff'/%3E%3Ccircle cx='32' cy='32' r='22' fill='none' stroke='%23ff2bd6' stroke-width='3'/%3E%3C/svg%3E" />
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
     <div id="app">
-      <canvas id="game" aria-label="Orbit Rush game canvas"></canvas>
+      <canvas id="game" aria-label="Orbit Arcade game canvas"></canvas>
 
       <div id="hud" class="hud hidden">
         <div class="hud-left">
           <div class="stat"><span class="label">SCORE</span><span id="hud-score">0</span></div>
           <div class="stat"><span class="label">ORBS</span><span id="hud-orbs">0</span></div>
           <div id="hud-combo" class="stat combo hidden">
-            <span class="label">COMBO</span><span id="hud-combo-val">x1</span>
+            <span class="label" id="hud-combo-label">COMBO</span><span id="hud-combo-val">x1</span>
           </div>
         </div>
         <div class="hud-mid">
@@ -60,10 +60,30 @@
         </div>
       </section>
 
+      <!-- Game select hub. Site brand stays Orbit Rush. -->
+      <section id="screen-hub" class="screen">
+        <div class="panel hub-panel">
+          <p class="eyebrow">ORBIT RUSH</p>
+          <h1 class="logo">ORBIT<span>ARCADE</span></h1>
+          <p class="tagline">Zwei Spiele. Ein Pilot.</p>
+          <p id="hub-identity" class="identity-line hidden">Welcome back, <strong id="hub-identity-name"></strong></p>
+          <div class="hub-tiles">
+            <button type="button" id="btn-hub-rush" class="hub-tile rush">
+              <strong>ORBIT RUSH</strong>
+              <span>Steuere den Orbit. Sammle Orbs. Überlebe.</span>
+            </button>
+            <button type="button" id="btn-hub-mirror" class="hub-tile mirror">
+              <strong>ORBIT MIRROR</strong>
+              <span>Dein Reflex lügt. Das Schiff fliegt gespiegelt.</span>
+            </button>
+          </div>
+        </div>
+      </section>
+
       <!-- Title -->
-      <section id="screen-title" class="screen">
+      <section id="screen-title" class="screen hidden">
         <div class="panel title-panel">
-          <p class="eyebrow">NEON SKILL RUN · v1.3</p>
+          <p class="eyebrow">NEON SKILL RUN · v1.4</p>
           <h1 class="logo">ORBIT<span>RUSH</span></h1>
           <p class="tagline">Steer your orbit. Grab orbs. Survive the debris.</p>
           <p id="title-identity" class="identity-line hidden">Welcome back, <strong id="title-identity-name"></strong></p>
@@ -82,6 +102,40 @@
             <button type="button" id="btn-skins" class="btn ghost">SKINS</button>
           </div>
           <button type="button" id="btn-lb-title" class="btn ghost">LEADERBOARD</button>
+          <button type="button" id="btn-title-hub" class="btn ghost">ARCADE</button>
+        </div>
+      </section>
+
+      <!-- Orbit Mirror menu -->
+      <section id="screen-mirror" class="screen hidden">
+        <div class="panel mirror-panel">
+          <p class="eyebrow">MIRROR RUN</p>
+          <h1 class="logo">ORBIT<span>MIRROR</span></h1>
+          <p class="tagline">Links → außen. Rechts → innen.</p>
+          <p class="tagline">Left moves the ship outward. The ghost is your reflex.</p>
+          <p id="mirror-best" class="best-line">
+            Best: <strong id="mirror-best-val">—</strong> · Streak: <strong id="mirror-streak-val">—</strong>
+          </p>
+          <button type="button" id="btn-mirror-play" class="btn primary pulse">PLAY</button>
+          <button type="button" id="btn-mirror-lb" class="btn ghost">LEADERBOARD</button>
+          <button type="button" id="btn-mirror-hub" class="btn ghost">ARCADE</button>
+        </div>
+      </section>
+
+      <section id="screen-mirror-onboard" class="screen hidden">
+        <div class="panel onboard-panel">
+          <p class="eyebrow">SPIEGEL-REGEL · MIRROR RULE</p>
+          <h2>Links → außen</h2>
+          <p class="tagline">
+            Der Schatten ist dein Reflex. Das Schiff fliegt gespiegelt — links schiebt es nach außen, rechts nach innen.
+          </p>
+          <p class="tagline">The ghost is your reflex. Left input moves the ship outward.</p>
+          <div class="mirror-demo" aria-hidden="true">
+            <div class="ghost"><strong>← SCHATTEN</strong><span>nach innen · in</span></div>
+            <div class="ship"><strong>← SCHIFF</strong><span>nach außen · out</span></div>
+          </div>
+          <button type="button" id="btn-mirror-onboard" class="btn primary">VERSTANDEN</button>
+          <button type="button" id="btn-mirror-onboard-skip" class="btn ghost">SKIP</button>
         </div>
       </section>
 
@@ -148,12 +202,13 @@
       <!-- Game Over -->
       <section id="screen-over" class="screen hidden">
         <div class="panel over-panel">
-          <h2>ORBIT LOST</h2>
+          <h2 id="over-title">ORBIT LOST</h2>
           <p id="over-diff" class="diff-badge-line"><span id="over-diff-badge" class="diff-badge">Mittel</span></p>
           <p id="over-new-best" class="new-best hidden">★ NEW PERSONAL BEST ★</p>
           <p id="over-score" class="big-score">0</p>
           <p id="over-formula" class="formula"></p>
           <p id="over-best" class="best-line muted hidden">Best: <strong id="over-best-val">0</strong></p>
+          <p id="over-streak" class="best-line muted hidden">Clean streak: <strong id="over-streak-val">0</strong></p>
           <p id="over-identity" class="identity-line hidden">Welcome back, <strong id="over-identity-name"></strong></p>
           <form id="score-form" autocomplete="off">
             <p id="name-hint" class="muted name-hint">Enter a name once. Later runs save automatically.</p>
@@ -176,13 +231,14 @@
             <button type="button" id="btn-retry" class="btn primary">PLAY AGAIN</button>
           </div>
           <button type="button" id="btn-lb-over" class="btn ghost">TOP 50</button>
+          <button type="button" id="btn-over-hub" class="btn ghost">ARCADE</button>
         </div>
       </section>
 
       <!-- Leaderboard -->
       <section id="screen-lb" class="screen hidden">
         <div class="panel lb-panel">
-          <h2>GLOBAL TOP 50</h2>
+          <h2 id="lb-heading">GLOBAL TOP 50</h2>
           <div id="lb-filters" class="lb-filters" role="tablist" aria-label="Filter by difficulty">
             <button type="button" class="lb-filter active" data-filter="all">All</button>
             <button type="button" class="lb-filter" data-filter="einfach">Einfach</button>

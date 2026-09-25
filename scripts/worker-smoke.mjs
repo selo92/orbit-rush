@@ -35,6 +35,9 @@ for (const table of ['scores', 'rate_limits', 'client_key', 'daily_date']) {
 }
 const migrationClient = fs.readFileSync(path.join(root, 'migrations', '0002_client_id.sql'), 'utf8');
 assert(migrationClient.includes('client_id'), 'client id migration');
+const migrationGame = fs.readFileSync(path.join(root, 'migrations', '0003_game.sql'), 'utf8');
+assert(migrationGame.includes('game'), 'game migration adds column');
+assert(migrationGame.includes("'rush'"), 'game migration defaults existing rows to rush');
 assert(
   isOwnRow(
     { name: 'Other', clientId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' },
@@ -107,7 +110,7 @@ async function api(pathname, { method = 'GET', body, ip = '203.0.113.10' } = {})
 try {
   const health = await api('/api/health');
   assert(health.status === 200, 'health status');
-  assert(health.data.version === '1.3', 'health version');
+  assert(health.data.version === '1.4', 'health version');
   assert(health.data.storage === 'd1', 'health storage');
 
   const survivalMs = 32000;
@@ -385,6 +388,76 @@ try {
   );
   const colNames = db._sqlite.prepare('PRAGMA table_info(scores)').all().map((c) => c.name);
   assert(colNames.includes('client_id'), `client_id column missing: ${colNames.join(',')}`);
+
+  const mirrorScore = computeScore(12000, 2, 50, 1);
+  const mirrorBody = {
+    name: 'MirrorPilot',
+    score: mirrorScore,
+    survivalMs: 12000,
+    orbs: 2,
+    comboBonus: 50,
+    nearMisses: 1,
+    game: 'mirror',
+    clientId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+  };
+  const mirrorPost = await api('/api/scores', {
+    method: 'POST',
+    ip: '203.0.113.90',
+    body: mirrorBody,
+  });
+  assert(mirrorPost.status === 200, `mirror post ${JSON.stringify(mirrorPost.data)}`);
+  assert(mirrorPost.data.scores.every((s) => s.game === 'mirror'), 'mirror response is the mirror board');
+  assert(mirrorPost.data.scores.some((s) => s.name === 'MirrorPilot'), 'mirror pilot listed');
+  await new Promise((r) => setTimeout(r, 2100));
+  const mirrorDup = await api('/api/scores', {
+    method: 'POST',
+    ip: '203.0.113.90',
+    body: mirrorBody,
+  });
+  assert(mirrorDup.status === 200 && mirrorDup.data.duplicate === true, 'mirror duplicate is per game');
+
+  const rushBoard = await api('/api/scores?game=rush', { ip: '203.0.113.91' });
+  assert(rushBoard.status === 200, 'rush board');
+  assert(rushBoard.data.scores.every((s) => s.game === 'rush'), 'rush filter');
+  assert(!rushBoard.data.scores.some((s) => s.name === 'MirrorPilot'), 'mirror score stays off rush');
+  const defaultBoard = await api('/api/scores', { ip: '203.0.113.91' });
+  assert(!defaultBoard.data.scores.some((s) => s.name === 'MirrorPilot'), 'omitted game defaults to rush');
+  const mirrorBoard = await api('/api/scores?game=mirror', { ip: '203.0.113.91' });
+  assert(mirrorBoard.data.scores.some((s) => s.name === 'MirrorPilot'), 'mirror filter');
+  assert(mirrorBoard.data.game === 'mirror', 'response names the board');
+  const badGame = await api('/api/scores?game=puzzle', { ip: '203.0.113.91' });
+  assert(badGame.status === 400, 'invalid game filter rejected');
+  const badGamePost = await api('/api/scores', {
+    method: 'POST',
+    ip: '203.0.113.92',
+    body: { name: 'BadGame', score: computeScore(1000, 0, 0, 0), survivalMs: 1000, orbs: 0, game: 'puzzle' },
+  });
+  assert(badGamePost.status === 400 && badGamePost.data.error === 'Invalid game (rush|mirror)', 'invalid game post');
+
+  db._sqlite.exec('DROP INDEX IF EXISTS idx_scores_game_board');
+  db._sqlite.exec('ALTER TABLE scores DROP COLUMN game');
+  resetSchemaForTests();
+  const healed = await api('/api/scores?game=rush', { ip: '203.0.113.93' });
+  assert(healed.status === 200, `game column heal ${JSON.stringify(healed.data)}`);
+  assert(healed.data.scores.every((s) => s.game === 'rush'), 'legacy rows default to rush');
+  const healedCols = db._sqlite.prepare('PRAGMA table_info(scores)').all().map((c) => c.name);
+  assert(healedCols.includes('game'), `game column missing after heal: ${healedCols.join(',')}`);
+  const mirrorAfter = await api('/api/scores', {
+    method: 'POST',
+    ip: '203.0.113.94',
+    body: {
+      name: 'MirrorAfter',
+      score: computeScore(3000, 1, 0, 0),
+      survivalMs: 3000,
+      orbs: 1,
+      comboBonus: 0,
+      nearMisses: 0,
+      game: 'mirror',
+    },
+  });
+  assert(mirrorAfter.status === 200, `mirror after heal ${JSON.stringify(mirrorAfter.data)}`);
+  assert(mirrorAfter.data.scores.every((s) => s.game === 'mirror'), 'healed table still splits boards');
+  assert(!mirrorAfter.data.scores.some((s) => s.game === 'rush'), 'mirror post does not return rush rows');
 
   console.log('WORKER SMOKE OK', {
     formula: score,

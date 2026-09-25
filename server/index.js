@@ -68,7 +68,7 @@ function writeScores(scores) {
 }
 
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, service: 'orbit-rush-api', version: '1.3' });
+  res.json({ ok: true, service: 'orbit-rush-api', version: '1.4' });
 });
 
 app.get('/api/scores', (req, res) => {
@@ -80,6 +80,7 @@ app.get('/api/scores', (req, res) => {
     difficulty: parsed.difficulty || 'all',
     mode: parsed.mode || 'all',
     dailyDate: parsed.dailyDate || null,
+    game: parsed.game || 'rush',
   });
 });
 

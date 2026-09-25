@@ -2,7 +2,7 @@
  * Production /api/scores handler. Persistence is a D1-compatible database
  * (prepare/bind/first/all/run/batch). Same JSON contract as server/index.js.
  */
-import { CLIENT_ID_INDEX_SQL, SCHEMA_STATEMENTS } from '../shared/schema.js';
+import { CLIENT_ID_INDEX_SQL, GAME_INDEX_SQL, SCHEMA_STATEMENTS } from '../shared/schema.js';
 import {
   RATE_MAX,
   RATE_WINDOW_MS,
@@ -77,6 +77,30 @@ async function ensureClientIdColumn(db) {
   await db.prepare(CLIENT_ID_INDEX_SQL).run();
 }
 
+async function ensureGameColumn(db) {
+  let hasColumn = false;
+  try {
+    const info = await db.prepare('PRAGMA table_info(scores)').all();
+    hasColumn = rowsOf(info).some((row) => row.name === 'game');
+  } catch (err) {
+    console.error('pragma scores game', err);
+  }
+  if (!hasColumn) {
+    try {
+      await db.prepare("ALTER TABLE scores ADD COLUMN game TEXT NOT NULL DEFAULT 'rush'").run();
+    } catch (err) {
+      const msg = String(err?.message || err);
+      if (!/duplicate column/i.test(msg)) throw err;
+    }
+  }
+  try {
+    await db.prepare("UPDATE scores SET game = 'rush' WHERE game IS NULL OR game = ''").run();
+  } catch (err) {
+    console.error('backfill game', err);
+  }
+  await db.prepare(GAME_INDEX_SQL).run();
+}
+
 async function ensureSchema(db) {
   if (schemaReady) return;
   if (!db?.prepare) throw new Error('D1 binding DB is missing');
@@ -88,6 +112,7 @@ async function ensureSchema(db) {
     }
   }
   await ensureClientIdColumn(db);
+  await ensureGameColumn(db);
   schemaReady = true;
 }
 
@@ -131,8 +156,8 @@ async function bumpRateLimit(db, key, now) {
 }
 
 async function listBoard(db, query) {
-  const where = [];
-  const params = [];
+  const where = [`COALESCE(game, 'rush') = ?`];
+  const params = [query.game === 'mirror' ? 'mirror' : 'rush'];
   if (query.mode === 'daily') {
     where.push(`mode = 'daily'`);
     if (query.dailyDate) {
@@ -146,9 +171,9 @@ async function listBoard(db, query) {
       params.push(query.difficulty);
     }
   }
-  const sql = `SELECT name, score, ts, difficulty, mode, daily_date AS dailyDate, client_id AS clientId
+  const sql = `SELECT name, score, ts, difficulty, mode, daily_date AS dailyDate, client_id AS clientId, game
     FROM scores
-    ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+    WHERE ${where.join(' AND ')}
     ORDER BY score DESC, ts ASC
     LIMIT 50`;
   const result = await db.prepare(sql).bind(...params).all();
@@ -162,6 +187,7 @@ async function listBoard(db, query) {
     mode: e.mode === 'daily' ? 'daily' : 'normal',
     dailyDate: e.dailyDate || null,
     clientId: e.clientId || e.client_id || null,
+    game: e.game === 'mirror' ? 'mirror' : 'rush',
   }));
 }
 
@@ -178,6 +204,7 @@ async function findDuplicate(db, value, key, now) {
          AND (
            (? IS NULL AND daily_date IS NULL) OR daily_date = ?
          )
+         AND COALESCE(game, 'rush') = ?
          AND ts > ?
        ORDER BY ts DESC
        LIMIT 1`
@@ -190,6 +217,7 @@ async function findDuplicate(db, value, key, now) {
       value.mode,
       value.dailyDate,
       value.dailyDate,
+      value.game === 'mirror' ? 'mirror' : 'rush',
       now - 10_000
     )
     .first();
@@ -210,8 +238,8 @@ async function insertAndTrim(db, value, key, now) {
     .prepare(
       `INSERT INTO scores (
          name, score, survival_ms, orbs, combo_bonus, near_misses,
-         difficulty, mode, daily_date, ts, client_key, client_id
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         difficulty, mode, daily_date, ts, client_key, client_id, game
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .bind(
       value.name,
@@ -225,7 +253,8 @@ async function insertAndTrim(db, value, key, now) {
       value.dailyDate,
       now,
       key,
-      value.clientId || null
+      value.clientId || null,
+      value.game === 'mirror' ? 'mirror' : 'rush'
     );
   const trim = db.prepare(
     `DELETE FROM scores WHERE id NOT IN (
@@ -273,7 +302,7 @@ export async function handleApi(request, db) {
   }
 
   if (request.method === 'GET' && url.pathname === '/api/health') {
-    return json({ ok: true, service: 'orbit-rush-api', version: '1.3', storage: 'd1' }, 200, request);
+    return json({ ok: true, service: 'orbit-rush-api', version: '1.4', storage: 'd1' }, 200, request);
   }
 
   if (request.method === 'GET' && url.pathname === '/api/scores') {
@@ -286,6 +315,7 @@ export async function handleApi(request, db) {
         difficulty: parsed.difficulty || 'all',
         mode: parsed.mode || 'all',
         dailyDate: parsed.dailyDate || null,
+        game: parsed.game || 'rush',
       },
       200,
       request
