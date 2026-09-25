@@ -1,0 +1,873 @@
+/**
+ * Orbit Rush – UI wiring & bootstrap (v1.3)
+ * Daily Challenge · Achievements · Share · Craft skins
+ */
+import { Game, formatFormula, computeScore, NEAR_MISS_POINTS, COMBO_STEP } from './game.js';
+import {
+  DIFFICULTIES,
+  DIFFICULTY_IDS,
+  DEFAULT_DIFFICULTY,
+  normalizeDifficulty,
+  getDifficulty,
+  difficultyBadge,
+} from './difficulty.js';
+import { AudioBus } from './audio.js';
+import { fetchScores, submitScore, sanitizeName } from './leaderboard.js';
+import { utcDateString } from './rng.js';
+import {
+  ACHIEVEMENTS,
+  checkUnlocks,
+  unlockMany,
+  unlockedSet,
+  loadAchievements,
+} from './achievements.js';
+import {
+  SKINS,
+  SKIN_IDS,
+  DEFAULT_SKIN,
+  getSkin,
+  loadSavedSkin,
+  saveSkin,
+  isSkinUnlocked,
+  normalizeSkin,
+} from './skins.js';
+
+const $ = (id) => document.getElementById(id);
+
+const LS_BEST = 'orbit-rush-best';
+const LS_BEST_PREFIX = 'orbit-rush-best-';
+const LS_DAILY_PREFIX = 'orbit-rush-daily-best-';
+const LS_DIFF = 'orbit-rush-difficulty';
+const LS_ONBOARD = 'orbit-rush-onboard-v1';
+const LS_NAME = 'orbit-rush-name';
+const SHARE_NOTE = '(Orbit Rush — play locally / LiveCodes)';
+
+const canvas = /** @type {HTMLCanvasElement} */ ($('game'));
+const audio = new AudioBus();
+
+const screens = {
+  title: $('screen-title'),
+  diff: $('screen-diff'),
+  pause: $('screen-pause'),
+  over: $('screen-over'),
+  lb: $('screen-lb'),
+  onboard: $('screen-onboard'),
+  achievements: $('screen-achievements'),
+  skins: $('screen-skins'),
+};
+
+const hud = $('hud');
+const hudScore = $('hud-score');
+const hudOrbs = $('hud-orbs');
+const hudTime = $('hud-time');
+const hudCombo = $('hud-combo');
+const hudComboVal = $('hud-combo-val');
+const hudMode = $('hud-mode');
+const pwrShield = $('pwr-shield');
+const pwrSlow = $('pwr-slow');
+const pwrMagnet = $('pwr-magnet');
+const btnMute = $('btn-mute');
+const btnPause = $('btn-pause');
+const touchHint = $('touch-hint');
+const toastEl = $('toast');
+
+/** @type {object|null} */
+let lastResult = null;
+let lbBackTo = 'title';
+let lbFilter = 'all';
+let submitting = false;
+let onboardStep = 0;
+let pendingAfterOnboard = null; // 'play' | 'daily' | null
+/** @type {'normal'|'daily'} */
+let runMode = 'normal';
+let dailyDate = utcDateString();
+/** @type {import('./difficulty.js').DifficultyId} */
+let selectedDifficulty = loadSavedDifficulty();
+/** @type {string} */
+let selectedSkin = normalizeSkin(loadSavedSkin());
+
+const ONBOARD_STEPS = [
+  {
+    title: 'Steer your orbit',
+    body: 'Drag left/right or use A/D to change radius. Your craft auto-revolves around the planet.',
+  },
+  {
+    title: 'Collect orbs',
+    body: 'Grab cyan orbs for points. Chain them quickly for combo multipliers (up to x5).',
+  },
+  {
+    title: 'Survive & juice',
+    body: 'Dodge asteroids — near misses score bonus. Rare power-ups: Shield, Slow-mo, Magnet. Try the Daily!',
+  },
+];
+
+function loadSavedDifficulty() {
+  try {
+    return normalizeDifficulty(localStorage.getItem(LS_DIFF) || DEFAULT_DIFFICULTY);
+  } catch {
+    return DEFAULT_DIFFICULTY;
+  }
+}
+
+function saveDifficulty(id) {
+  const d = normalizeDifficulty(id);
+  selectedDifficulty = d;
+  try {
+    localStorage.setItem(LS_DIFF, d);
+  } catch {
+    /* ignore */
+  }
+}
+
+function bestKey(id) {
+  return LS_BEST_PREFIX + normalizeDifficulty(id);
+}
+
+function getBest(id = selectedDifficulty) {
+  const d = normalizeDifficulty(id);
+  try {
+    const per = Math.max(0, Math.floor(Number(localStorage.getItem(bestKey(d))) || 0));
+    if (per > 0) return per;
+    if (d === 'mittel') {
+      const legacy = Math.max(0, Math.floor(Number(localStorage.getItem(LS_BEST)) || 0));
+      if (legacy > 0) {
+        localStorage.setItem(bestKey('mittel'), String(legacy));
+        return legacy;
+      }
+    }
+    return 0;
+  } catch {
+    return 0;
+  }
+}
+
+function setBest(score, id = selectedDifficulty) {
+  const d = normalizeDifficulty(id);
+  try {
+    localStorage.setItem(bestKey(d), String(Math.floor(score)));
+    if (d === 'mittel') localStorage.setItem(LS_BEST, String(Math.floor(score)));
+  } catch {
+    /* ignore */
+  }
+}
+
+function dailyBestKey(dateStr) {
+  return LS_DAILY_PREFIX + dateStr;
+}
+
+function getDailyBest(dateStr = dailyDate) {
+  try {
+    return Math.max(0, Math.floor(Number(localStorage.getItem(dailyBestKey(dateStr))) || 0));
+  } catch {
+    return 0;
+  }
+}
+
+function setDailyBest(score, dateStr = dailyDate) {
+  try {
+    const prev = getDailyBest(dateStr);
+    if (score > prev) localStorage.setItem(dailyBestKey(dateStr), String(Math.floor(score)));
+  } catch {
+    /* ignore */
+  }
+}
+
+function onboardDone() {
+  try {
+    return localStorage.getItem(LS_ONBOARD) === '1';
+  } catch {
+    return true;
+  }
+}
+
+function markOnboardDone() {
+  try {
+    localStorage.setItem(LS_ONBOARD, '1');
+  } catch {
+    /* ignore */
+  }
+}
+
+function showScreen(name) {
+  for (const [k, el] of Object.entries(screens)) {
+    if (!el) continue;
+    el.classList.toggle('hidden', k !== name);
+  }
+}
+
+function hideAllScreens() {
+  for (const el of Object.values(screens)) {
+    if (el) el.classList.add('hidden');
+  }
+}
+
+function syncMuteBtn() {
+  btnMute.textContent = audio.muted ? '🔇' : '🔊';
+  btnMute.title = audio.muted ? 'Unmute' : 'Mute';
+  btnMute.setAttribute('aria-label', audio.muted ? 'Unmute' : 'Mute');
+}
+
+function refreshTitleBest() {
+  const best = getBest(selectedDifficulty);
+  const el = $('title-best');
+  const val = $('title-best-val');
+  const label = getDifficulty(selectedDifficulty).label;
+  if (best > 0) {
+    el.classList.remove('hidden');
+    // text node before <strong>
+    if (el.childNodes[0] && el.childNodes[0].nodeType === 3) {
+      el.childNodes[0].textContent = `Best (${label}): `;
+    }
+    val.textContent = String(best);
+  } else {
+    el.classList.add('hidden');
+  }
+  dailyDate = utcDateString();
+  $('title-daily-date').textContent = dailyDate;
+  const db = getDailyBest(dailyDate);
+  const dailyLine = $('title-daily');
+  if (db > 0) {
+    dailyLine.innerHTML = `Daily · <span id="title-daily-date">${dailyDate}</span> · best <strong>${db}</strong>`;
+  } else {
+    dailyLine.innerHTML = `Daily · <span id="title-daily-date">${dailyDate}</span>`;
+  }
+}
+
+function syncDiffChips() {
+  document.querySelectorAll('.diff-chip').forEach((btn) => {
+    const id = btn.getAttribute('data-diff');
+    btn.setAttribute('aria-pressed', id === selectedDifficulty ? 'true' : 'false');
+  });
+  const best = getBest(selectedDifficulty);
+  const label = getDifficulty(selectedDifficulty).label;
+  const diffBest = $('diff-best');
+  if (diffBest.childNodes[0] && diffBest.childNodes[0].nodeType === 3) {
+    diffBest.childNodes[0].textContent = `Best on ${label}: `;
+  }
+  $('diff-best-val').textContent = best > 0 ? String(best) : '—';
+  const startBtn = $('btn-diff-start');
+  if (selectedDifficulty === 'baba') {
+    startBtn.textContent = 'START BABA';
+    startBtn.classList.add('baba-start');
+  } else {
+    startBtn.textContent = 'START RUN';
+    startBtn.classList.remove('baba-start');
+  }
+}
+
+function openDifficultyPicker() {
+  runMode = 'normal';
+  syncDiffChips();
+  showScreen('diff');
+}
+
+function renderOnboardStep() {
+  const step = ONBOARD_STEPS[onboardStep] || ONBOARD_STEPS[0];
+  $('onboard-title').textContent = step.title;
+  $('onboard-body').textContent = step.body;
+  $('btn-onboard-next').textContent =
+    onboardStep >= ONBOARD_STEPS.length - 1 ? "LET'S GO" : 'NEXT';
+  document.querySelectorAll('.onboard-dots .dot').forEach((d, i) => {
+    d.classList.toggle('active', i === onboardStep);
+  });
+}
+
+function finishOnboard() {
+  markOnboardDone();
+  const pending = pendingAfterOnboard;
+  pendingAfterOnboard = null;
+  if (pending === 'daily') {
+    beginRun({ daily: true });
+  } else if (pending === 'play') {
+    openDifficultyPicker();
+  } else {
+    showScreen('title');
+  }
+}
+
+function setOverDiffBadge(result) {
+  const badge = $('over-diff-badge');
+  if (result.daily) {
+    badge.textContent = `Daily · ${result.dailyDate || dailyDate}`;
+    badge.className = 'diff-badge daily';
+  } else {
+    const d = normalizeDifficulty(result.difficulty || selectedDifficulty);
+    badge.textContent = difficultyBadge(d);
+    badge.className = `diff-badge ${d}`;
+  }
+}
+
+function showToast(title, body = '') {
+  toastEl.innerHTML = `<strong>${title}</strong>${body ? `<span>${body}</span>` : ''}`;
+  toastEl.classList.remove('hidden');
+  toastEl.classList.add('show');
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => {
+    toastEl.classList.remove('show');
+    setTimeout(() => toastEl.classList.add('hidden'), 280);
+  }, 2800);
+}
+
+function processAchievements(result) {
+  const current = loadAchievements();
+  const ids = checkUnlocks(current, {
+    orbs: result.orbs || 0,
+    comboPeak: result.comboPeak || 1,
+    nearMisses: result.nearMisses || 0,
+    survivalMs: result.survivalMs || 0,
+    difficulty: result.difficulty || selectedDifficulty,
+    daily: !!result.daily,
+  });
+  const unlocked = unlockMany(ids);
+  for (const def of unlocked) {
+    showToast(`★ ${def.title}`, def.desc);
+  }
+  return unlocked;
+}
+
+function renderAchievements() {
+  const list = $('ach-list');
+  const unlocked = loadAchievements();
+  list.innerHTML = '';
+  for (const a of ACHIEVEMENTS) {
+    const li = document.createElement('li');
+    const on = !!unlocked[a.id];
+    li.className = on ? 'ach unlocked' : 'ach locked';
+    li.innerHTML = `<span class="ach-icon">${on ? '★' : '☆'}</span>
+      <span class="ach-text"><strong>${a.title}</strong><em>${a.desc}</em></span>`;
+    list.appendChild(li);
+  }
+}
+
+function skinIsUnlocked(id) {
+  return isSkinUnlocked(id, unlockedSet(), { getBest });
+}
+
+function renderSkins() {
+  const box = $('skin-options');
+  box.innerHTML = '';
+  for (const id of SKIN_IDS) {
+    const skin = getSkin(id);
+    const unlocked = skinIsUnlocked(id);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className =
+      'skin-chip' + (id === selectedSkin ? ' active' : '') + (unlocked ? '' : ' locked');
+    btn.setAttribute('data-skin', id);
+    btn.setAttribute('aria-pressed', id === selectedSkin ? 'true' : 'false');
+    btn.disabled = !unlocked;
+    btn.innerHTML = `<span class="skin-swatch" style="--c:${skin.craft};--a:${skin.accent}"></span>
+      <span class="skin-meta"><strong>${skin.label}</strong>
+      <em>${unlocked ? (id === selectedSkin ? 'Equipped' : 'Unlocked') : 'Locked'}</em></span>`;
+    btn.addEventListener('click', () => {
+      if (!unlocked) return;
+      audio.click();
+      selectedSkin = saveSkin(id);
+      game.setSkin(selectedSkin);
+      renderSkins();
+    });
+    box.appendChild(btn);
+  }
+}
+
+function openAchievements() {
+  renderAchievements();
+  showScreen('achievements');
+}
+
+function openSkins() {
+  if (!skinIsUnlocked(selectedSkin)) {
+    selectedSkin = saveSkin(DEFAULT_SKIN);
+  }
+  game.setSkin(selectedSkin);
+  renderSkins();
+  showScreen('skins');
+}
+
+function buildShareText(result) {
+  const score = result?.score ?? 0;
+  let tag;
+  if (result?.daily) {
+    tag = `Daily · ${result.dailyDate || dailyDate}`;
+  } else {
+    tag = getDifficulty(result?.difficulty || selectedDifficulty).label;
+  }
+  return `Orbit Rush [${tag}] — score ${score} — beat me! ${SHARE_NOTE}`;
+}
+
+async function shareScore() {
+  if (!lastResult) return;
+  const text = buildShareText(lastResult);
+  audio.click();
+  try {
+    if (navigator.share) {
+      await navigator.share({ title: 'Orbit Rush', text });
+      $('submit-status').textContent = 'Shared!';
+      $('submit-status').classList.remove('error');
+      return;
+    }
+  } catch (e) {
+    if (e && e.name === 'AbortError') return;
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    $('submit-status').textContent = 'Copied share text!';
+    $('submit-status').classList.remove('error');
+  } catch {
+    $('submit-status').textContent = text;
+    $('submit-status').classList.remove('error');
+  }
+}
+
+const game = new Game(canvas, {
+  audio,
+  onHud({ score, orbs, time, combo, shield, slowMo, magnet }) {
+    hudScore.textContent = String(score);
+    hudOrbs.textContent = String(orbs);
+    hudTime.textContent = time.toFixed(1);
+    if (combo > 1) {
+      hudCombo.classList.remove('hidden');
+      hudComboVal.textContent = `x${combo}`;
+      hudCombo.classList.toggle('hot', combo >= 4);
+    } else {
+      hudCombo.classList.add('hidden');
+      hudCombo.classList.remove('hot');
+    }
+    pwrShield.classList.toggle('hidden', !shield);
+    pwrSlow.classList.toggle('hidden', !slowMo);
+    pwrMagnet.classList.toggle('hidden', !magnet);
+  },
+  onTutorial({ type }) {
+    if (type === 'orbit' || type === 'orb') {
+      touchHint.classList.add('fade-fast');
+      setTimeout(() => touchHint.classList.add('hidden'), 600);
+    }
+  },
+  onGameOver(result) {
+    lastResult = result;
+    hud.classList.add('hidden');
+    touchHint.classList.add('hidden');
+    audio.stopMusic();
+
+    processAchievements(result);
+
+    let isNew = false;
+    let best = 0;
+    if (result.daily) {
+      const date = result.dailyDate || dailyDate;
+      const prev = getDailyBest(date);
+      isNew = result.score > prev;
+      if (isNew) setDailyBest(result.score, date);
+      best = Math.max(prev, result.score);
+      const ob = $('over-best');
+      if (ob.childNodes[0] && ob.childNodes[0].nodeType === 3) {
+        ob.childNodes[0].textContent = `Daily best (${date}): `;
+      }
+    } else {
+      const diff = normalizeDifficulty(result.difficulty || selectedDifficulty);
+      const prevBest = getBest(diff);
+      isNew = result.score > prevBest;
+      if (isNew) setBest(result.score, diff);
+      best = Math.max(prevBest, result.score);
+      const ob = $('over-best');
+      if (ob.childNodes[0] && ob.childNodes[0].nodeType === 3) {
+        ob.childNodes[0].textContent = `Best (${getDifficulty(diff).label}): `;
+      }
+    }
+
+    setOverDiffBadge(result);
+    $('over-score').textContent = String(result.score);
+    $('over-formula').textContent =
+      result.formula ||
+      formatFormula(
+        result.survivalMs,
+        result.orbs,
+        result.comboBonus,
+        result.nearMisses,
+        result.score
+      );
+    $('over-new-best').classList.toggle('hidden', !isNew || result.score <= 0);
+    $('over-best').classList.toggle('hidden', best <= 0);
+    $('over-best-val').textContent = String(best);
+
+    $('submit-status').textContent = '';
+    $('submit-status').classList.remove('error');
+    $('btn-submit').disabled = false;
+    submitting = false;
+    try {
+      const n = localStorage.getItem(LS_NAME);
+      if (n) $('player-name').value = sanitizeName(n);
+    } catch {
+      /* ignore */
+    }
+    refreshTitleBest();
+    showScreen('over');
+  },
+});
+
+game.setSkin(selectedSkin);
+
+function beginRun(opts = {}) {
+  audio.resume();
+  audio.click();
+  audio.startMusic();
+  hideAllScreens();
+  hud.classList.remove('hidden');
+  touchHint.classList.add('hidden');
+  touchHint.classList.remove('fade-fast');
+  void touchHint.offsetWidth;
+  touchHint.classList.remove('hidden');
+
+  const daily = !!opts.daily;
+  dailyDate = utcDateString();
+  if (daily) {
+    runMode = 'daily';
+    hudMode.textContent = `Daily · ${dailyDate}`;
+    hudMode.classList.remove('hidden');
+    game.start({
+      daily: true,
+      dailyDate,
+      skinId: selectedSkin,
+      difficulty: 'schwer',
+    });
+  } else {
+    runMode = 'normal';
+    hudMode.classList.add('hidden');
+    game.start({
+      difficulty: selectedDifficulty,
+      skinId: selectedSkin,
+    });
+  }
+}
+
+function startRun() {
+  runMode = 'normal';
+  if (!onboardDone()) {
+    pendingAfterOnboard = 'play';
+    onboardStep = 0;
+    renderOnboardStep();
+    showScreen('onboard');
+    audio.resume();
+    audio.click();
+    return;
+  }
+  audio.click();
+  openDifficultyPicker();
+}
+
+function startDaily() {
+  runMode = 'daily';
+  dailyDate = utcDateString();
+  if (!onboardDone()) {
+    pendingAfterOnboard = 'daily';
+    onboardStep = 0;
+    renderOnboardStep();
+    showScreen('onboard');
+    audio.resume();
+    audio.click();
+    return;
+  }
+  audio.click();
+  beginRun({ daily: true });
+}
+
+function openLeaderboard(from) {
+  lbBackTo = from;
+  lbFilter = runMode === 'daily' ? 'daily' : selectedDifficulty || 'all';
+  syncLbFilters();
+  showScreen('lb');
+  renderLeaderboard();
+}
+
+function syncLbFilters() {
+  document.querySelectorAll('.lb-filter').forEach((btn) => {
+    btn.classList.toggle('active', btn.getAttribute('data-filter') === lbFilter);
+  });
+}
+
+async function renderLeaderboard() {
+  const list = $('lb-list');
+  const empty = $('lb-empty');
+  list.innerHTML = '<li class="muted">Loading…</li>';
+  empty.classList.add('hidden');
+  try {
+    let scores;
+    let source;
+    if (lbFilter === 'daily') {
+      const res = await fetchScores({ mode: 'daily', dailyDate: utcDateString() });
+      scores = res.scores;
+      source = res.source;
+    } else {
+      const filter = lbFilter === 'all' ? undefined : lbFilter;
+      const res = await fetchScores(filter);
+      scores = res.scores;
+      source = res.source;
+    }
+    list.innerHTML = '';
+    if (!scores.length) {
+      empty.classList.remove('hidden');
+      empty.textContent =
+        source === 'local'
+          ? 'No scores yet (local demo). Be the first.'
+          : 'No scores yet — be the first.';
+      return;
+    }
+    for (const row of scores) {
+      const li = document.createElement('li');
+      const rank = document.createElement('span');
+      rank.className = 'rank';
+      rank.textContent = `#${row.rank}`;
+      const name = document.createElement('span');
+      name.className = 'name';
+      name.textContent = row.name;
+      const badge = document.createElement('span');
+      if (row.mode === 'daily' || lbFilter === 'daily') {
+        badge.className = 'diff-badge daily';
+        badge.textContent = row.dailyDate ? `Daily ${String(row.dailyDate).slice(5)}` : 'Daily';
+      } else {
+        const d = normalizeDifficulty(row.difficulty || 'mittel');
+        badge.className = `diff-badge ${d}`;
+        badge.textContent = difficultyBadge(d);
+      }
+      const pts = document.createElement('span');
+      pts.className = 'pts';
+      pts.textContent = String(row.score);
+      li.append(rank, name, badge, pts);
+      list.appendChild(li);
+    }
+  } catch {
+    list.innerHTML = '';
+    empty.classList.remove('hidden');
+    empty.textContent = 'Could not load leaderboard.';
+  }
+}
+
+$('btn-play').addEventListener('click', startRun);
+$('btn-daily').addEventListener('click', startDaily);
+$('btn-retry').addEventListener('click', () => {
+  if (lastResult?.daily || runMode === 'daily') startDaily();
+  else startRun();
+});
+$('btn-diff-start').addEventListener('click', () => {
+  saveDifficulty(selectedDifficulty);
+  beginRun({ daily: false });
+});
+$('btn-diff-back').addEventListener('click', () => {
+  audio.click();
+  refreshTitleBest();
+  showScreen('title');
+});
+
+document.querySelectorAll('.diff-chip').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    audio.click();
+    selectedDifficulty = normalizeDifficulty(btn.getAttribute('data-diff'));
+    syncDiffChips();
+  });
+});
+
+document.querySelectorAll('.lb-filter').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    audio.click();
+    lbFilter = btn.getAttribute('data-filter') || 'all';
+    syncLbFilters();
+    renderLeaderboard();
+  });
+});
+
+$('btn-resume').addEventListener('click', () => {
+  audio.click();
+  hideAllScreens();
+  hud.classList.remove('hidden');
+  audio.startMusic();
+  game.setPaused(false);
+});
+$('btn-quit').addEventListener('click', () => {
+  audio.click();
+  game.stop();
+  audio.stopMusic();
+  hud.classList.add('hidden');
+  hudMode.classList.add('hidden');
+  refreshTitleBest();
+  showScreen('title');
+});
+$('btn-lb-title').addEventListener('click', () => {
+  audio.click();
+  openLeaderboard('title');
+});
+$('btn-lb-over').addEventListener('click', () => {
+  audio.click();
+  openLeaderboard('over');
+});
+$('btn-lb-back').addEventListener('click', () => {
+  audio.click();
+  if (lbBackTo === 'over' && lastResult) showScreen('over');
+  else {
+    refreshTitleBest();
+    showScreen('title');
+  }
+});
+
+$('btn-onboard-next').addEventListener('click', () => {
+  audio.click();
+  if (onboardStep >= ONBOARD_STEPS.length - 1) finishOnboard();
+  else {
+    onboardStep += 1;
+    renderOnboardStep();
+  }
+});
+$('btn-onboard-skip').addEventListener('click', () => {
+  audio.click();
+  finishOnboard();
+});
+
+$('btn-achievements').addEventListener('click', () => {
+  audio.click();
+  openAchievements();
+});
+$('btn-ach-back').addEventListener('click', () => {
+  audio.click();
+  refreshTitleBest();
+  showScreen('title');
+});
+$('btn-skins').addEventListener('click', () => {
+  audio.click();
+  openSkins();
+});
+$('btn-skins-back').addEventListener('click', () => {
+  audio.click();
+  refreshTitleBest();
+  showScreen('title');
+});
+$('btn-share').addEventListener('click', () => {
+  shareScore();
+});
+
+btnPause.addEventListener('click', () => {
+  if (!game.running || !game.alive) return;
+  audio.click();
+  audio.stopMusic();
+  game.setPaused(true);
+  hud.classList.add('hidden');
+  showScreen('pause');
+});
+
+btnMute.addEventListener('click', () => {
+  audio.resume();
+  audio.toggleMute();
+  syncMuteBtn();
+  if (!audio.muted && game.running && game.alive && !game.paused) {
+    audio.startMusic();
+  }
+});
+
+$('score-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (!lastResult || submitting) return;
+  const name = sanitizeName($('player-name').value);
+  if (!name) {
+    $('submit-status').textContent = 'Enter a name (max 16).';
+    $('submit-status').classList.add('error');
+    return;
+  }
+  submitting = true;
+  $('btn-submit').disabled = true;
+  $('submit-status').classList.remove('error');
+  $('submit-status').textContent = 'Submitting…';
+  try {
+    localStorage.setItem(LS_NAME, name);
+  } catch {
+    /* ignore */
+  }
+  try {
+    const payload = {
+      name,
+      score: lastResult.score,
+      survivalMs: lastResult.survivalMs,
+      orbs: lastResult.orbs,
+      comboBonus: lastResult.comboBonus ?? 0,
+      nearMisses: lastResult.nearMisses ?? 0,
+      difficulty: lastResult.difficulty || selectedDifficulty,
+      mode: lastResult.daily ? 'daily' : 'normal',
+      dailyDate: lastResult.daily ? lastResult.dailyDate || dailyDate : undefined,
+    };
+    const res = await submitScore(payload);
+    const src = res.source === 'api' ? '' : ' (saved locally — API offline)';
+    const rankTxt = res.rank ? ` Rank #${res.rank}.` : '';
+    $('submit-status').textContent = `Saved!${rankTxt}${src}`;
+    if (res.duplicate) $('submit-status').textContent += ' (already submitted)';
+  } catch (err) {
+    $('submit-status').textContent = err.message || 'Submit failed';
+    $('submit-status').classList.add('error');
+    $('btn-submit').disabled = false;
+    submitting = false;
+  }
+});
+
+function onResize() {
+  game.resize();
+  if (!game.running) {
+    if (typeof game.seedStars === 'function') game.seedStars();
+    game.draw();
+  }
+}
+window.addEventListener('resize', onResize);
+window.addEventListener('orientationchange', () => setTimeout(onResize, 120));
+
+function idleDraw() {
+  if (!game.running) {
+    game.angle += 0.004;
+    game.draw();
+  }
+  requestAnimationFrame(idleDraw);
+}
+
+syncMuteBtn();
+refreshTitleBest();
+showScreen('title');
+game.resize();
+if (typeof game.seedStars === 'function') game.seedStars();
+idleDraw();
+
+window.__ORBIT_RUSH__ = {
+  game,
+  computeScore,
+  formatFormula,
+  NEAR_MISS_POINTS,
+  COMBO_STEP,
+  DIFFICULTIES,
+  DIFFICULTY_IDS,
+  DEFAULT_DIFFICULTY,
+  normalizeDifficulty,
+  getDifficulty,
+  startRun,
+  startDaily,
+  beginRun,
+  openDifficultyPicker,
+  sanitizeName,
+  getBest,
+  getDailyBest,
+  buildShareText,
+  utcDateString,
+  ACHIEVEMENTS,
+  SKINS,
+  get selectedDifficulty() {
+    return selectedDifficulty;
+  },
+  get selectedSkin() {
+    return selectedSkin;
+  },
+  get runMode() {
+    return runMode;
+  },
+  setDifficulty(id) {
+    saveDifficulty(id);
+    syncDiffChips();
+  },
+  setSkin(id) {
+    if (!skinIsUnlocked(id)) return false;
+    selectedSkin = saveSkin(id);
+    game.setSkin(selectedSkin);
+    return true;
+  },
+};

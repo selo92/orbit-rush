@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#050510" />
+    <meta name="description" content="Orbit Rush – dodge debris, collect orbs, climb the leaderboard." />
+    <title>Orbit Rush</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='10' fill='%2300f0ff'/%3E%3Ccircle cx='32' cy='32' r='22' fill='none' stroke='%23ff2bd6' stroke-width='3'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="game" aria-label="Orbit Rush game canvas"></canvas>
+
+      <div id="hud" class="hud hidden">
+        <div class="hud-left">
+          <div class="stat"><span class="label">SCORE</span><span id="hud-score">0</span></div>
+          <div class="stat"><span class="label">ORBS</span><span id="hud-orbs">0</span></div>
+          <div id="hud-combo" class="stat combo hidden">
+            <span class="label">COMBO</span><span id="hud-combo-val">x1</span>
+          </div>
+        </div>
+        <div class="hud-mid">
+          <div id="hud-mode" class="hud-mode hidden" aria-live="polite"></div>
+          <div id="hud-powers" class="power-icons" aria-live="polite">
+            <span id="pwr-shield" class="pwr hidden" title="Shield">🛡</span>
+            <span id="pwr-slow" class="pwr hidden" title="Slow-mo">⏱</span>
+            <span id="pwr-magnet" class="pwr hidden" title="Magnet">🧲</span>
+          </div>
+        </div>
+        <div class="hud-right">
+          <div class="stat"><span class="label">TIME</span><span id="hud-time">0.0</span></div>
+          <button type="button" id="btn-mute" class="icon-btn" title="Mute" aria-label="Mute">🔊</button>
+          <button type="button" id="btn-pause" class="icon-btn" title="Pause" aria-label="Pause">⏸</button>
+        </div>
+      </div>
+
+      <div id="touch-hint" class="touch-hint hidden">Drag left / right to change orbit</div>
+      <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+      <!-- First-run onboarding -->
+      <section id="screen-onboard" class="screen hidden">
+        <div class="panel onboard-panel">
+          <p class="eyebrow">QUICK START</p>
+          <h2 id="onboard-title">Steer your orbit</h2>
+          <p id="onboard-body" class="tagline">
+            Drag left/right or use A/D to change radius. Your craft auto-revolves.
+          </p>
+          <div class="onboard-dots" aria-hidden="true">
+            <span class="dot active" data-step="0"></span>
+            <span class="dot" data-step="1"></span>
+            <span class="dot" data-step="2"></span>
+          </div>
+          <button type="button" id="btn-onboard-next" class="btn primary">NEXT</button>
+          <button type="button" id="btn-onboard-skip" class="btn ghost">SKIP</button>
+        </div>
+      </section>
+
+      <!-- Title -->
+      <section id="screen-title" class="screen">
+        <div class="panel title-panel">
+          <p class="eyebrow">NEON SKILL RUN · v1.3</p>
+          <h1 class="logo">ORBIT<span>RUSH</span></h1>
+          <p class="tagline">Steer your orbit. Grab orbs. Survive the debris.</p>
+          <p id="title-best" class="best-line hidden">Personal best: <strong id="title-best-val">0</strong></p>
+          <p id="title-daily" class="daily-line muted">Daily · <span id="title-daily-date">—</span></p>
+          <div class="controls-card">
+            <p><kbd>A</kbd>/<kbd>D</kbd> or <kbd>←</kbd>/<kbd>→</kbd> — orbit radius</p>
+            <p>Touch: drag horizontally · Combos · Near-miss · Power-ups</p>
+          </div>
+          <div class="title-actions">
+            <button type="button" id="btn-play" class="btn primary pulse">PLAY</button>
+            <button type="button" id="btn-daily" class="btn daily">DAILY</button>
+          </div>
+          <div class="row title-secondary">
+            <button type="button" id="btn-achievements" class="btn ghost">ACHIEVEMENTS</button>
+            <button type="button" id="btn-skins" class="btn ghost">SKINS</button>
+          </div>
+          <button type="button" id="btn-lb-title" class="btn ghost">LEADERBOARD</button>
+        </div>
+      </section>
+
+      <!-- Difficulty picker -->
+      <section id="screen-diff" class="screen hidden">
+        <div class="panel diff-panel">
+          <p class="eyebrow">SELECT DIFFICULTY</p>
+          <h2>HOW HARD?</h2>
+          <p class="tagline diff-hint">Pick a challenge before launch.</p>
+          <div id="diff-options" class="diff-options" role="radiogroup" aria-label="Difficulty">
+            <button type="button" class="diff-chip" data-diff="einfach" aria-pressed="false">
+              <span class="diff-label">Einfach</span>
+              <span class="diff-blurb">Slower debris · more orbs</span>
+            </button>
+            <button type="button" class="diff-chip" data-diff="mittel" aria-pressed="true">
+              <span class="diff-label">Mittel</span>
+              <span class="diff-blurb">Classic balance</span>
+            </button>
+            <button type="button" class="diff-chip" data-diff="schwer" aria-pressed="false">
+              <span class="diff-label">Schwer</span>
+              <span class="diff-blurb">Faster · tighter · fewer orbs</span>
+            </button>
+            <button type="button" class="diff-chip baba" data-diff="baba" aria-pressed="false">
+              <span class="diff-label">Baba</span>
+              <span class="diff-blurb">⚠ Extreme · rare power-ups</span>
+            </button>
+          </div>
+          <p id="diff-best" class="best-line muted">Best on Mittel: <strong id="diff-best-val">—</strong></p>
+          <button type="button" id="btn-diff-start" class="btn primary pulse">START RUN</button>
+          <button type="button" id="btn-diff-back" class="btn ghost">BACK</button>
+        </div>
+      </section>
+
+      <!-- Achievements -->
+      <section id="screen-achievements" class="screen hidden">
+        <div class="panel ach-panel">
+          <p class="eyebrow">UNLOCKS</p>
+          <h2>ACHIEVEMENTS</h2>
+          <ul id="ach-list" class="ach-list"></ul>
+          <button type="button" id="btn-ach-back" class="btn ghost">BACK</button>
+        </div>
+      </section>
+
+      <!-- Skins -->
+      <section id="screen-skins" class="screen hidden">
+        <div class="panel skins-panel">
+          <p class="eyebrow">CRAFT LOOK</p>
+          <h2>SKINS</h2>
+          <p class="tagline">Unlock palettes via achievements (or a strong PB).</p>
+          <div id="skin-options" class="skin-options" role="radiogroup" aria-label="Craft skin"></div>
+          <button type="button" id="btn-skins-back" class="btn ghost">BACK</button>
+        </div>
+      </section>
+
+      <!-- Pause -->
+      <section id="screen-pause" class="screen hidden">
+        <div class="panel">
+          <h2>PAUSED</h2>
+          <button type="button" id="btn-resume" class="btn primary">RESUME</button>
+          <button type="button" id="btn-quit" class="btn ghost">QUIT</button>
+        </div>
+      </section>
+
+      <!-- Game Over -->
+      <section id="screen-over" class="screen hidden">
+        <div class="panel over-panel">
+          <h2>ORBIT LOST</h2>
+          <p id="over-diff" class="diff-badge-line"><span id="over-diff-badge" class="diff-badge">Mittel</span></p>
+          <p id="over-new-best" class="new-best hidden">★ NEW PERSONAL BEST ★</p>
+          <p id="over-score" class="big-score">0</p>
+          <p id="over-formula" class="formula"></p>
+          <p id="over-best" class="best-line muted hidden">Best: <strong id="over-best-val">0</strong></p>
+          <form id="score-form" autocomplete="off">
+            <label for="player-name">Name (max 16)</label>
+            <input
+              id="player-name"
+              name="name"
+              maxlength="16"
+              placeholder="PILOT"
+              enterkeyhint="done"
+              required
+            />
+            <button type="submit" id="btn-submit" class="btn primary">SUBMIT SCORE</button>
+          </form>
+          <p id="submit-status" class="status" aria-live="polite"></p>
+          <div class="row">
+            <button type="button" id="btn-share" class="btn ghost">SHARE</button>
+            <button type="button" id="btn-retry" class="btn primary">PLAY AGAIN</button>
+          </div>
+          <button type="button" id="btn-lb-over" class="btn ghost">TOP 50</button>
+        </div>
+      </section>
+
+      <!-- Leaderboard -->
+      <section id="screen-lb" class="screen hidden">
+        <div class="panel lb-panel">
+          <h2>GLOBAL TOP 50</h2>
+          <div id="lb-filters" class="lb-filters" role="tablist" aria-label="Filter by difficulty">
+            <button type="button" class="lb-filter active" data-filter="all">All</button>
+            <button type="button" class="lb-filter" data-filter="einfach">Einfach</button>
+            <button type="button" class="lb-filter" data-filter="mittel">Mittel</button>
+            <button type="button" class="lb-filter" data-filter="schwer">Schwer</button>
+            <button type="button" class="lb-filter baba" data-filter="baba">Baba</button>
+            <button type="button" class="lb-filter daily" data-filter="daily">Daily</button>
+          </div>
+          <ol id="lb-list" class="lb-list"></ol>
+          <p id="lb-empty" class="muted hidden">No scores yet — be the first.</p>
+          <button type="button" id="btn-lb-back" class="btn ghost">BACK</button>
+        </div>
+      </section>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

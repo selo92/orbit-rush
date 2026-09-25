@@ -1,0 +1,20 @@
+# Production host: static Vite build + /api on one workers.dev origin.
+# database_id is not a secret. `npm run deploy` rewrites it when the
+# logged-in Cloudflare account has a different `orbit-rush-scores` database.
+name = "orbit-rush"
+main = "worker/index.js"
+compatibility_date = "2026-09-25"
+workers_dev = true
+preview_urls = false
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = [ "/api/*" ]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "orbit-rush-scores"
+database_id = "df2c2202-6de0-4862-923e-added8921924"
+migrations_dir = "migrations"
