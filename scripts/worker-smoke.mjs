@@ -455,7 +455,33 @@ try {
     ip: '203.0.113.92',
     body: { name: 'BadGame', score: computeScore(1000, 0, 0, 0), survivalMs: 1000, orbs: 0, game: 'puzzle' },
   });
-  assert(badGamePost.status === 400 && badGamePost.data.error === 'Invalid game (rush|mirror)', 'invalid game post');
+  assert(badGamePost.status === 400 && badGamePost.data.error === 'Invalid game (rush|mirror|drift)', 'invalid game post');
+
+  const driftScore = computeScore(8000, 3, 100, 2);
+  const driftPost = await api('/api/scores', {
+    method: 'POST',
+    ip: '203.0.113.96',
+    body: {
+      name: 'DriftPilot',
+      score: driftScore,
+      survivalMs: 8000,
+      orbs: 3,
+      comboBonus: 100,
+      nearMisses: 2,
+      game: 'drift',
+      clientId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+    },
+  });
+  assert(driftPost.status === 200, `drift post ${JSON.stringify(driftPost.data)}`);
+  assert(driftPost.data.scores.every((s) => s.game === 'drift'), 'drift response is the drift board');
+  assert(driftPost.data.scores.some((s) => s.name === 'DriftPilot'), 'drift pilot listed');
+  const driftBoard = await api('/api/scores?game=drift', { ip: '203.0.113.97' });
+  assert(driftBoard.status === 200 && driftBoard.data.game === 'drift', 'drift filter names the board');
+  assert(driftBoard.data.scores.some((s) => s.name === 'DriftPilot'), 'drift filter lists the pilot');
+  const rushAfterDrift = await api('/api/scores?game=rush', { ip: '203.0.113.97' });
+  assert(!rushAfterDrift.data.scores.some((s) => s.name === 'DriftPilot'), 'drift score stays off rush');
+  const mirrorAfterDrift = await api('/api/scores?game=mirror', { ip: '203.0.113.97' });
+  assert(!mirrorAfterDrift.data.scores.some((s) => s.name === 'DriftPilot'), 'drift score stays off mirror');
 
   const notAScore = await api('/api/scores', {
     method: 'POST',

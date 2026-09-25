@@ -222,14 +222,18 @@ assert((skinMod.DEFAULT_SKIN || skinMod.DEFAULT_SKIN) === 'cyan', 'default cyan 
 
 const scoresMod = await import(path.join(root, 'shared', 'scores.js'));
 assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
+assert(scoresMod.normalizeGame('Drift') === 'drift', 'normalize drift');
 assert(scoresMod.normalizeGame('nope') === 'rush', 'unknown game defaults to rush');
 {
   const mixed = [
     { name: 'R', score: 10, ts: 1, difficulty: 'mittel', mode: 'normal' },
     { name: 'M', score: 50, ts: 2, difficulty: 'mittel', mode: 'normal', game: 'mirror' },
+    { name: 'D', score: 80, ts: 3, difficulty: 'mittel', mode: 'normal', game: 'drift' },
   ];
   const onlyM = scoresMod.selectBoard(mixed, { game: 'mirror' });
   assert(onlyM.length === 1 && onlyM[0].name === 'M' && onlyM[0].game === 'mirror', 'mirror board');
+  const onlyD = scoresMod.selectBoard(mixed, { game: 'drift' });
+  assert(onlyD.length === 1 && onlyD[0].name === 'D' && onlyD[0].game === 'drift', 'drift board');
   const onlyR = scoresMod.selectBoard(mixed, {});
   assert(onlyR.length === 1 && onlyR[0].name === 'R' && onlyR[0].game === 'rush', 'default board is rush');
   const badGame = scoresMod.validatePostBody({
@@ -241,7 +245,7 @@ assert(scoresMod.normalizeGame('nope') === 'rush', 'unknown game defaults to rus
     nearMisses: 0,
     game: 'nope',
   });
-  assert(!badGame.ok && badGame.error === 'Invalid game (rush|mirror)', 'reject bad game');
+  assert(!badGame.ok && badGame.error === 'Invalid game (rush|mirror|drift)', 'reject bad game');
   const okGame = scoresMod.validatePostBody({
     name: 'A',
     score: 10,
@@ -253,6 +257,18 @@ assert(scoresMod.normalizeGame('nope') === 'rush', 'unknown game defaults to rus
   assert(okGame.ok && okGame.value.game === 'rush', 'post defaults to rush');
   const qMirror = scoresMod.validateScoresQuery(new URLSearchParams('game=mirror'));
   assert(qMirror.ok && qMirror.game === 'mirror', 'query mirror');
+  const qDrift = scoresMod.validateScoresQuery(new URLSearchParams('game=drift'));
+  assert(qDrift.ok && qDrift.game === 'drift', 'query drift');
+  const driftBody = scoresMod.validatePostBody({
+    name: 'A',
+    score: computeScore(2000, 1, 0, 1),
+    survivalMs: 2000,
+    orbs: 1,
+    comboBonus: 0,
+    nearMisses: 1,
+    game: 'drift',
+  });
+  assert(driftBody.ok && driftBody.value.game === 'drift', 'post drift');
   const qBad = scoresMod.validateScoresQuery(new URLSearchParams('game=both'));
   assert(!qBad.ok, 'query bad game');
 }
@@ -322,6 +338,104 @@ assert(scoresMod.normalizeGame('nope') === 'rush', 'unknown game defaults to rus
   const shard = threat.shards.at(-1);
   assert(Math.abs(threat.radius - shard.r) < shard.hitR - 1, 'shard covers the current ship radius');
   assert(Math.abs(shard.safeR - shard.r) >= shard.hitR, 'shard leaves a safe pocket');
+
+  const { DriftGame } = await import(path.join(root, 'src', 'drift.js'));
+  function makeDrift(w, h) {
+    const canvas = {
+      width: w,
+      height: h,
+      style: {},
+      parentElement: {
+        getBoundingClientRect: () => ({ width: w, height: h, left: 0, top: 0 }),
+      },
+      getContext() {
+        return { setTransform() {} };
+      },
+      addEventListener(type, fn) {
+        (listeners[type] ||= []).push(fn);
+      },
+      removeEventListener() {},
+      setPointerCapture() {},
+    };
+    const d = new DriftGame(canvas, { audio, onGameOver() {}, onHud() {} });
+    d.resize();
+    d.alive = true;
+    return d;
+  }
+
+  const steered = makeDrift(390, 844);
+  steered.grace = 5;
+  const x0 = steered.x;
+  steered.input.left = true;
+  steered.update(0.25);
+  assert(steered.x < x0 - 0.08, 'left input steers toward the left wall');
+  assert(
+    steered.score === computeScore(steered.survivalMs, steered.orbsCollected, steered.comboBonus, steered.nearMisses),
+    'drift score matches the shared formula'
+  );
+
+  const dragD = makeDrift(390, 844);
+  dragD.bindInput();
+  const dragX0 = dragD.x;
+  dragD.running = true;
+  listeners.pointerdown.at(-1)({ pointerId: 9, clientX: 40 });
+  listeners.pointermove.at(-1)({ pointerId: 9, clientX: 40 + 80 });
+  assert(dragD.x > dragX0 + 0.4, 'drag right steers right');
+
+  const wideLane = [
+    { z: 0, center: 0, half: 1, gate: false },
+    { z: 4, center: 0, half: 1, gate: true },
+    { z: 400, center: 0, half: 1, gate: false },
+  ];
+  const ringRun = makeDrift(390, 844);
+  ringRun.grace = 5;
+  ringRun.samples = wideLane.map((s) => ({ ...s, gate: false }));
+  ringRun.cursorZ = 1000;
+  ringRun.rings = [{ z: 5, x: 0, taken: false }];
+  ringRun.playerZ = 0;
+  ringRun.x = 0;
+  ringRun.vx = 0;
+  ringRun.update(0.3);
+  assert(ringRun.orbsCollected === 1, 'a ring in the lane is collected');
+  assert(
+    ringRun.score === computeScore(ringRun.survivalMs, ringRun.orbsCollected, ringRun.comboBonus, ringRun.nearMisses),
+    'ring score stays on the shared formula'
+  );
+
+  const graze = makeDrift(390, 844);
+  graze.grace = 0;
+  graze.samples = wideLane.map((s) => ({ ...s }));
+  graze.cursorZ = 1000;
+  graze.rings = [];
+  graze.playerZ = 0;
+  graze.x = 0.88;
+  graze.vx = 0;
+  graze.update(0.5);
+  assert(graze.nearMisses === 1, 'tight clearance counts as a near miss');
+  assert(graze.hull === 3, 'a near miss does not cost hull');
+
+  const walls = makeDrift(390, 844);
+  walls.grace = 0;
+  walls.invuln = 0;
+  walls.samples = [
+    { z: 0, center: 0, half: 0.6, gate: false },
+    { z: 200, center: 0, half: 0.6, gate: false },
+    { z: 400, center: 0, half: 0.6, gate: false },
+  ];
+  walls.cursorZ = 1000;
+  walls.rings = [];
+  walls.playerZ = 100;
+  walls.x = 2;
+  walls.vx = 0;
+  walls.update(1 / 60);
+  assert(walls.hull === 2 && walls.alive, 'leaving the lane costs one hull');
+  walls.invuln = 0;
+  walls.x = 2;
+  walls.update(1 / 60);
+  walls.invuln = 0;
+  walls.x = 2;
+  walls.update(1 / 60);
+  assert(walls.hull === 0 && walls.alive === false, 'the third wall hit ends the run');
 }
 
 const env = { ...process.env, PORT: String(PORT), AERGER_FILE: path.join(root, 'data', `aerger-smoke-${PORT}.json`) };
@@ -544,6 +658,33 @@ try {
   assert(mirrorBoard.scores.some((s) => s.name === 'MirrorPilot'), 'express mirror filter');
   const badGame = await fetch(`http://127.0.0.1:${PORT}/api/scores?game=puzzle`);
   assert(badGame.status === 400, 'express rejects bad game filter');
+
+  await new Promise((r) => setTimeout(r, 2100));
+  const driftScore = computeScore(8000, 3, 100, 2);
+  const driftPost = await fetch(`http://127.0.0.1:${PORT}/api/scores`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: 'DriftPilot',
+      score: driftScore,
+      survivalMs: 8000,
+      orbs: 3,
+      comboBonus: 100,
+      nearMisses: 2,
+      game: 'drift',
+      clientId: 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d',
+    }),
+  });
+  const driftBody = await driftPost.json();
+  assert(driftPost.ok, `drift post failed: ${JSON.stringify(driftBody)}`);
+  assert(driftBody.scores.every((s) => s.game === 'drift'), 'express drift board');
+  assert(driftBody.scores.some((s) => s.name === 'DriftPilot'), 'express drift pilot');
+  const rushAfterDrift = await fetch(`http://127.0.0.1:${PORT}/api/scores?game=rush`).then((r) => r.json());
+  assert(!rushAfterDrift.scores.some((s) => s.name === 'DriftPilot'), 'express keeps drift off rush');
+  const mirrorAfterDrift = await fetch(`http://127.0.0.1:${PORT}/api/scores?game=mirror`).then((r) => r.json());
+  assert(!mirrorAfterDrift.scores.some((s) => s.name === 'DriftPilot'), 'express keeps drift off mirror');
+  const driftBoard = await fetch(`http://127.0.0.1:${PORT}/api/scores?game=drift`).then((r) => r.json());
+  assert(driftBoard.game === 'drift' && driftBoard.scores.some((s) => s.name === 'DriftPilot'), 'express drift filter');
 
   const aergerBase = `http://127.0.0.1:${PORT}`;
   const created = await fetch(`${aergerBase}/api/aerger/create`, {

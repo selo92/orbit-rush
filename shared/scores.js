@@ -17,8 +17,9 @@ export const COMBO_MAX = 5;
 export const DIFFICULTY_ENUM = new Set(['einfach', 'mittel', 'schwer', 'baba']);
 export const DEFAULT_DIFFICULTY = 'mittel';
 export const MODE_ENUM = new Set(['normal', 'daily']);
-export const GAME_ENUM = new Set(['rush', 'mirror']);
+export const GAME_ENUM = new Set(['rush', 'mirror', 'drift']);
 export const DEFAULT_GAME = 'rush';
+export const GAME_ERROR = 'Invalid game (rush|mirror|drift)';
 
 export function normalizeMode(m) {
   return m === 'daily' ? 'daily' : 'normal';
@@ -99,7 +100,7 @@ export function mapRow(e, i) {
  * Same filtering as GET /api/scores.
  * mode: 'daily' | 'normal' | null (null = no mode query)
  * difficulty: enum | null (null = all)
- * game: 'rush' | 'mirror' (missing = rush). Boards are never mixed.
+ * game: 'rush' | 'mirror' | 'drift' (missing = rush). Boards are never mixed.
  */
 export function selectBoard(scores, { mode = null, dailyDate = null, difficulty = null, game = null } = {}) {
   let list = Array.isArray(scores) ? [...scores] : [];
@@ -141,7 +142,7 @@ export function validateScoresQuery(searchParams) {
     return { ok: false, status: 400, error: 'Invalid difficulty filter' };
   }
   if (gameRaw && !GAME_ENUM.has(gameRaw)) {
-    return { ok: false, status: 400, error: 'Invalid game (rush|mirror)' };
+    return { ok: false, status: 400, error: GAME_ERROR };
   }
 
   const mode = modeRaw ? normalizeMode(modeRaw) : null;
@@ -185,7 +186,7 @@ export function validatePostBody(body) {
   if (reqBody.game != null && reqBody.game !== '') {
     const rawGame = String(reqBody.game).toLowerCase().trim();
     if (!GAME_ENUM.has(rawGame)) {
-      return { ok: false, status: 400, error: 'Invalid game (rush|mirror)' };
+      return { ok: false, status: 400, error: GAME_ERROR };
     }
     game = rawGame;
   }

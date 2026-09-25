@@ -269,11 +269,98 @@ async function main() {
     v13v?.hasSkins &&
     v13v?.hasUtc;
 
-  console.log('PLAYTEST', ok && v13ok ? 'OK' : 'FAIL');
+  await sleep(2200);
+  const driftStart = await send('Runtime.evaluate', {
+    expression: `(() => {
+      localStorage.setItem('orbit-drift-onboard-v1', '1');
+      document.getElementById('btn-over-hub')?.click();
+      const tile = document.getElementById('btn-hub-drift');
+      const blurb = tile?.querySelector('span')?.textContent || '';
+      tile?.click();
+      const menu = document.getElementById('screen-drift');
+      const copy = menu?.innerText || '';
+      window.__ORBIT_RUSH__.startDrift();
+      const d = window.__ORBIT_RUSH__.drift;
+      return {
+        blurb,
+        menuWasOpen: !!(menu && copy.includes('Halt die Bahn')),
+        running: !!d?.running,
+        hull: d?.hull,
+        german: copy.includes('SPIELEN') || copy.includes('Halt die Bahn'),
+      };
+    })()`,
+    returnByValue: true,
+  });
+  console.log('drift start:', driftStart.result?.value);
+  await sleep(400);
+  await send('Runtime.evaluate', {
+    expression: `(() => {
+      const d = window.__ORBIT_RUSH__.drift;
+      d.grace = 0;
+      d.invuln = 0;
+      d.hull = 1;
+      const lane = d.sampleAt(d.playerZ);
+      d.x = lane.center + lane.half + 1;
+      d.hitWall(lane);
+      return d.hull;
+    })()`,
+    returnByValue: true,
+  });
+  await sleep(1000);
+  const driftOver = await send('Runtime.evaluate', {
+    expression: `(() => {
+      const over = !document.getElementById('screen-over').classList.contains('hidden');
+      return {
+        over,
+        title: document.getElementById('over-title')?.textContent,
+        badge: document.getElementById('over-diff-badge')?.textContent,
+        formula: document.getElementById('over-formula')?.textContent,
+        status: document.getElementById('submit-status')?.textContent,
+      };
+    })()`,
+    returnByValue: true,
+  });
+  console.log('drift over:', driftOver.result?.value);
+  await sleep(800);
+  const driftBoard = await send('Runtime.evaluate', {
+    expression: `(() => {
+      document.getElementById('btn-lb-over')?.click();
+      const heading = document.getElementById('lb-heading')?.textContent;
+      document.getElementById('btn-lb-back')?.click();
+      document.getElementById('btn-over-hub')?.click();
+      const hub = !document.getElementById('screen-hub').classList.contains('hidden');
+      const games = ['btn-hub-rush', 'btn-hub-mirror', 'btn-hub-aerger', 'btn-hub-drift'].map((id) => !!document.getElementById(id));
+      document.getElementById('btn-hub-aerger')?.click();
+      const aerger = !document.getElementById('screen-aerger').classList.contains('hidden');
+      return { heading, hub, games, aerger, status: document.getElementById('submit-status')?.textContent };
+    })()`,
+    returnByValue: true,
+  });
+  console.log('drift board:', driftBoard.result?.value);
+
+  const dv = driftStart.result?.value;
+  const ovd = driftOver.result?.value;
+  const db = driftBoard.result?.value;
+  const driftOk =
+    dv?.running === true &&
+    dv?.hull === 3 &&
+    dv?.blurb?.includes('Tunnel') &&
+    ovd?.over === true &&
+    ovd?.title === 'BAHN VERLASSEN' &&
+    ovd?.badge === 'Drift' &&
+    typeof ovd?.formula === 'string' &&
+    ovd.formula.includes('× 10') &&
+    db?.heading === 'DRIFT TOP 50' &&
+    db?.hub === true &&
+    Array.isArray(db?.games) &&
+    db.games.every(Boolean) &&
+    db?.aerger === true;
+
+  console.log('PLAYTEST', ok && v13ok && driftOk ? 'OK' : 'FAIL');
 
   ws.close();
   chromeProc.kill('SIGTERM');
-  process.exit(ok && v13ok ? 0 : 1);
+  process.exit(ok && v13ok && driftOk ? 0 : 1);
 }
 
 main().catch((e) => {

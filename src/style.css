@@ -809,14 +809,26 @@ h2 {
   text-shadow: 0 0 10px rgba(255, 43, 214, 0.45);
 }
 
+#hud.drift-mode .stat span:last-child {
+  color: #7dffa8;
+  text-shadow: 0 0 10px rgba(125, 255, 168, 0.45);
+}
+
 .diff-badge.mirror {
   color: var(--magenta);
   border-color: rgba(255, 43, 214, 0.55);
   background: rgba(255, 43, 214, 0.12);
 }
 
+.diff-badge.drift {
+  color: #7dffa8;
+  border-color: rgba(125, 255, 168, 0.55);
+  background: rgba(125, 255, 168, 0.12);
+}
+
 .hub-panel,
-.mirror-panel {
+.mirror-panel,
+.drift-panel {
   max-height: calc(100vh - 28px - var(--safe-top) - var(--safe-bottom));
   overflow-y: auto;
 }
@@ -834,8 +846,8 @@ h2 {
   align-items: flex-start;
   gap: 6px;
   width: 100%;
-  min-height: 84px;
-  padding: 14px 16px 12px;
+  min-height: 72px;
+  padding: 12px 14px 10px;
   border-radius: 16px;
   cursor: pointer;
   text-align: left;
@@ -878,6 +890,15 @@ h2 {
 
 .hub-tile.aerger strong {
   color: #ffe566;
+}
+
+.hub-tile.drift {
+  border-color: rgba(125, 255, 168, 0.55);
+  background: linear-gradient(160deg, rgba(8, 42, 32, 0.62), rgba(8, 12, 28, 0.55));
+}
+
+.hub-tile.drift strong {
+  color: #7dffa8;
 }
 
 .hub-tile:active {

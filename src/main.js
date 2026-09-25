@@ -4,6 +4,7 @@
  */
 import { Game, formatFormula, computeScore, NEAR_MISS_POINTS, COMBO_STEP } from './game.js';
 import { MirrorGame } from './mirror.js';
+import { DriftGame } from './drift.js';
 import { mountAerger } from './aerger-ui.js';
 import {
   DIFFICULTIES,
@@ -45,6 +46,8 @@ const LS_ONBOARD = 'orbit-rush-onboard-v1';
 const LS_MIRROR_BEST = 'orbit-mirror-best';
 const LS_MIRROR_STREAK = 'orbit-mirror-streak';
 const LS_MIRROR_ONBOARD = 'orbit-mirror-onboard-v1';
+const LS_DRIFT_BEST = 'orbit-drift-best';
+const LS_DRIFT_ONBOARD = 'orbit-drift-onboard-v1';
 const SHARE_NOTE = '(Orbit Rush — play locally / LiveCodes)';
 
 const canvas = /** @type {HTMLCanvasElement} */ ($('game'));
@@ -62,6 +65,8 @@ const screens = {
   skins: $('screen-skins'),
   mirror: $('screen-mirror'),
   mirrorOnboard: $('screen-mirror-onboard'),
+  drift: $('screen-drift'),
+  driftOnboard: $('screen-drift-onboard'),
   aerger: $('screen-aerger'),
 };
 
@@ -84,11 +89,11 @@ const toastEl = $('toast');
 let lastResult = null;
 let lbBackTo = 'title';
 let lbFilter = 'all';
-/** @type {'hub'|'rush'|'mirror'|'aerger'} */
+/** @type {'hub'|'rush'|'mirror'|'aerger'|'drift'} */
 let activeGame = 'hub';
 /** @type {() => void} */
 let pauseAerger = () => {};
-/** @type {'rush'|'mirror'} */
+/** @type {'rush'|'mirror'|'drift'} */
 let lbGame = 'rush';
 let submitting = false;
 let runSeq = 0;
@@ -243,6 +248,44 @@ function refreshHub() {
   }
 }
 
+function getDriftBest() {
+  try {
+    return Math.max(0, Math.floor(Number(localStorage.getItem(LS_DRIFT_BEST)) || 0));
+  } catch {
+    return 0;
+  }
+}
+
+function setDriftBest(score) {
+  try {
+    localStorage.setItem(LS_DRIFT_BEST, String(Math.floor(score)));
+  } catch {
+    /* ignore */
+  }
+}
+
+function refreshDriftMenu() {
+  const best = getDriftBest();
+  const bestEl = $('drift-best-val');
+  if (bestEl) bestEl.textContent = best > 0 ? String(best) : '—';
+}
+
+function driftOnboardDone() {
+  try {
+    return localStorage.getItem(LS_DRIFT_ONBOARD) === '1';
+  } catch {
+    return true;
+  }
+}
+
+function markDriftOnboard() {
+  try {
+    localStorage.setItem(LS_DRIFT_ONBOARD, '1');
+  } catch {
+    /* ignore */
+  }
+}
+
 function mirrorOnboardDone() {
   try {
     return localStorage.getItem(LS_MIRROR_ONBOARD) === '1';
@@ -273,6 +316,23 @@ function markOnboardDone() {
   } catch {
     /* ignore */
   }
+}
+
+function resultGame(result) {
+  if (result?.game === 'mirror' || result?.game === 'drift') return result.game;
+  return 'rush';
+}
+
+function setHudChrome(mode) {
+  const drift = mode === 'drift';
+  const scoreLabel = $('hud-score-label');
+  const orbsLabel = $('hud-orbs-label');
+  const timeLabel = $('hud-time-label');
+  if (scoreLabel) scoreLabel.textContent = drift ? 'PUNKTE' : 'SCORE';
+  if (orbsLabel) orbsLabel.textContent = drift ? 'RINGE' : 'ORBS';
+  if (timeLabel) timeLabel.textContent = drift ? 'KM' : 'TIME';
+  hud.classList.toggle('drift-mode', drift);
+  hud.classList.toggle('mirror-mode', mode === 'mirror');
 }
 
 function showScreen(name) {
@@ -459,7 +519,7 @@ async function sendScore(name, { auto = false } = {}) {
       difficulty: lastResult.difficulty || selectedDifficulty,
       mode: lastResult.daily ? 'daily' : 'normal',
       dailyDate: lastResult.daily ? lastResult.dailyDate || dailyDate : undefined,
-      game: lastResult.game === 'mirror' ? 'mirror' : 'rush',
+      game: resultGame(lastResult),
     });
     status.classList.remove('error');
     status.classList.toggle('calm', !!(res.duplicate || res.rateLimited));
@@ -502,6 +562,11 @@ function setOverDiffBadge(result) {
   if (result.game === 'mirror') {
     badge.textContent = 'Mirror';
     badge.className = 'diff-badge mirror';
+    return;
+  }
+  if (result.game === 'drift') {
+    badge.textContent = 'Drift';
+    badge.className = 'diff-badge drift';
     return;
   }
   if (result.daily) {
@@ -607,6 +672,10 @@ function buildShareText(result) {
     const streak = Math.max(0, Math.floor(result.cleanStreak || 0));
     return `Orbit Mirror — score ${score} — clean streak ${streak} — beat me!`;
   }
+  if (result?.game === 'drift') {
+    const km = Number(result.distanceKm || 0).toFixed(2);
+    return `Orbit Drift — ${score} Punkte — ${km} km — schlag mich!`;
+  }
   let tag;
   if (result?.daily) {
     tag = `Daily · ${result.dailyDate || dailyDate}`;
@@ -622,7 +691,8 @@ async function shareScore() {
   audio.click();
   try {
     if (navigator.share) {
-      await navigator.share({ title: lastResult?.game === 'mirror' ? 'Orbit Mirror' : 'Orbit Rush', text });
+      const titles = { mirror: 'Orbit Mirror', drift: 'Orbit Drift' };
+      await navigator.share({ title: titles[lastResult?.game] || 'Orbit Rush', text });
       $('submit-status').textContent = 'Shared!';
       $('submit-status').classList.remove('error');
       return;
@@ -679,14 +749,36 @@ function showGameOver(result) {
   audio.stopMusic();
 
   const mirrorRun = result.game === 'mirror';
-  $('over-title').textContent = mirrorRun ? 'SPIEGEL BRICHT' : 'ORBIT LOST';
-  $('over-streak').classList.toggle('hidden', !mirrorRun);
+  const driftRun = result.game === 'drift';
+  const hint = $('name-hint');
+  if (hint) {
+    hint.textContent = driftRun
+      ? 'Ein Name, einmal. Spätere Runs speichern automatisch.'
+      : 'Enter a name once. Later runs save automatically.';
+  }
+  $('over-title').textContent = driftRun ? 'BAHN VERLASSEN' : mirrorRun ? 'SPIEGEL BRICHT' : 'ORBIT LOST';
+  $('over-streak').classList.toggle('hidden', !mirrorRun && !driftRun);
+  const streakLine = $('over-streak');
+  if (streakLine?.childNodes[0]?.nodeType === 3) {
+    streakLine.childNodes[0].textContent = driftRun ? 'Strecke: ' : 'Clean streak: ';
+  }
 
-  if (!mirrorRun) processAchievements(result);
+  if (!mirrorRun && !driftRun) processAchievements(result);
 
   let isNew = false;
   let best = 0;
-  if (mirrorRun) {
+  if (driftRun) {
+    const prev = getDriftBest();
+    isNew = result.score > prev;
+    if (isNew) setDriftBest(result.score);
+    best = Math.max(prev, result.score);
+    const km = Number(result.distanceKm || 0);
+    $('over-streak-val').textContent = `${km.toFixed(2)} km`;
+    const ob = $('over-best');
+    if (ob.childNodes[0] && ob.childNodes[0].nodeType === 3) {
+      ob.childNodes[0].textContent = 'Rekord: ';
+    }
+  } else if (mirrorRun) {
     const prev = getMirrorBest();
     isNew = result.score > prev;
     if (isNew) setMirrorBest(result.score);
@@ -741,6 +833,7 @@ function showGameOver(result) {
 
   refreshTitleBest();
   refreshMirrorMenu();
+  refreshDriftMenu();
   refreshHub();
   presentGameOverIdentity(result);
   showScreen('over');
@@ -772,17 +865,47 @@ const mirror = new MirrorGame(canvas, {
   },
 });
 
+const drift = new DriftGame(canvas, {
+  audio,
+  onHud({ score, orbs, time, combo, hull }) {
+    hudScore.textContent = String(score);
+    hudOrbs.textContent = String(orbs);
+    hudTime.textContent = Number(time || 0).toFixed(2);
+    $('hud-combo-label').textContent = 'KETTE';
+    if (combo > 1) {
+      hudCombo.classList.remove('hidden');
+      hudComboVal.textContent = `x${combo}`;
+      hudCombo.classList.toggle('hot', combo >= 4);
+    } else {
+      hudCombo.classList.add('hidden');
+      hudCombo.classList.remove('hot');
+    }
+    pwrShield.classList.add('hidden');
+    pwrSlow.classList.add('hidden');
+    pwrMagnet.classList.add('hidden');
+    const hearts = '●'.repeat(Math.max(0, hull)) + '○'.repeat(Math.max(0, 3 - hull));
+    hudMode.textContent = `HÜLLE ${hearts}`;
+    hudMode.classList.remove('hidden');
+  },
+  onGameOver(result) {
+    showGameOver(result);
+  },
+});
+
 function liveGame() {
-  return activeGame === 'mirror' ? mirror : game;
+  if (activeGame === 'mirror') return mirror;
+  if (activeGame === 'drift') return drift;
+  return game;
 }
 
 function showHub() {
   activeGame = 'hub';
   if (game.running) game.stop();
   if (mirror.running) mirror.stop();
+  if (drift.running) drift.stop();
   audio.stopMusic();
   hud.classList.add('hidden');
-  hud.classList.remove('mirror-mode');
+  setHudChrome('rush');
   hudMode.classList.add('hidden');
   refreshHub();
   showScreen('hub');
@@ -791,9 +914,10 @@ function showHub() {
 function openRushMenu() {
   activeGame = 'rush';
   if (mirror.running) mirror.stop();
+  if (drift.running) drift.stop();
   audio.stopMusic();
   hud.classList.add('hidden');
-  hud.classList.remove('mirror-mode');
+  setHudChrome('rush');
   refreshTitleBest();
   refreshTitleIdentity();
   showScreen('title');
@@ -803,20 +927,35 @@ function openMirrorMenu() {
   activeGame = 'mirror';
   if (game.running) game.stop();
   if (mirror.running) mirror.stop();
+  if (drift.running) drift.stop();
   audio.stopMusic();
   hud.classList.add('hidden');
+  setHudChrome('rush');
   refreshMirrorMenu();
   showScreen('mirror');
+}
+
+function openDriftMenu() {
+  activeGame = 'drift';
+  if (game.running) game.stop();
+  if (mirror.running) mirror.stop();
+  if (drift.running) drift.stop();
+  audio.stopMusic();
+  hud.classList.add('hidden');
+  setHudChrome('rush');
+  refreshDriftMenu();
+  showScreen('drift');
 }
 
 function beginMirror() {
   activeGame = 'mirror';
   if (game.running) game.stop();
+  if (drift.running) drift.stop();
   audio.resume();
   audio.startMusic();
   hideAllScreens();
   hud.classList.remove('hidden');
-  hud.classList.add('mirror-mode');
+  setHudChrome('mirror');
   $('hud-combo-label').textContent = 'STREAK';
   hudCombo.classList.add('hidden');
   pwrShield.classList.add('hidden');
@@ -843,10 +982,46 @@ function startMirror() {
   beginMirror();
 }
 
+function beginDrift() {
+  activeGame = 'drift';
+  if (game.running) game.stop();
+  if (mirror.running) mirror.stop();
+  audio.resume();
+  audio.startMusic();
+  hideAllScreens();
+  hud.classList.remove('hidden');
+  setHudChrome('drift');
+  $('hud-combo-label').textContent = 'KETTE';
+  hudCombo.classList.add('hidden');
+  pwrShield.classList.add('hidden');
+  pwrSlow.classList.add('hidden');
+  pwrMagnet.classList.add('hidden');
+  hudMode.textContent = 'HÜLLE ●●●';
+  hudMode.classList.remove('hidden');
+  touchHint.textContent = 'Wischen zum Lenken';
+  touchHint.classList.add('hidden');
+  touchHint.classList.remove('fade-fast');
+  void touchHint.offsetWidth;
+  touchHint.classList.remove('hidden');
+  drift.start();
+}
+
+function startDrift() {
+  activeGame = 'drift';
+  audio.resume();
+  audio.click();
+  if (!driftOnboardDone()) {
+    showScreen('driftOnboard');
+    return;
+  }
+  beginDrift();
+}
+
 function beginRun(opts = {}) {
   activeGame = 'rush';
   if (mirror.running) mirror.stop();
-  hud.classList.remove('mirror-mode');
+  if (drift.running) drift.stop();
+  setHudChrome('rush');
   $('hud-combo-label').textContent = 'COMBO';
   touchHint.textContent = 'Drag left / right to change orbit';
   audio.resume();
@@ -914,7 +1089,7 @@ function startDaily() {
 
 function openLeaderboard(from, gameId = 'rush') {
   lbBackTo = from;
-  lbGame = gameId === 'mirror' ? 'mirror' : 'rush';
+  lbGame = gameId === 'mirror' || gameId === 'drift' ? gameId : 'rush';
   if (lbGame === 'rush') {
     lbFilter = runMode === 'daily' ? 'daily' : selectedDifficulty || 'all';
   }
@@ -936,8 +1111,8 @@ async function renderLeaderboard() {
   empty.classList.add('hidden');
   const heading = $('lb-heading');
   const filters = $('lb-filters');
-  if (lbGame === 'mirror') {
-    if (heading) heading.textContent = 'MIRROR TOP 50';
+  if (lbGame === 'mirror' || lbGame === 'drift') {
+    if (heading) heading.textContent = lbGame === 'drift' ? 'DRIFT TOP 50' : 'MIRROR TOP 50';
     filters?.classList.add('hidden');
   } else {
     if (heading) heading.textContent = 'GLOBAL TOP 50';
@@ -946,8 +1121,8 @@ async function renderLeaderboard() {
   try {
     let scores;
     let source;
-    if (lbGame === 'mirror') {
-      const res = await fetchScores({ game: 'mirror' });
+    if (lbGame === 'mirror' || lbGame === 'drift') {
+      const res = await fetchScores({ game: lbGame });
       scores = res.scores;
       source = res.source;
     } else if (lbFilter === 'daily') {
@@ -993,6 +1168,9 @@ async function renderLeaderboard() {
       if (lbGame === 'mirror') {
         badge.className = 'diff-badge mirror';
         badge.textContent = 'Mirror';
+      } else if (lbGame === 'drift') {
+        badge.className = 'diff-badge drift';
+        badge.textContent = 'Drift';
       } else if (row.mode === 'daily' || lbFilter === 'daily') {
         badge.className = 'diff-badge daily';
         badge.textContent = row.dailyDate ? `Daily ${String(row.dailyDate).slice(5)}` : 'Daily';
@@ -1018,6 +1196,7 @@ $('btn-play').addEventListener('click', startRun);
 $('btn-daily').addEventListener('click', startDaily);
 $('btn-retry').addEventListener('click', () => {
   if (lastResult?.game === 'mirror') startMirror();
+  else if (lastResult?.game === 'drift') startDrift();
   else if (lastResult?.daily || runMode === 'daily') startDaily();
   else startRun();
 });
@@ -1057,14 +1236,18 @@ $('btn-resume').addEventListener('click', () => {
 });
 $('btn-quit').addEventListener('click', () => {
   audio.click();
-  const leavingMirror = activeGame === 'mirror';
+  const leaving = activeGame;
   liveGame().stop();
   audio.stopMusic();
   hud.classList.add('hidden');
   hudMode.classList.add('hidden');
-  if (leavingMirror) {
+  setHudChrome('rush');
+  if (leaving === 'mirror') {
     refreshMirrorMenu();
     showScreen('mirror');
+  } else if (leaving === 'drift') {
+    refreshDriftMenu();
+    showScreen('drift');
   } else {
     refreshTitleBest();
     showScreen('title');
@@ -1076,7 +1259,7 @@ $('btn-lb-title').addEventListener('click', () => {
 });
 $('btn-lb-over').addEventListener('click', () => {
   audio.click();
-  openLeaderboard('over', lastResult?.game === 'mirror' ? 'mirror' : 'rush');
+  openLeaderboard('over', resultGame(lastResult));
 });
 $('btn-lb-back').addEventListener('click', () => {
   audio.click();
@@ -1084,6 +1267,9 @@ $('btn-lb-back').addEventListener('click', () => {
   else if (lbBackTo === 'mirror') {
     refreshMirrorMenu();
     showScreen('mirror');
+  } else if (lbBackTo === 'drift') {
+    refreshDriftMenu();
+    showScreen('drift');
   } else {
     refreshTitleBest();
     showScreen('title');
@@ -1171,8 +1357,10 @@ $('score-form').addEventListener('submit', async (e) => {
 function onResize() {
   game.resize();
   mirror.resize();
-  if (game.running || mirror.running) return;
+  drift.resize();
+  if (game.running || mirror.running || drift.running) return;
   if (activeGame === 'mirror') mirror.draw();
+  else if (activeGame === 'drift') drift.draw();
   else {
     if (typeof game.seedStars === 'function') game.seedStars();
     game.draw();
@@ -1182,8 +1370,9 @@ window.addEventListener('resize', onResize);
 window.addEventListener('orientationchange', () => setTimeout(onResize, 120));
 
 function idleDraw() {
-  if (!game.running && !mirror.running) {
+  if (!game.running && !mirror.running && !drift.running) {
     if (activeGame === 'mirror') mirror.drawIdle();
+    else if (activeGame === 'drift') drift.drawIdle();
     else {
       game.angle += 0.004;
       game.draw();
@@ -1205,9 +1394,10 @@ function openAerger() {
   activeGame = 'aerger';
   if (game.running) game.stop();
   if (mirror.running) mirror.stop();
+  if (drift.running) drift.stop();
   audio.stopMusic();
   hud.classList.add('hidden');
-  hud.classList.remove('mirror-mode');
+  setHudChrome('rush');
   hudMode.classList.add('hidden');
   showScreen('aerger');
   aerger.open();
@@ -1228,6 +1418,11 @@ $('btn-hub-mirror').addEventListener('click', () => {
   audio.resume();
   audio.click();
   openMirrorMenu();
+});
+$('btn-hub-drift').addEventListener('click', () => {
+  audio.resume();
+  audio.click();
+  openDriftMenu();
 });
 $('btn-title-hub').addEventListener('click', () => {
   audio.click();
@@ -1252,6 +1447,25 @@ $('btn-mirror-onboard-skip').addEventListener('click', () => {
   markMirrorOnboard();
   beginMirror();
 });
+$('btn-drift-play').addEventListener('click', startDrift);
+$('btn-drift-lb').addEventListener('click', () => {
+  audio.click();
+  openLeaderboard('drift', 'drift');
+});
+$('btn-drift-hub').addEventListener('click', () => {
+  audio.click();
+  showHub();
+});
+$('btn-drift-onboard').addEventListener('click', () => {
+  audio.click();
+  markDriftOnboard();
+  beginDrift();
+});
+$('btn-drift-onboard-skip').addEventListener('click', () => {
+  audio.click();
+  markDriftOnboard();
+  beginDrift();
+});
 $('btn-over-hub').addEventListener('click', () => {
   audio.click();
   showHub();
@@ -1263,12 +1477,14 @@ refreshHub();
 showScreen('hub');
 game.resize();
 mirror.resize();
+drift.resize();
 if (typeof game.seedStars === 'function') game.seedStars();
 idleDraw();
 
 window.__ORBIT_RUSH__ = {
   game,
   mirror,
+  drift,
   computeScore,
   formatFormula,
   NEAR_MISS_POINTS,
@@ -1281,6 +1497,7 @@ window.__ORBIT_RUSH__ = {
   startRun,
   startDaily,
   startMirror,
+  startDrift,
   showHub,
   beginRun,
   openDifficultyPicker,
