@@ -2,19 +2,13 @@
 
 German: Ein Cloudflare-Konto reicht. Danach liegt das Spiel und die Bestenliste auf **derselben** öffentlichen `*.workers.dev`-Adresse (kein IP-Filter, kein extra API-Host).
 
-## Preview already uploaded
+## Live
 
-`wrangler deploy --temporary` uploaded this build to:
+https://orbit-rush.selimv18.workers.dev
 
-https://orbit-rush.boom-cheek.workers.dev
+D1 database `orbit-rush-scores` (`ecd023bc-1557-4c28-b287-5f50f65ec8d9`) on the owner account. Subdomain `selimv18`. The game and `/api/scores` share that origin. `GET /` and `GET /api/scores` return 200.
 
-D1 database `orbit-rush-scores` (`df2c2202-6de0-4862-923e-added8921924`) holds the rows. Cloudflare deletes that temporary account at **2026-09-25 01:54 UTC** unless it is claimed. The claim URL is a bearer token (anyone with it owns the account), so it is **not** stored in this public repository. It was shown only in the agent handoff.
-
-From the deploy host, that `workers.dev` URL returned a Cloudflare managed challenge (`cf-mitigated: challenge`) to both curl and Chrome, so it is not confirmed as an open, ungated play URL. After you claim the account, open **Workers & Pages → orbit-rush** and turn off Bot Fight / I'm Under Attack if the challenge is still there.
-
-If the preview is already gone, use the steps below on your own account. `npm run deploy` creates a new D1 database and rewrites `database_id` in `wrangler.toml`.
-
-English: one free Cloudflare account hosts the Vite build and the D1 leaderboard on the same origin. This repo does not contain a live URL until you deploy.
+English: one Cloudflare account hosts the Vite build and the D1 leaderboard on the same origin.
 
 ## 1. Cloudflare account
 

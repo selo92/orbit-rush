@@ -16,5 +16,5 @@ run_worker_first = [ "/api/*" ]
 [[d1_databases]]
 binding = "DB"
 database_name = "orbit-rush-scores"
-database_id = "df2c2202-6de0-4862-923e-added8921924"
+database_id = "ecd023bc-1557-4c28-b287-5f50f65ec8d9"
 migrations_dir = "migrations"

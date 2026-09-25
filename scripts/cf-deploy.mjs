@@ -16,12 +16,12 @@ function fail(msg) {
   process.exit(1);
 }
 
-function run(args, { capture = false } = {}) {
+function run(args, { capture = false, env = process.env } = {}) {
   const r = spawnSync(process.execPath, [WRANGLER, ...args], {
     cwd: root,
     encoding: 'utf8',
     stdio: capture ? ['ignore', 'pipe', 'pipe'] : 'inherit',
-    env: process.env,
+    env,
   });
   if (!capture && r.status !== 0) process.exit(r.status ?? 1);
   return r;
