@@ -66,6 +66,7 @@
           <p class="eyebrow">NEON SKILL RUN · v1.3</p>
           <h1 class="logo">ORBIT<span>RUSH</span></h1>
           <p class="tagline">Steer your orbit. Grab orbs. Survive the debris.</p>
+          <p id="title-identity" class="identity-line hidden">Welcome back, <strong id="title-identity-name"></strong></p>
           <p id="title-best" class="best-line hidden">Personal best: <strong id="title-best-val">0</strong></p>
           <p id="title-daily" class="daily-line muted">Daily · <span id="title-daily-date">—</span></p>
           <div class="controls-card">
@@ -153,18 +154,22 @@
           <p id="over-score" class="big-score">0</p>
           <p id="over-formula" class="formula"></p>
           <p id="over-best" class="best-line muted hidden">Best: <strong id="over-best-val">0</strong></p>
+          <p id="over-identity" class="identity-line hidden">Welcome back, <strong id="over-identity-name"></strong></p>
           <form id="score-form" autocomplete="off">
-            <label for="player-name">Name (max 16)</label>
+            <p id="name-hint" class="muted name-hint">Enter a name once. Later runs save automatically.</p>
+            <label for="player-name" id="player-name-label">Pilot name (max 16)</label>
             <input
               id="player-name"
               name="name"
               maxlength="16"
               placeholder="PILOT"
               enterkeyhint="done"
+              autocomplete="nickname"
               required
             />
-            <button type="submit" id="btn-submit" class="btn primary">SUBMIT SCORE</button>
+            <button type="submit" id="btn-submit" class="btn primary">SAVE &amp; SUBMIT</button>
           </form>
+          <button type="button" id="btn-change-name" class="btn ghost hidden">CHANGE NAME</button>
           <p id="submit-status" class="status" aria-live="polite"></p>
           <div class="row">
             <button type="button" id="btn-share" class="btn ghost">SHARE</button>

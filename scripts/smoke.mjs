@@ -198,10 +198,17 @@ try {
       nearMisses: 0,
       difficulty: 'baba',
       mode: 'normal',
+      clientId: 'D4E5F6A7-B8C9-4D01-8ABC-DEF012345678',
     }),
   });
   const babaBody = await babaPost.json();
   assert(babaPost.ok, `baba post failed: ${JSON.stringify(babaBody)}`);
+  assert(
+    babaBody.scores.some(
+      (s) => s.name === 'BabaPilot' && s.clientId === 'd4e5f6a7-b8c9-4d01-8abc-def012345678'
+    ),
+    'express stores clientId'
+  );
 
   // Daily submit
   await new Promise((r) => setTimeout(r, 2100));

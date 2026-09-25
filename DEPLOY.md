@@ -75,3 +75,16 @@ Then **Actions → Deploy Cloudflare → Run workflow**.
 - No paid plan for a small public board (Workers + D1 free tier)
 
 If the Worker name `orbit-rush` is already used in your account, change `name` in `wrangler.toml` and deploy again.
+
+## 6. Player id column
+
+`migrations/0002_client_id.sql` adds nullable `scores.client_id` (opaque browser UUID) and an index. Existing rows stay valid with `NULL`. Old clients that omit `clientId` keep working.
+
+`npm run deploy` applies every file in `migrations/` before `wrangler deploy`. By hand:
+
+```bash
+npx wrangler d1 migrations apply orbit-rush-scores --remote
+npx wrangler deploy
+```
+
+SQLite here has no `ADD COLUMN IF NOT EXISTS`. The migration runs once. The Worker also adds the column on startup when it is missing, so a deploy without the migration still accepts new scores. If the column already exists, skip the migration error `duplicate column name: client_id` and deploy the Worker.

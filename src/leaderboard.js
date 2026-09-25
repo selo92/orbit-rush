@@ -5,6 +5,7 @@
 
 import { normalizeDifficulty, DEFAULT_DIFFICULTY } from './difficulty.js';
 import { isValidDailyDate } from './rng.js';
+import { normalizeClientId } from '../shared/scores.js';
 
 const LS_KEY = 'orbit-rush-scores-v1';
 const MAX_NAME = 16;
@@ -81,6 +82,7 @@ function rankLocal(scores, filter = {}) {
       difficulty: normalizeDifficulty(e.difficulty || DEFAULT_DIFFICULTY),
       mode: normalizeMode(e.mode),
       dailyDate: e.dailyDate || null,
+      clientId: e.clientId || null,
     }));
 }
 
@@ -150,6 +152,7 @@ export async function submitScore({
   difficulty = DEFAULT_DIFFICULTY,
   mode = 'normal',
   dailyDate,
+  clientId,
 }) {
   const clean = sanitizeName(name);
   if (!clean) throw new Error('Name required');
@@ -170,6 +173,8 @@ export async function submitScore({
     }
     payload.dailyDate = dailyDate;
   }
+  const parsedId = normalizeClientId(clientId);
+  if (parsedId.ok && parsedId.clientId) payload.clientId = parsedId.clientId;
 
   try {
     const data = await api('/api/scores', {
@@ -231,6 +236,7 @@ export async function submitScore({
       scores: ranked,
       source: 'local',
       fallback: true,
+      rateLimited: e.status === 429,
       error: e.message,
     };
   }

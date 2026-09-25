@@ -26,6 +26,12 @@ export function createMemoryDb() {
           },
         };
       },
+      async all() {
+        return { results: sqlite.prepare(sql).all() };
+      },
+      async first() {
+        return sqlite.prepare(sql).get() ?? null;
+      },
       async run() {
         const info = sqlite.prepare(sql).run();
         return { success: true, meta: { changes: info.changes } };
