@@ -82,6 +82,104 @@ const skinMod = await import(path.join(root, 'src', 'skins.js'));
 assert((skinMod.SKIN_IDS || skinMod.SKIN_IDS).length >= 3, 'at least 3 skins');
 assert((skinMod.DEFAULT_SKIN || skinMod.DEFAULT_SKIN) === 'cyan', 'default cyan skin');
 
+// Radius steering: snappy keyboard, 1:1 drag, difficulty spans unchanged.
+{
+  const listeners = {};
+  globalThis.window = {
+    devicePixelRatio: 1,
+    addEventListener(type, fn) {
+      (listeners[type] ||= []).push(fn);
+    },
+    removeEventListener() {},
+  };
+  const gameMod = await import(path.join(root, 'src', 'game.js'));
+  const audio = new Proxy({}, { get: () => () => {} });
+
+  function makeGame(w, h) {
+    const canvas = {
+      width: w,
+      height: h,
+      style: {},
+      parentElement: {
+        getBoundingClientRect: () => ({ width: w, height: h, left: 0, top: 0 }),
+      },
+      getContext() {
+        return { setTransform() {} };
+      },
+      addEventListener(type, fn) {
+        (listeners[type] ||= []).push(fn);
+      },
+      removeEventListener() {},
+      setPointerCapture() {},
+    };
+    const g = new gameMod.Game(canvas, {
+      audio,
+      onGameOver() {},
+      onHud() {},
+    });
+    g.setDifficulty('mittel');
+    g.resize();
+    g.spawnOrbTimer = 999;
+    g.spawnAstTimer = 999;
+    g.spawnPowerTimer = 999;
+    return g;
+  }
+
+  function hold(g, dir, seconds) {
+    g.input.left = dir === 'left';
+    g.input.right = dir === 'right';
+    g.input.pointerId = null;
+    const dt = 1 / 60;
+    const steps = Math.round(seconds / dt);
+    for (let i = 0; i < steps; i++) g.update(dt);
+  }
+
+  const desktop = makeGame(1280, 800);
+  const span = desktop.rMax - desktop.rMin;
+  const inner = desktop.radius;
+  assert(Math.abs(inner - desktop.rMin) < 0.01, 'resize clamps start radius into the band');
+  hold(desktop, 'right', 0.45);
+  assert(
+    desktop.radius > desktop.rMin + span * 0.95,
+    `keyboard crosses the radius band in under half a second (got ${(desktop.radius - desktop.rMin) / span})`
+  );
+
+  const cruise = makeGame(1280, 800);
+  hold(cruise, 'right', 0.12);
+  cruise.input.right = false;
+  const gapAtRelease = Math.abs(cruise.rTarget - cruise.radius);
+  for (let i = 0; i < 4; i++) cruise.update(1 / 60);
+  const gapAfter = Math.abs(cruise.rTarget - cruise.radius);
+  assert(gapAtRelease < span * 0.06, 'keyboard follow stays close to the target while held');
+  assert(gapAfter < span * 0.02, 'radius catches the target within ~67ms of key release');
+
+  const phone = makeGame(390, 700);
+  phone.bindInput();
+  const phoneSpan = phone.rMax - phone.rMin;
+  const dragPx = Math.min(phone.w, phone.h) * 0.38;
+  assert(dragPx > 120 && dragPx < 220, 'phone drag distance stays thumb-sized');
+  phone.radius = phone.rMin;
+  phone.rTarget = phone.rMin;
+  listeners.pointerdown.at(-1)({ pointerId: 7, clientX: 40 });
+  listeners.pointermove.at(-1)({ pointerId: 7, clientX: 40 + dragPx });
+  phone.update(1 / 60);
+  assert(Math.abs(phone.radius - phone.rTarget) < 0.001, 'drag sets radius on the same frame');
+  assert(phone.radius > phone.rMin + phoneSpan * 0.95, 'one short-side drag covers the radius band');
+
+  const wide = makeGame(1440, 900);
+  const wideTravel = Math.min(wide.w, wide.h) * 0.38;
+  const oldWideTravel = wide.w * 0.55;
+  assert(wideTravel < oldWideTravel * 0.55, 'wide screens no longer need a long mouse sweep');
+
+  const easy = makeGame(800, 800);
+  easy.setDifficulty('einfach');
+  easy.resize();
+  const baba = makeGame(800, 800);
+  baba.setDifficulty('baba');
+  baba.resize();
+  assert(easy.rMax - easy.rMin > baba.rMax - baba.rMin, 'difficulty radius spans still differ');
+}
+
 const env = { ...process.env, PORT: String(PORT) };
 const scoresPath = path.join(root, 'data', 'scores.json');
 const backup = fs.existsSync(scoresPath) ? fs.readFileSync(scoresPath, 'utf8') : '[]';
