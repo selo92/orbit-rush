@@ -1,14 +1,15 @@
 # Orbit Rush
 
-Neon-Skill-Spiele plus ein Online-Brett. **v1.4** bleibt die Rush/Mirror-Bestenliste. Dazu kommt **Orbit Ärger**.
+Neon-Skill-Spiele plus ein Online-Brett. **v1.4** bleibt die Rush/Mirror-Bestenliste. Dazu kommen **Orbit Ärger** und **Orbit Drift**.
 
-Die Seite bleibt **Orbit Rush** (gleiche URL, gleicher Pilot). Der erste Screen ist die **Orbit Arcade**: drei Kacheln, **Orbit Rush**, **Orbit Mirror** und **Orbit Ärger**. Name (`orbit-rush-name`) und `orbit-rush-client-id` gelten für die Skill-Spiele. „Welcome back“ steht auf der Arcade. Ärger nutzt denselben Namen, schreibt aber **nicht** in die Top-50.
+Die Seite bleibt **Orbit Rush** (gleiche URL, gleicher Pilot). Der erste Screen ist die **Orbit Arcade**: vier Kacheln, **Orbit Rush**, **Orbit Mirror**, **Orbit Ärger** und **Orbit Drift**. Name (`orbit-rush-name`) und `orbit-rush-client-id` gelten für die Skill-Spiele. „Welcome back“ steht auf der Arcade. Ärger nutzt denselben Namen, schreibt aber **nicht** in die Top-50.
 
 | Spiel | Pitch |
 |-------|--------|
 | **Orbit Rush** | Steuere den Orbit. Sammle Orbs. Überlebe. |
 | **Orbit Mirror** | Dein Reflex lügt. Das Schiff fliegt gespiegelt. |
 | **Orbit Ärger** | Würfeln. Schmeißen. Zu viert online. |
+| **Orbit Drift** | Halt die Bahn. Der Tunnel driftet. |
 
 Von jedem Spielmenü führt **ARCADE** zurück zur Auswahl. Orbit Rush selbst ist unverändert: **Einfach · Mittel · Schwer · Baba**, Daily, Achievements, Skins, Auto-Submit.
 
@@ -25,6 +26,18 @@ score = floor(Sekunden) × 10 + Orbs × 100 + comboBonus + nearMisses × 75
 ```
 
 Dieselbe Formel wie Rush, damit der Server sie prüfen kann. Die Rangliste ist nur `game=mirror`. Die **Clean streak** (Splitter in Folge, lokal `orbit-mirror-streak`) steht im HUD und auf dem Game-Over-Screen und ist keine zweite Bestenliste.
+
+## Orbit Drift
+
+Solo-Tunnel. Das Schiff bleibt unten in der Mitte, die Bahn biegt und wird enger. **A / D**, **← / →** oder **Wischen** lenken. Wer die leuchtende Spur verlässt, verliert eine von drei Hüllen. Der dritte Treffer beendet den Run.
+
+Ringe in der Bahn sind die Orbs der gemeinsamen Formel. Wer ein Tor knapp an der Wand passiert und danach noch lebt, bekommt einen Near-Miss. Ketten funktionieren wie bei Rush. Angezeigt wird die Strecke in km; die Punkte bleiben an der Zeit hängen, damit der Server sie prüfen kann.
+
+```text
+score = floor(Sekunden) × 10 + Ringe × 100 + comboBonus + nearMisses × 75
+```
+
+Eine Rampe, kein Schwierigkeits-Picker. Die Rangliste ist nur `game=drift` (Top 50). Der lokale Rekord liegt unter `orbit-drift-best`. Pause, Mute, Auto-Submit und YOU-Badge wie bei Rush und Mirror. Kein zweites Konto.
 
 ## Orbit Ärger
 
@@ -45,7 +58,7 @@ Mensch ärgere dich nicht für bis zu 4 Spieler im selben Neon-Look. Hochformat.
 
 ### Polling auf dem Workers-Free-Tarif
 
-Kein Durable Object, kein WebSocket, keine Queue. Ein Raum ist **eine D1-Zeile** (`aerger_rooms`): JSON `state`, `version`, `updated_at`. `migrations/0004_aerger_rooms.sql` legt nur diese Tabelle an. `scores.game` bleibt `rush` oder `mirror`.
+Kein Durable Object, kein WebSocket, keine Queue. Ein Raum ist **eine D1-Zeile** (`aerger_rooms`): JSON `state`, `version`, `updated_at`. `migrations/0004_aerger_rooms.sql` legt nur diese Tabelle an. `scores.game` ist `rush`, `mirror` oder `drift`. Drift braucht keine neue Migration: die Spalte aus `0003_game.sql` ist freier Text.
 
 | Aufruf | Wirkung |
 |--------|---------|
@@ -76,7 +89,7 @@ Die Skill-Bestenliste bleibt bei 30 Requests/Minute und einem POST alle 2 Sekund
 
 **Orbit Rush** is a mobile-first Canvas 2D reflex game. You auto-orbit a planet and steer the radius with A/D, arrow keys, or a horizontal drag. Collect orbs, dodge debris, chain combos and near-misses. A finished run saves to the top 50 under your pilot name. The first game over asks for that name once; later visits show “Welcome back” and submit on their own.
 
-v1.4 opens on an **Orbit Arcade** hub. **Orbit Mirror** posts to its own top 50. **Orbit Ärger** is a 2–4 player Mensch-ärgere-dich-nicht room on the same host: one D1 row per room, HTTP polling every ~1.8s (1s while waiting for someone else to roll), no Durable Objects or WebSockets. Your own roll is in the POST response; the die tumbles from the click until that face lands. Ärger wins are not leaderboard rows. `VITE_API_BASE` empty means the page calls `/api` on the same host. Local play uses `data/scores.json` plus `data/aerger-rooms.json`. Production uses Cloudflare D1 on the same host: https://orbit-rush.selimv18.workers.dev
+v1.4 opens on an **Orbit Arcade** hub with four games. **Orbit Mirror** and **Orbit Drift** each post to their own top 50 (`game=mirror`, `game=drift`). Drift is a solo neon tunnel: steer with A/D, arrows, or a drag, stay in the lane, and lose one of three hull points when you hit a wall. **Orbit Ärger** is a 2–4 player Mensch-ärgere-dich-nicht room on the same host: one D1 row per room, HTTP polling every ~1.8s (1s while waiting for someone else to roll), no Durable Objects or WebSockets. Your own roll is in the POST response; the die tumbles from the click until that face lands. Ärger wins are not leaderboard rows. `VITE_API_BASE` empty means the page calls `/api` on the same host. Local play uses `data/scores.json` plus `data/aerger-rooms.json`. Production uses Cloudflare D1 on the same host: https://orbit-rush.selimv18.workers.dev
 
 ## Spielen
 
@@ -165,11 +178,11 @@ Am besten Hochformat, etwa 390×844.
 `GET /api/health` → `{ ok, service, version }` (Produktion zusätzlich `storage: "d1"`)
 
 - `GET /api/scores` → Rush Top 50 `{ rank, name, score, ts, difficulty, mode, dailyDate, clientId, game }`
-- `GET /api/scores?game=rush` und `?game=mirror` — getrennte Top 50. Ohne `game` gilt `rush`.
+- `GET /api/scores?game=rush`, `?game=mirror` und `?game=drift` — getrennte Top 50. Ohne `game` gilt `rush`.
 - `GET /api/scores?difficulty=baba` → `einfach|mittel|schwer|baba` auf der Rush-Liste (Daily-Einträge sind hier nicht dabei)
 - `GET /api/scores?mode=daily&dailyDate=YYYY-MM-DD` — Daily bleibt Rush
 - `POST /api/scores` `{ name, score, survivalMs, orbs, comboBonus, nearMisses, difficulty?, mode?, dailyDate?, clientId?, game? }`
-- `game` ist `rush` oder `mirror`. Fehlt es, wird `rush` gespeichert. Mirror nutzt dieselbe Punkteformel; `difficulty` ist dabei `mittel` (eine Rampe).
+- `game` ist `rush`, `mirror` oder `drift`. Fehlt es, wird `rush` gespeichert. Mirror und Drift nutzen dieselbe Punkteformel; `difficulty` ist dabei `mittel` (eine Rampe). Drift schreibt keine neue Spalte.
 
 `clientId` ist optional (UUID v4). Ältere Clients lassen es weg; die Spalte bleibt dann `null`. Der Browser speichert Name (`orbit-rush-name`) und Id (`orbit-rush-client-id`). Eigene Zeilen mit derselben Id — oder ältere Zeilen nur mit demselben Namen — bekommen ein **YOU**. Nach dem ersten Namen speichert jeder beendete Run automatisch; ein erneutes Senden ist nur noch „Change name“.
 
@@ -177,7 +190,7 @@ Name wird bereinigt (1–16 Zeichen). Score-Maximum **750000**. Formel-Check, IP
 
 Schema-Nachzug: `migrations/0002_client_id.sql` (nullable `client_id`) und `migrations/0003_game.sql` (`game`, Default `rush` für bestehende Zeilen). `npm run deploy` wendet die Migrationen an. Der Worker legt fehlende Spalten beim Start ebenfalls an.
 
-Die Antwort-Liste eines POST ist die Top 50 **derselben** Rangliste (`game` plus Difficulty bzw. Daily-Datum). Das 500er-Limit gilt für die gemeinsame Tabelle; die beiden Top 50 bleiben getrennt.
+Die Antwort-Liste eines POST ist die Top 50 **derselben** Rangliste (`game` plus Difficulty bzw. Daily-Datum). Das 500er-Limit gilt für die gemeinsame Tabelle; Rush, Mirror und Drift bleiben getrennte Top 50.
 
 Lokal speichert Express höchstens 500 Zeilen in `data/scores.json` (nicht im Git). Produktion speichert dieselben 500 Zeilen in Cloudflare **D1** und serviert das gebaute Spiel vom selben Host. Fällt die API aus, zeigt der Client die `localStorage`-Liste.
 
@@ -189,6 +202,7 @@ Frontend: `VITE_API_BASE` leer lassen (gleicher Origin). Nur setzen, wenn die AP
 index.html
 src/                  Spiel, UI, Skins, Achievements, Leaderboard-Client
 src/mirror.js         Orbit Mirror (eigener Loop, gespiegelter Radius)
+src/drift.js          Orbit Drift (Tunnel, Bahn halten, game=drift)
 src/aerger-ui.js      Orbit Ärger Brett, Lobby, Polling
 server/index.js       lokale Express-API (Scores + Ärger-Datei)
 worker/               Produktion: /api auf D1, Ärger ohne Durable Objects

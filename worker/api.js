@@ -15,6 +15,7 @@ import {
   hashClientKey,
   boardQueryForPost,
   rankOf,
+  normalizeGame,
 } from '../shared/scores.js';
 
 let schemaReady = false;
@@ -159,7 +160,7 @@ async function bumpRateLimit(db, key, now) {
 
 async function listBoard(db, query) {
   const where = [`COALESCE(game, 'rush') = ?`];
-  const params = [query.game === 'mirror' ? 'mirror' : 'rush'];
+  const params = [normalizeGame(query.game)];
   if (query.mode === 'daily') {
     where.push(`mode = 'daily'`);
     if (query.dailyDate) {
@@ -189,7 +190,7 @@ async function listBoard(db, query) {
     mode: e.mode === 'daily' ? 'daily' : 'normal',
     dailyDate: e.dailyDate || null,
     clientId: e.clientId || e.client_id || null,
-    game: e.game === 'mirror' ? 'mirror' : 'rush',
+    game: normalizeGame(e.game),
   }));
 }
 
@@ -219,7 +220,7 @@ async function findDuplicate(db, value, key, now) {
       value.mode,
       value.dailyDate,
       value.dailyDate,
-      value.game === 'mirror' ? 'mirror' : 'rush',
+      normalizeGame(value.game),
       now - 10_000
     )
     .first();
@@ -256,7 +257,7 @@ async function insertAndTrim(db, value, key, now) {
       now,
       key,
       value.clientId || null,
-      value.game === 'mirror' ? 'mirror' : 'rush'
+      normalizeGame(value.game)
     );
   const trim = db.prepare(
     `DELETE FROM scores WHERE id NOT IN (
