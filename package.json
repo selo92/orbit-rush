@@ -1,8 +1,8 @@
 {
   "name": "orbit-rush",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "private": true,
-  "description": "Orbit Rush – neon orbital skill game with daily challenge, achievements & skins",
+  "description": "Orbit Rush arcade — Orbit Rush and Orbit Mirror, shared pilot, separate leaderboards",
   "type": "module",
   "scripts": {
     "dev": "vite",

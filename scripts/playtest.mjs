@@ -120,6 +120,7 @@ async function main() {
 
   const clickPlay = await send('Runtime.evaluate', {
     expression: `(() => {
+      document.getElementById('btn-hub-rush')?.click();
       const b = document.getElementById('btn-play');
       if (!b) return 'no-btn';
       b.click();

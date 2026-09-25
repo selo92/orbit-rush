@@ -1,14 +1,35 @@
 # Orbit Rush
 
-Neon-Skill-Game für kurze Runs und eine globale Top-50-Bestenliste. **v1.3**
+Neon-Skill-Spiele für kurze Runs und zwei globale Top-50-Bestenlisten. **v1.4**
 
-Steuere den Orbit-Radius, sammle Orbs, weiche Asteroiden aus. Vor jedem Run: **Einfach · Mittel · Schwer · Baba**. Oder die **Daily Challenge** (feste Schwer-Seeds, gleiche Spawns für alle am selben UTC-Tag).
+Die Seite bleibt **Orbit Rush** (gleiche URL, gleicher Pilot). Der erste Screen ist die **Orbit Arcade**: zwei große Kacheln, **Orbit Rush** und **Orbit Mirror**. Name (`orbit-rush-name`) und `orbit-rush-client-id` gelten für beide Spiele. „Welcome back“ steht auf der Arcade.
+
+| Spiel | Pitch |
+|-------|--------|
+| **Orbit Rush** | Steuere den Orbit. Sammle Orbs. Überlebe. |
+| **Orbit Mirror** | Dein Reflex lügt. Das Schiff fliegt gespiegelt. |
+
+Von jedem Spielmenü führt **ARCADE** zurück zur Auswahl. Orbit Rush selbst ist unverändert: **Einfach · Mittel · Schwer · Baba**, Daily, Achievements, Skins, Auto-Submit.
+
+## Orbit Mirror
+
+**Regel:** Links / `A` / `←` / Wisch nach links schiebt das Schiff **nach außen**. Rechts schiebt es **nach innen**. Der magenta Schatten ist der Reflex (so würde Orbit Rush reagieren). Hindernisse und Orbs liegen im Orbit des Schiffs.
+
+Ein Screen erklärt das auf Deutsch und Englisch (`Links → außen`). In den ersten Sekunden steht dieselbe Zeile im Canvas, und ein cyaner Strich zeigt die sichere Bahn. Die Magenta-Wand deckt den aktuellen Radius plus eine Seite ab. Wer den Rush-Reflex drückt, fliegt in die Wand.
+
+Eine Schwierigkeitsrampe, kein Extra-Picker. Pause, Mute, Game Over und YOU-Badge wie bei Rush.
+
+```text
+score = floor(Sekunden) × 10 + Orbs × 100 + comboBonus + nearMisses × 75
+```
+
+Dieselbe Formel wie Rush, damit der Server sie prüfen kann. Die Rangliste ist nur `game=mirror`. Die **Clean streak** (Splitter in Folge, lokal `orbit-mirror-streak`) steht im HUD und auf dem Game-Over-Screen und ist keine zweite Bestenliste.
 
 ## English
 
 **Orbit Rush** is a mobile-first Canvas 2D reflex game. You auto-orbit a planet and steer the radius with A/D, arrow keys, or a horizontal drag. Collect orbs, dodge debris, chain combos and near-misses. A finished run saves to the top 50 under your pilot name. The first game over asks for that name once; later visits show “Welcome back” and submit on their own.
 
-v1.3 adds a seeded **Daily** mode, six achievements, four craft skins, and a share button. `VITE_API_BASE` empty means the page calls `/api` on the same host. Local play uses `data/scores.json`. Production uses Cloudflare D1 on the same host: https://orbit-rush.selimv18.workers.dev
+v1.4 opens on an **Orbit Arcade** hub and adds **Orbit Mirror**: left input moves the ship outward, a ghost shows the unmirrored reflex, and scores post to a separate top 50. Rush keeps daily, difficulty, achievements, skins, and auto-submit. `VITE_API_BASE` empty means the page calls `/api` on the same host. Local play uses `data/scores.json`. Production uses Cloudflare D1 on the same host: https://orbit-rush.selimv18.workers.dev
 
 ## Spielen
 
@@ -96,16 +117,20 @@ Am besten Hochformat, etwa 390×844.
 
 `GET /api/health` → `{ ok, service, version }` (Produktion zusätzlich `storage: "d1"`)
 
-- `GET /api/scores` → Top 50 `{ rank, name, score, ts, difficulty, mode, dailyDate, clientId }`
-- `GET /api/scores?difficulty=baba` → `einfach|mittel|schwer|baba` (Daily-Einträge sind hier nicht dabei)
-- `GET /api/scores?mode=daily&dailyDate=YYYY-MM-DD`
-- `POST /api/scores` `{ name, score, survivalMs, orbs, comboBonus, nearMisses, difficulty?, mode?, dailyDate?, clientId? }`
+- `GET /api/scores` → Rush Top 50 `{ rank, name, score, ts, difficulty, mode, dailyDate, clientId, game }`
+- `GET /api/scores?game=rush` und `?game=mirror` — getrennte Top 50. Ohne `game` gilt `rush`.
+- `GET /api/scores?difficulty=baba` → `einfach|mittel|schwer|baba` auf der Rush-Liste (Daily-Einträge sind hier nicht dabei)
+- `GET /api/scores?mode=daily&dailyDate=YYYY-MM-DD` — Daily bleibt Rush
+- `POST /api/scores` `{ name, score, survivalMs, orbs, comboBonus, nearMisses, difficulty?, mode?, dailyDate?, clientId?, game? }`
+- `game` ist `rush` oder `mirror`. Fehlt es, wird `rush` gespeichert. Mirror nutzt dieselbe Punkteformel; `difficulty` ist dabei `mittel` (eine Rampe).
 
 `clientId` ist optional (UUID v4). Ältere Clients lassen es weg; die Spalte bleibt dann `null`. Der Browser speichert Name (`orbit-rush-name`) und Id (`orbit-rush-client-id`). Eigene Zeilen mit derselben Id — oder ältere Zeilen nur mit demselben Namen — bekommen ein **YOU**. Nach dem ersten Namen speichert jeder beendete Run automatisch; ein erneutes Senden ist nur noch „Change name“.
 
-Name wird bereinigt (1–16 Zeichen). Score-Maximum **750000**. Formel-Check, IP-Hash, höchstens ein POST alle 2 Sekunden, 30 API-Requests pro Minute, Doppel-Submit innerhalb von 10 s ist idempotent. Die Antwort-Liste ist die passende Top 50 (gleiche Difficulty bzw. das Daily-Datum).
+Name wird bereinigt (1–16 Zeichen). Score-Maximum **750000**. Formel-Check, IP-Hash, höchstens ein POST alle 2 Sekunden, 30 API-Requests pro Minute, Doppel-Submit innerhalb von 10 s ist idempotent (pro Spiel).
 
-Schema-Nachzug: `migrations/0002_client_id.sql` (nullable `client_id`). `npm run deploy` wendet die Migration an. Der Worker legt die Spalte beim Start ebenfalls an, falls sie noch fehlt.
+Schema-Nachzug: `migrations/0002_client_id.sql` (nullable `client_id`) und `migrations/0003_game.sql` (`game`, Default `rush` für bestehende Zeilen). `npm run deploy` wendet die Migrationen an. Der Worker legt fehlende Spalten beim Start ebenfalls an.
+
+Die Antwort-Liste eines POST ist die Top 50 **derselben** Rangliste (`game` plus Difficulty bzw. Daily-Datum). Das 500er-Limit gilt für die gemeinsame Tabelle; die beiden Top 50 bleiben getrennt.
 
 Lokal speichert Express höchstens 500 Zeilen in `data/scores.json` (nicht im Git). Produktion speichert dieselben 500 Zeilen in Cloudflare **D1** und serviert das gebaute Spiel vom selben Host. Fällt die API aus, zeigt der Client die `localStorage`-Liste.
 
@@ -116,10 +141,11 @@ Frontend: `VITE_API_BASE` leer lassen (gleicher Origin). Nur setzen, wenn die AP
 ```text
 index.html
 src/                  Spiel, UI, Skins, Achievements, Leaderboard-Client
+src/mirror.js         Orbit Mirror (eigener Loop, gespiegelter Radius)
 server/index.js       lokale Express-API
 worker/               Produktion: /api auf D1
-shared/               gemeinsame Prüfung (Name, Score, Filter)
-migrations/           D1-Schema
+shared/               gemeinsame Prüfung (Name, Score, Filter, game)
+migrations/           D1-Schema (`0003_game.sql` setzt bestehende Zeilen auf rush)
 scripts/              smoke, worker-smoke, playtest, cf-deploy
 wrangler.toml
 DEPLOY.md

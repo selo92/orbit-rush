@@ -5,7 +5,7 @@
 
 import { normalizeDifficulty, DEFAULT_DIFFICULTY } from './difficulty.js';
 import { isValidDailyDate } from './rng.js';
-import { normalizeClientId } from '../shared/scores.js';
+import { normalizeClientId, normalizeGame } from '../shared/scores.js';
 
 const LS_KEY = 'orbit-rush-scores-v1';
 const MAX_NAME = 16;
@@ -49,12 +49,15 @@ function normalizeMode(m) {
  */
 function rankLocal(scores, filter = {}) {
   let list = [...scores];
+  const game = normalizeGame(filter.game);
   const mode = filter.mode ? normalizeMode(filter.mode) : null;
   const dailyDate = filter.dailyDate && isValidDailyDate(filter.dailyDate) ? filter.dailyDate : null;
   const difficulty =
     filter.difficulty && filter.difficulty !== 'all'
       ? normalizeDifficulty(filter.difficulty)
       : null;
+
+  list = list.filter((e) => normalizeGame(e.game) === game);
 
   if (mode === 'daily') {
     list = list.filter((e) => normalizeMode(e.mode) === 'daily');
@@ -83,6 +86,7 @@ function rankLocal(scores, filter = {}) {
       mode: normalizeMode(e.mode),
       dailyDate: e.dailyDate || null,
       clientId: e.clientId || null,
+      game: normalizeGame(e.game),
     }));
 }
 
@@ -122,6 +126,7 @@ export async function fetchScores(filterOrDifficulty) {
   }
 
   const params = new URLSearchParams();
+  params.set('game', normalizeGame(filter.game));
   if (filter.mode === 'daily') {
     params.set('mode', 'daily');
     if (filter.dailyDate) params.set('dailyDate', filter.dailyDate);
@@ -153,10 +158,12 @@ export async function submitScore({
   mode = 'normal',
   dailyDate,
   clientId,
+  game = 'rush',
 }) {
   const clean = sanitizeName(name);
   if (!clean) throw new Error('Name required');
   const normalizedMode = normalizeMode(mode);
+  const normalizedGame = normalizeGame(game);
   const payload = {
     name: clean,
     score: Math.floor(Number(score)),
@@ -166,6 +173,7 @@ export async function submitScore({
     nearMisses: Math.floor(Number(nearMisses) || 0),
     difficulty: normalizeDifficulty(difficulty),
     mode: normalizedMode,
+    game: normalizedGame,
   };
   if (normalizedMode === 'daily') {
     if (!dailyDate || !isValidDailyDate(dailyDate)) {
@@ -189,6 +197,7 @@ export async function submitScore({
           e.score === payload.score &&
           e.difficulty === payload.difficulty &&
           normalizeMode(e.mode) === payload.mode &&
+          normalizeGame(e.game) === payload.game &&
           (payload.mode !== 'daily' || e.dailyDate === payload.dailyDate) &&
           Date.now() - e.ts < 10_000
       )
@@ -211,6 +220,7 @@ export async function submitScore({
         x.score === payload.score &&
         x.difficulty === payload.difficulty &&
         normalizeMode(x.mode) === payload.mode &&
+        normalizeGame(x.game) === payload.game &&
         (payload.mode !== 'daily' || x.dailyDate === payload.dailyDate) &&
         now - x.ts < 10_000
     );
@@ -222,6 +232,7 @@ export async function submitScore({
       mode: payload.mode,
       dailyDate: payload.dailyDate,
       difficulty: payload.mode === 'daily' ? undefined : payload.difficulty,
+      game: payload.game,
     });
     const rank =
       ranked.findIndex(

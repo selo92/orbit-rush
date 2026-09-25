@@ -88,3 +88,7 @@ npx wrangler deploy
 ```
 
 SQLite here has no `ADD COLUMN IF NOT EXISTS`. The migration runs once. The Worker also adds the column on startup when it is missing, so a deploy without the migration still accepts new scores. If the column already exists, skip the migration error `duplicate column name: client_id` and deploy the Worker.
+
+## 7. Game column
+
+`migrations/0003_game.sql` adds `scores.game` (`rush` or `mirror`) with default `rush`, so rows already in D1 stay on the Orbit Rush board. `GET /api/scores?game=mirror` is the Orbit Mirror top 50. The Worker adds the column on startup if it is missing. If the migration reports `duplicate column name: game`, the column is already there — deploy the Worker anyway.

@@ -803,6 +803,119 @@ h2 {
 }
 
 .hud-mode{margin:0 auto 4px;padding:4px 10px;border-radius:999px;font-size:11px;letter-spacing:.08em;font-weight:700;color:#ffe566;background:rgba(255,229,102,.12);border:1px solid rgba(255,229,102,.35);}
+
+#hud.mirror-mode .stat span:last-child {
+  color: var(--magenta);
+  text-shadow: 0 0 10px rgba(255, 43, 214, 0.45);
+}
+
+.diff-badge.mirror {
+  color: var(--magenta);
+  border-color: rgba(255, 43, 214, 0.55);
+  background: rgba(255, 43, 214, 0.12);
+}
+
+.hub-panel,
+.mirror-panel {
+  max-height: calc(100vh - 28px - var(--safe-top) - var(--safe-bottom));
+  overflow-y: auto;
+}
+
+.hub-tiles {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 4px 0 8px;
+}
+
+.hub-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  width: 100%;
+  min-height: 96px;
+  padding: 16px 16px 14px;
+  border-radius: 16px;
+  cursor: pointer;
+  text-align: left;
+  color: var(--text);
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(0, 240, 255, 0.35);
+}
+
+.hub-tile strong {
+  font-size: 18px;
+  letter-spacing: 0.08em;
+  font-weight: 800;
+}
+
+.hub-tile span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.35;
+  letter-spacing: 0;
+  font-weight: 500;
+}
+
+.hub-tile.rush strong {
+  color: var(--cyan);
+}
+
+.hub-tile.mirror {
+  border-color: rgba(255, 43, 214, 0.55);
+  background: linear-gradient(160deg, rgba(40, 10, 32, 0.55), rgba(8, 8, 20, 0.55));
+}
+
+.hub-tile.mirror strong {
+  color: var(--magenta);
+}
+
+.hub-tile:active {
+  transform: scale(0.98);
+}
+
+.hub-tile:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+}
+
+.mirror-demo {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+
+.mirror-demo div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-radius: 12px;
+  padding: 10px 8px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.mirror-demo strong {
+  font-size: 12px;
+  letter-spacing: 0.06em;
+}
+
+.mirror-demo span {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.mirror-demo .ghost {
+  border-color: rgba(255, 43, 214, 0.4);
+  color: var(--magenta);
+}
+
+.mirror-demo .ship {
+  border-color: rgba(0, 240, 255, 0.45);
+  color: var(--cyan);
+}
 .title-actions{display:flex;gap:10px;margin-top:8px}.title-actions .btn{flex:1;margin-top:0}
 .daily-line{margin:6px 0 10px;font-size:13px;color:var(--muted)}.daily-line strong{color:#ffe566}
 .skin-swatch{width:36px;height:36px;border-radius:50%;background:radial-gradient(circle at 30% 30%,var(--c,#00f0ff),var(--a,#ff2bd6));box-shadow:0 0 14px var(--c,#00f0ff)}

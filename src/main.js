@@ -3,6 +3,7 @@
  * Daily Challenge · Achievements · Share · Craft skins
  */
 import { Game, formatFormula, computeScore, NEAR_MISS_POINTS, COMBO_STEP } from './game.js';
+import { MirrorGame } from './mirror.js';
 import {
   DIFFICULTIES,
   DIFFICULTY_IDS,
@@ -40,12 +41,16 @@ const LS_BEST_PREFIX = 'orbit-rush-best-';
 const LS_DAILY_PREFIX = 'orbit-rush-daily-best-';
 const LS_DIFF = 'orbit-rush-difficulty';
 const LS_ONBOARD = 'orbit-rush-onboard-v1';
+const LS_MIRROR_BEST = 'orbit-mirror-best';
+const LS_MIRROR_STREAK = 'orbit-mirror-streak';
+const LS_MIRROR_ONBOARD = 'orbit-mirror-onboard-v1';
 const SHARE_NOTE = '(Orbit Rush — play locally / LiveCodes)';
 
 const canvas = /** @type {HTMLCanvasElement} */ ($('game'));
 const audio = new AudioBus();
 
 const screens = {
+  hub: $('screen-hub'),
   title: $('screen-title'),
   diff: $('screen-diff'),
   pause: $('screen-pause'),
@@ -54,6 +59,8 @@ const screens = {
   onboard: $('screen-onboard'),
   achievements: $('screen-achievements'),
   skins: $('screen-skins'),
+  mirror: $('screen-mirror'),
+  mirrorOnboard: $('screen-mirror-onboard'),
 };
 
 const hud = $('hud');
@@ -75,6 +82,10 @@ const toastEl = $('toast');
 let lastResult = null;
 let lbBackTo = 'title';
 let lbFilter = 'all';
+/** @type {'hub'|'rush'|'mirror'} */
+let activeGame = 'hub';
+/** @type {'rush'|'mirror'} */
+let lbGame = 'rush';
 let submitting = false;
 let runSeq = 0;
 /** runId of the finish that already triggered an automatic submit */
@@ -170,6 +181,75 @@ function setDailyBest(score, dateStr = dailyDate) {
   try {
     const prev = getDailyBest(dateStr);
     if (score > prev) localStorage.setItem(dailyBestKey(dateStr), String(Math.floor(score)));
+  } catch {
+    /* ignore */
+  }
+}
+
+function getMirrorBest() {
+  try {
+    return Math.max(0, Math.floor(Number(localStorage.getItem(LS_MIRROR_BEST)) || 0));
+  } catch {
+    return 0;
+  }
+}
+
+function setMirrorBest(score) {
+  try {
+    localStorage.setItem(LS_MIRROR_BEST, String(Math.floor(score)));
+  } catch {
+    /* ignore */
+  }
+}
+
+function getMirrorStreak() {
+  try {
+    return Math.max(0, Math.floor(Number(localStorage.getItem(LS_MIRROR_STREAK)) || 0));
+  } catch {
+    return 0;
+  }
+}
+
+function setMirrorStreak(n) {
+  try {
+    localStorage.setItem(LS_MIRROR_STREAK, String(Math.floor(n)));
+  } catch {
+    /* ignore */
+  }
+}
+
+function refreshMirrorMenu() {
+  const best = getMirrorBest();
+  const streak = getMirrorStreak();
+  const bestEl = $('mirror-best-val');
+  const streakEl = $('mirror-streak-val');
+  if (bestEl) bestEl.textContent = best > 0 ? String(best) : '—';
+  if (streakEl) streakEl.textContent = streak > 0 ? String(streak) : '—';
+}
+
+function refreshHub() {
+  const name = loadPlayerName();
+  const line = $('hub-identity');
+  if (!line) return;
+  if (name) {
+    $('hub-identity-name').textContent = name;
+    line.classList.remove('hidden');
+  } else {
+    line.classList.add('hidden');
+  }
+}
+
+function mirrorOnboardDone() {
+  try {
+    return localStorage.getItem(LS_MIRROR_ONBOARD) === '1';
+  } catch {
+    return true;
+  }
+}
+
+function markMirrorOnboard() {
+  try {
+    localStorage.setItem(LS_MIRROR_ONBOARD, '1');
   } catch {
     /* ignore */
   }
@@ -292,13 +372,15 @@ function finishOnboard() {
 function refreshTitleIdentity() {
   const name = loadPlayerName();
   const line = $('title-identity');
-  if (!line) return;
-  if (name) {
-    $('title-identity-name').textContent = name;
-    line.classList.remove('hidden');
-  } else {
-    line.classList.add('hidden');
+  if (line) {
+    if (name) {
+      $('title-identity-name').textContent = name;
+      line.classList.remove('hidden');
+    } else {
+      line.classList.add('hidden');
+    }
   }
+  refreshHub();
 }
 
 function showWelcome(name) {
@@ -372,6 +454,7 @@ async function sendScore(name, { auto = false } = {}) {
       difficulty: lastResult.difficulty || selectedDifficulty,
       mode: lastResult.daily ? 'daily' : 'normal',
       dailyDate: lastResult.daily ? lastResult.dailyDate || dailyDate : undefined,
+      game: lastResult.game === 'mirror' ? 'mirror' : 'rush',
     });
     status.classList.remove('error');
     status.classList.toggle('calm', !!(res.duplicate || res.rateLimited));
@@ -411,6 +494,11 @@ function presentGameOverIdentity(result) {
 
 function setOverDiffBadge(result) {
   const badge = $('over-diff-badge');
+  if (result.game === 'mirror') {
+    badge.textContent = 'Mirror';
+    badge.className = 'diff-badge mirror';
+    return;
+  }
   if (result.daily) {
     badge.textContent = `Daily · ${result.dailyDate || dailyDate}`;
     badge.className = 'diff-badge daily';
@@ -510,6 +598,10 @@ function openSkins() {
 
 function buildShareText(result) {
   const score = result?.score ?? 0;
+  if (result?.game === 'mirror') {
+    const streak = Math.max(0, Math.floor(result.cleanStreak || 0));
+    return `Orbit Mirror — score ${score} — clean streak ${streak} — beat me!`;
+  }
   let tag;
   if (result?.daily) {
     tag = `Daily · ${result.dailyDate || dailyDate}`;
@@ -525,7 +617,7 @@ async function shareScore() {
   audio.click();
   try {
     if (navigator.share) {
-      await navigator.share({ title: 'Orbit Rush', text });
+      await navigator.share({ title: lastResult?.game === 'mirror' ? 'Orbit Mirror' : 'Orbit Rush', text });
       $('submit-status').textContent = 'Shared!';
       $('submit-status').classList.remove('error');
       return;
@@ -546,6 +638,7 @@ async function shareScore() {
 const game = new Game(canvas, {
   audio,
   onHud({ score, orbs, time, combo, shield, slowMo, magnet }) {
+    $('hud-combo-label').textContent = 'COMBO';
     hudScore.textContent = String(score);
     hudOrbs.textContent = String(orbs);
     hudTime.textContent = time.toFixed(1);
@@ -568,62 +661,189 @@ const game = new Game(canvas, {
     }
   },
   onGameOver(result) {
-    result.runId = ++runSeq;
-    lastResult = result;
-    hud.classList.add('hidden');
-    touchHint.classList.add('hidden');
-    audio.stopMusic();
-
-    processAchievements(result);
-
-    let isNew = false;
-    let best = 0;
-    if (result.daily) {
-      const date = result.dailyDate || dailyDate;
-      const prev = getDailyBest(date);
-      isNew = result.score > prev;
-      if (isNew) setDailyBest(result.score, date);
-      best = Math.max(prev, result.score);
-      const ob = $('over-best');
-      if (ob.childNodes[0] && ob.childNodes[0].nodeType === 3) {
-        ob.childNodes[0].textContent = `Daily best (${date}): `;
-      }
-    } else {
-      const diff = normalizeDifficulty(result.difficulty || selectedDifficulty);
-      const prevBest = getBest(diff);
-      isNew = result.score > prevBest;
-      if (isNew) setBest(result.score, diff);
-      best = Math.max(prevBest, result.score);
-      const ob = $('over-best');
-      if (ob.childNodes[0] && ob.childNodes[0].nodeType === 3) {
-        ob.childNodes[0].textContent = `Best (${getDifficulty(diff).label}): `;
-      }
-    }
-
-    setOverDiffBadge(result);
-    $('over-score').textContent = String(result.score);
-    $('over-formula').textContent =
-      result.formula ||
-      formatFormula(
-        result.survivalMs,
-        result.orbs,
-        result.comboBonus,
-        result.nearMisses,
-        result.score
-      );
-    $('over-new-best').classList.toggle('hidden', !isNew || result.score <= 0);
-    $('over-best').classList.toggle('hidden', best <= 0);
-    $('over-best-val').textContent = String(best);
-
-    refreshTitleBest();
-    presentGameOverIdentity(result);
-    showScreen('over');
+    result.game = 'rush';
+    showGameOver(result);
   },
 });
 
+function showGameOver(result) {
+  result.runId = ++runSeq;
+  lastResult = result;
+  hud.classList.add('hidden');
+  touchHint.classList.add('hidden');
+  audio.stopMusic();
+
+  const mirrorRun = result.game === 'mirror';
+  $('over-title').textContent = mirrorRun ? 'SPIEGEL BRICHT' : 'ORBIT LOST';
+  $('over-streak').classList.toggle('hidden', !mirrorRun);
+
+  if (!mirrorRun) processAchievements(result);
+
+  let isNew = false;
+  let best = 0;
+  if (mirrorRun) {
+    const prev = getMirrorBest();
+    isNew = result.score > prev;
+    if (isNew) setMirrorBest(result.score);
+    best = Math.max(prev, result.score);
+    const streak = Math.max(0, Math.floor(result.cleanStreak || 0));
+    $('over-streak-val').textContent = String(streak);
+    const prevStreak = getMirrorStreak();
+    if (streak > prevStreak) {
+      setMirrorStreak(streak);
+      showToast('★ Mirror streak', String(streak));
+    }
+    const ob = $('over-best');
+    if (ob.childNodes[0] && ob.childNodes[0].nodeType === 3) {
+      ob.childNodes[0].textContent = 'Best: ';
+    }
+  } else if (result.daily) {
+    const date = result.dailyDate || dailyDate;
+    const prev = getDailyBest(date);
+    isNew = result.score > prev;
+    if (isNew) setDailyBest(result.score, date);
+    best = Math.max(prev, result.score);
+    const ob = $('over-best');
+    if (ob.childNodes[0] && ob.childNodes[0].nodeType === 3) {
+      ob.childNodes[0].textContent = `Daily best (${date}): `;
+    }
+  } else {
+    const diff = normalizeDifficulty(result.difficulty || selectedDifficulty);
+    const prevBest = getBest(diff);
+    isNew = result.score > prevBest;
+    if (isNew) setBest(result.score, diff);
+    best = Math.max(prevBest, result.score);
+    const ob = $('over-best');
+    if (ob.childNodes[0] && ob.childNodes[0].nodeType === 3) {
+      ob.childNodes[0].textContent = `Best (${getDifficulty(diff).label}): `;
+    }
+  }
+
+  setOverDiffBadge(result);
+  $('over-score').textContent = String(result.score);
+  $('over-formula').textContent =
+    result.formula ||
+    formatFormula(
+      result.survivalMs,
+      result.orbs,
+      result.comboBonus,
+      result.nearMisses,
+      result.score
+    );
+  $('over-new-best').classList.toggle('hidden', !isNew || result.score <= 0);
+  $('over-best').classList.toggle('hidden', best <= 0);
+  $('over-best-val').textContent = String(best);
+
+  refreshTitleBest();
+  refreshMirrorMenu();
+  refreshHub();
+  presentGameOverIdentity(result);
+  showScreen('over');
+}
+
 game.setSkin(selectedSkin);
 
+const mirror = new MirrorGame(canvas, {
+  audio,
+  onHud({ score, orbs, time, streak }) {
+    hudScore.textContent = String(score);
+    hudOrbs.textContent = String(orbs);
+    hudTime.textContent = time.toFixed(1);
+    $('hud-combo-label').textContent = 'STREAK';
+    if (streak > 0) {
+      hudCombo.classList.remove('hidden');
+      hudComboVal.textContent = String(streak);
+      hudCombo.classList.toggle('hot', streak >= 4);
+    } else {
+      hudCombo.classList.add('hidden');
+      hudCombo.classList.remove('hot');
+    }
+    pwrShield.classList.add('hidden');
+    pwrSlow.classList.add('hidden');
+    pwrMagnet.classList.add('hidden');
+  },
+  onGameOver(result) {
+    showGameOver(result);
+  },
+});
+
+function liveGame() {
+  return activeGame === 'mirror' ? mirror : game;
+}
+
+function showHub() {
+  activeGame = 'hub';
+  if (game.running) game.stop();
+  if (mirror.running) mirror.stop();
+  audio.stopMusic();
+  hud.classList.add('hidden');
+  hud.classList.remove('mirror-mode');
+  hudMode.classList.add('hidden');
+  refreshHub();
+  showScreen('hub');
+}
+
+function openRushMenu() {
+  activeGame = 'rush';
+  if (mirror.running) mirror.stop();
+  audio.stopMusic();
+  hud.classList.add('hidden');
+  hud.classList.remove('mirror-mode');
+  refreshTitleBest();
+  refreshTitleIdentity();
+  showScreen('title');
+}
+
+function openMirrorMenu() {
+  activeGame = 'mirror';
+  if (game.running) game.stop();
+  if (mirror.running) mirror.stop();
+  audio.stopMusic();
+  hud.classList.add('hidden');
+  refreshMirrorMenu();
+  showScreen('mirror');
+}
+
+function beginMirror() {
+  activeGame = 'mirror';
+  if (game.running) game.stop();
+  audio.resume();
+  audio.startMusic();
+  hideAllScreens();
+  hud.classList.remove('hidden');
+  hud.classList.add('mirror-mode');
+  $('hud-combo-label').textContent = 'STREAK';
+  hudCombo.classList.add('hidden');
+  pwrShield.classList.add('hidden');
+  pwrSlow.classList.add('hidden');
+  pwrMagnet.classList.add('hidden');
+  hudMode.textContent = 'MIRROR';
+  hudMode.classList.remove('hidden');
+  touchHint.textContent = '← außen / out · → innen / in';
+  touchHint.classList.add('hidden');
+  touchHint.classList.remove('fade-fast');
+  void touchHint.offsetWidth;
+  touchHint.classList.remove('hidden');
+  mirror.start();
+}
+
+function startMirror() {
+  activeGame = 'mirror';
+  audio.resume();
+  audio.click();
+  if (!mirrorOnboardDone()) {
+    showScreen('mirrorOnboard');
+    return;
+  }
+  beginMirror();
+}
+
 function beginRun(opts = {}) {
+  activeGame = 'rush';
+  if (mirror.running) mirror.stop();
+  hud.classList.remove('mirror-mode');
+  $('hud-combo-label').textContent = 'COMBO';
+  touchHint.textContent = 'Drag left / right to change orbit';
   audio.resume();
   audio.click();
   audio.startMusic();
@@ -687,9 +907,12 @@ function startDaily() {
   beginRun({ daily: true });
 }
 
-function openLeaderboard(from) {
+function openLeaderboard(from, gameId = 'rush') {
   lbBackTo = from;
-  lbFilter = runMode === 'daily' ? 'daily' : selectedDifficulty || 'all';
+  lbGame = gameId === 'mirror' ? 'mirror' : 'rush';
+  if (lbGame === 'rush') {
+    lbFilter = runMode === 'daily' ? 'daily' : selectedDifficulty || 'all';
+  }
   syncLbFilters();
   showScreen('lb');
   renderLeaderboard();
@@ -706,16 +929,29 @@ async function renderLeaderboard() {
   const empty = $('lb-empty');
   list.innerHTML = '<li class="muted">Loading…</li>';
   empty.classList.add('hidden');
+  const heading = $('lb-heading');
+  const filters = $('lb-filters');
+  if (lbGame === 'mirror') {
+    if (heading) heading.textContent = 'MIRROR TOP 50';
+    filters?.classList.add('hidden');
+  } else {
+    if (heading) heading.textContent = 'GLOBAL TOP 50';
+    filters?.classList.remove('hidden');
+  }
   try {
     let scores;
     let source;
-    if (lbFilter === 'daily') {
-      const res = await fetchScores({ mode: 'daily', dailyDate: utcDateString() });
+    if (lbGame === 'mirror') {
+      const res = await fetchScores({ game: 'mirror' });
+      scores = res.scores;
+      source = res.source;
+    } else if (lbFilter === 'daily') {
+      const res = await fetchScores({ mode: 'daily', dailyDate: utcDateString(), game: 'rush' });
       scores = res.scores;
       source = res.source;
     } else {
       const filter = lbFilter === 'all' ? undefined : lbFilter;
-      const res = await fetchScores(filter);
+      const res = await fetchScores(filter ? { difficulty: filter, game: 'rush' } : { game: 'rush' });
       scores = res.scores;
       source = res.source;
     }
@@ -749,7 +985,10 @@ async function renderLeaderboard() {
         name.append(you);
       }
       const badge = document.createElement('span');
-      if (row.mode === 'daily' || lbFilter === 'daily') {
+      if (lbGame === 'mirror') {
+        badge.className = 'diff-badge mirror';
+        badge.textContent = 'Mirror';
+      } else if (row.mode === 'daily' || lbFilter === 'daily') {
         badge.className = 'diff-badge daily';
         badge.textContent = row.dailyDate ? `Daily ${String(row.dailyDate).slice(5)}` : 'Daily';
       } else {
@@ -773,7 +1012,8 @@ async function renderLeaderboard() {
 $('btn-play').addEventListener('click', startRun);
 $('btn-daily').addEventListener('click', startDaily);
 $('btn-retry').addEventListener('click', () => {
-  if (lastResult?.daily || runMode === 'daily') startDaily();
+  if (lastResult?.game === 'mirror') startMirror();
+  else if (lastResult?.daily || runMode === 'daily') startDaily();
   else startRun();
 });
 $('btn-diff-start').addEventListener('click', () => {
@@ -808,16 +1048,22 @@ $('btn-resume').addEventListener('click', () => {
   hideAllScreens();
   hud.classList.remove('hidden');
   audio.startMusic();
-  game.setPaused(false);
+  liveGame().setPaused(false);
 });
 $('btn-quit').addEventListener('click', () => {
   audio.click();
-  game.stop();
+  const leavingMirror = activeGame === 'mirror';
+  liveGame().stop();
   audio.stopMusic();
   hud.classList.add('hidden');
   hudMode.classList.add('hidden');
-  refreshTitleBest();
-  showScreen('title');
+  if (leavingMirror) {
+    refreshMirrorMenu();
+    showScreen('mirror');
+  } else {
+    refreshTitleBest();
+    showScreen('title');
+  }
 });
 $('btn-lb-title').addEventListener('click', () => {
   audio.click();
@@ -825,12 +1071,15 @@ $('btn-lb-title').addEventListener('click', () => {
 });
 $('btn-lb-over').addEventListener('click', () => {
   audio.click();
-  openLeaderboard('over');
+  openLeaderboard('over', lastResult?.game === 'mirror' ? 'mirror' : 'rush');
 });
 $('btn-lb-back').addEventListener('click', () => {
   audio.click();
   if (lbBackTo === 'over' && lastResult) showScreen('over');
-  else {
+  else if (lbBackTo === 'mirror') {
+    refreshMirrorMenu();
+    showScreen('mirror');
+  } else {
     refreshTitleBest();
     showScreen('title');
   }
@@ -872,10 +1121,11 @@ $('btn-share').addEventListener('click', () => {
 });
 
 btnPause.addEventListener('click', () => {
-  if (!game.running || !game.alive) return;
+  const live = liveGame();
+  if (!live.running || !live.alive) return;
   audio.click();
   audio.stopMusic();
-  game.setPaused(true);
+  live.setPaused(true);
   hud.classList.add('hidden');
   showScreen('pause');
 });
@@ -884,7 +1134,8 @@ btnMute.addEventListener('click', () => {
   audio.resume();
   audio.toggleMute();
   syncMuteBtn();
-  if (!audio.muted && game.running && game.alive && !game.paused) {
+  const live = liveGame();
+  if (!audio.muted && live.running && live.alive && !live.paused) {
     audio.startMusic();
   }
 });
@@ -914,7 +1165,10 @@ $('score-form').addEventListener('submit', async (e) => {
 
 function onResize() {
   game.resize();
-  if (!game.running) {
+  mirror.resize();
+  if (game.running || mirror.running) return;
+  if (activeGame === 'mirror') mirror.draw();
+  else {
     if (typeof game.seedStars === 'function') game.seedStars();
     game.draw();
   }
@@ -923,22 +1177,66 @@ window.addEventListener('resize', onResize);
 window.addEventListener('orientationchange', () => setTimeout(onResize, 120));
 
 function idleDraw() {
-  if (!game.running) {
-    game.angle += 0.004;
-    game.draw();
+  if (!game.running && !mirror.running) {
+    if (activeGame === 'mirror') mirror.drawIdle();
+    else {
+      game.angle += 0.004;
+      game.draw();
+    }
   }
   requestAnimationFrame(idleDraw);
 }
 
+$('btn-hub-rush').addEventListener('click', () => {
+  audio.resume();
+  audio.click();
+  openRushMenu();
+});
+$('btn-hub-mirror').addEventListener('click', () => {
+  audio.resume();
+  audio.click();
+  openMirrorMenu();
+});
+$('btn-title-hub').addEventListener('click', () => {
+  audio.click();
+  showHub();
+});
+$('btn-mirror-play').addEventListener('click', startMirror);
+$('btn-mirror-lb').addEventListener('click', () => {
+  audio.click();
+  openLeaderboard('mirror', 'mirror');
+});
+$('btn-mirror-hub').addEventListener('click', () => {
+  audio.click();
+  showHub();
+});
+$('btn-mirror-onboard').addEventListener('click', () => {
+  audio.click();
+  markMirrorOnboard();
+  beginMirror();
+});
+$('btn-mirror-onboard-skip').addEventListener('click', () => {
+  audio.click();
+  markMirrorOnboard();
+  beginMirror();
+});
+$('btn-over-hub').addEventListener('click', () => {
+  audio.click();
+  showHub();
+});
+
 syncMuteBtn();
 refreshTitleBest();
-showScreen('title');
+refreshHub();
+showScreen('hub');
 game.resize();
+mirror.resize();
 if (typeof game.seedStars === 'function') game.seedStars();
 idleDraw();
 
 window.__ORBIT_RUSH__ = {
   game,
+  mirror,
   computeScore,
   formatFormula,
   NEAR_MISS_POINTS,
@@ -950,6 +1248,8 @@ window.__ORBIT_RUSH__ = {
   getDifficulty,
   startRun,
   startDaily,
+  startMirror,
+  showHub,
   beginRun,
   openDifficultyPicker,
   sanitizeName,
