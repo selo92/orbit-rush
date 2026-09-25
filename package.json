@@ -2,7 +2,7 @@
   "name": "orbit-rush",
   "version": "1.4.0",
   "private": true,
-  "description": "Orbit Rush arcade — Orbit Rush and Orbit Mirror, shared pilot, separate leaderboards",
+  "description": "Orbit Rush arcade — Orbit Rush, Orbit Mirror, and Orbit Ärger",
   "type": "module",
   "scripts": {
     "dev": "vite",

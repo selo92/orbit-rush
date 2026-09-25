@@ -4,6 +4,7 @@
  */
 import { Game, formatFormula, computeScore, NEAR_MISS_POINTS, COMBO_STEP } from './game.js';
 import { MirrorGame } from './mirror.js';
+import { mountAerger } from './aerger-ui.js';
 import {
   DIFFICULTIES,
   DIFFICULTY_IDS,
@@ -61,6 +62,7 @@ const screens = {
   skins: $('screen-skins'),
   mirror: $('screen-mirror'),
   mirrorOnboard: $('screen-mirror-onboard'),
+  aerger: $('screen-aerger'),
 };
 
 const hud = $('hud');
@@ -82,8 +84,10 @@ const toastEl = $('toast');
 let lastResult = null;
 let lbBackTo = 'title';
 let lbFilter = 'all';
-/** @type {'hub'|'rush'|'mirror'} */
+/** @type {'hub'|'rush'|'mirror'|'aerger'} */
 let activeGame = 'hub';
+/** @type {() => void} */
+let pauseAerger = () => {};
 /** @type {'rush'|'mirror'} */
 let lbGame = 'rush';
 let submitting = false;
@@ -272,6 +276,7 @@ function markOnboardDone() {
 }
 
 function showScreen(name) {
+  if (name !== 'aerger') pauseAerger();
   for (const [k, el] of Object.entries(screens)) {
     if (!el) continue;
     el.classList.toggle('hidden', k !== name);
@@ -1186,6 +1191,33 @@ function idleDraw() {
   }
   requestAnimationFrame(idleDraw);
 }
+
+const aerger = mountAerger({
+  onHub: () => showHub(),
+  audioClick: () => {
+    audio.resume();
+    audio.click();
+  },
+});
+pauseAerger = () => aerger.pause();
+
+function openAerger() {
+  activeGame = 'aerger';
+  if (game.running) game.stop();
+  if (mirror.running) mirror.stop();
+  audio.stopMusic();
+  hud.classList.add('hidden');
+  hud.classList.remove('mirror-mode');
+  hudMode.classList.add('hidden');
+  showScreen('aerger');
+  aerger.open();
+}
+
+$('btn-hub-aerger').addEventListener('click', () => {
+  audio.resume();
+  audio.click();
+  openAerger();
+});
 
 $('btn-hub-rush').addEventListener('click', () => {
   audio.resume();

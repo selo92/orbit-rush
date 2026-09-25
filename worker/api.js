@@ -3,6 +3,8 @@
  * (prepare/bind/first/all/run/batch). Same JSON contract as server/index.js.
  */
 import { CLIENT_ID_INDEX_SQL, GAME_INDEX_SQL, SCHEMA_STATEMENTS } from '../shared/schema.js';
+import { handleAerger } from './aerger-api.js';
+import { createD1AergerStore } from './aerger-store.js';
 import {
   RATE_MAX,
   RATE_WINDOW_MS,
@@ -275,6 +277,21 @@ async function touchSubmit(db, key, now) {
 
 export async function handleApi(request, db) {
   const url = new URL(request.url);
+
+  // Orbit Ärger polls often. Keep it off the score rate-limit row so a
+  // 2s poll does not trip the 30/min leaderboard budget or write D1.
+  if (url.pathname.startsWith('/api/aerger')) {
+    if (request.method !== 'OPTIONS') {
+      try {
+        await ensureSchema(db);
+      } catch (err) {
+        console.error('schema', err);
+        return json({ error: 'Database not configured' }, 500, request);
+      }
+    }
+    return handleAerger(request, createD1AergerStore(db));
+  }
+
   if (request.method === 'OPTIONS' && url.pathname.startsWith('/api/')) {
     return empty(204, request);
   }

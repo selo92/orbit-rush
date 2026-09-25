@@ -10,6 +10,8 @@ import { createMemoryDb } from '../worker/memory-db.js';
 import { handleApi, resetSchemaForTests } from '../worker/api.js';
 import { selectBoard } from '../shared/scores.js';
 import { isOwnRow } from '../src/identity.js';
+import { selfCheck } from '../shared/aerger.js';
+import { DatabaseSync } from 'node:sqlite';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, '..');
@@ -38,6 +40,26 @@ assert(migrationClient.includes('client_id'), 'client id migration');
 const migrationGame = fs.readFileSync(path.join(root, 'migrations', '0003_game.sql'), 'utf8');
 assert(migrationGame.includes('game'), 'game migration adds column');
 assert(migrationGame.includes("'rush'"), 'game migration defaults existing rows to rush');
+const migrationAerger = fs.readFileSync(path.join(root, 'migrations', '0004_aerger_rooms.sql'), 'utf8');
+assert(migrationAerger.includes('CREATE TABLE IF NOT EXISTS aerger_rooms'), 'aerger migration');
+assert(migrationAerger.includes('version'), 'aerger version column');
+assert(!/ALTER TABLE scores/i.test(migrationAerger), 'aerger migration leaves scores alone');
+selfCheck();
+{
+  const fresh = new DatabaseSync(':memory:');
+  for (const file of ['0001_init.sql', '0002_client_id.sql', '0003_game.sql', '0004_aerger_rooms.sql']) {
+    fresh.exec(fs.readFileSync(path.join(root, 'migrations', file), 'utf8'));
+  }
+  const tables = fresh.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((row) => row.name);
+  assert(tables.includes('scores') && tables.includes('aerger_rooms'), `migration tables ${tables}`);
+  const scoreCols = fresh.prepare('PRAGMA table_info(scores)').all().map((col) => col.name);
+  assert(scoreCols.includes('game') && scoreCols.includes('client_id'), 'score columns survive aerger migration');
+  const roomCols = fresh.prepare('PRAGMA table_info(aerger_rooms)').all().map((col) => col.name);
+  for (const col of ['code', 'version', 'state', 'updated_at', 'created_at']) {
+    assert(roomCols.includes(col), `aerger column ${col}`);
+  }
+  fresh.close();
+}
 assert(
   isOwnRow(
     { name: 'Other', clientId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' },
@@ -94,17 +116,18 @@ await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
 const port = server.address().port;
 const base = `http://127.0.0.1:${port}`;
 
-async function api(pathname, { method = 'GET', body, ip = '203.0.113.10' } = {}) {
+async function api(pathname, { method = 'GET', body, ip = '203.0.113.10', headers = {} } = {}) {
   const res = await fetch(`${base}${pathname}`, {
     method,
     headers: {
       'CF-Connecting-IP': ip,
       ...(body ? { 'Content-Type': 'application/json' } : {}),
+      ...headers,
     },
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await res.json().catch(() => ({}));
-  return { status: res.status, data };
+  return { status: res.status, data, etag: res.headers.get('etag') };
 }
 
 try {
@@ -433,6 +456,94 @@ try {
     body: { name: 'BadGame', score: computeScore(1000, 0, 0, 0), survivalMs: 1000, orbs: 0, game: 'puzzle' },
   });
   assert(badGamePost.status === 400 && badGamePost.data.error === 'Invalid game (rush|mirror)', 'invalid game post');
+
+  const notAScore = await api('/api/scores', {
+    method: 'POST',
+    ip: '203.0.113.95',
+    body: { name: 'Aerger', score: computeScore(1000, 0, 0, 0), survivalMs: 1000, orbs: 0, game: 'aerger' },
+  });
+  assert(notAScore.status === 400, 'aerger is not a leaderboard game');
+
+  const created = await api('/api/aerger/create', {
+    method: 'POST',
+    ip: '203.0.113.120',
+    body: { name: 'Ada' },
+  });
+  assert(created.status === 200 && created.data.code.length === 6, `d1 create ${JSON.stringify(created.data)}`);
+  assert(created.data.state?.seats?.[0]?.you === true, 'd1 host seat');
+  const roomCode = created.data.code;
+  const peek = await api(`/api/aerger/room/${roomCode}`, { ip: '203.0.113.121' });
+  assert(peek.status === 200 && peek.data.version === 1, 'd1 room read');
+  const notModified = await api(`/api/aerger/room/${roomCode}`, {
+    ip: '203.0.113.121',
+    headers: { 'If-None-Match': peek.etag },
+  });
+  assert(notModified.status === 304, `d1 304 ${notModified.status}`);
+  const tiny = await api(`/api/aerger/room/${roomCode}?since=${peek.data.version}`, { ip: '203.0.113.121' });
+  assert(tiny.status === 200 && tiny.data.unchanged === true, 'd1 since version');
+  assert(JSON.stringify(tiny.data).length < 120, 'd1 unchanged poll stays small');
+  const joined = await api('/api/aerger/join', {
+    method: 'POST',
+    ip: '203.0.113.122',
+    body: { code: roomCode, name: 'Bea', version: peek.data.version },
+  });
+  assert(joined.status === 200, `d1 join ${JSON.stringify(joined.data)}`);
+  const started = await api('/api/aerger/start', {
+    method: 'POST',
+    ip: '203.0.113.120',
+    body: { code: roomCode, secret: created.data.secret, version: joined.data.version },
+  });
+  assert(started.status === 200 && started.data.state.status === 'playing', 'd1 start');
+  const [rollA, rollB] = await Promise.all([
+    api('/api/aerger/roll', {
+      method: 'POST',
+      ip: '203.0.113.120',
+      body: { code: roomCode, secret: created.data.secret, version: started.data.version },
+    }),
+    api('/api/aerger/roll', {
+      method: 'POST',
+      ip: '203.0.113.120',
+      body: { code: roomCode, secret: created.data.secret, version: started.data.version },
+    }),
+  ]);
+  const race = [rollA.status, rollB.status].sort();
+  assert(race[0] === 200 && race[1] === 409, `d1 roll race ${race}`);
+  let cursor = rollA.status === 200 ? rollA.data : rollB.data;
+  const secrets = [created.data.secret, joined.data.secret];
+  let moved = false;
+  for (let i = 0; i < 60 && !moved; i += 1) {
+    const seat = cursor.state.turn;
+    if (cursor.state.phase !== 'move') {
+      const roll = await api('/api/aerger/roll', {
+        method: 'POST',
+        ip: '203.0.113.123',
+        body: { code: roomCode, secret: secrets[seat], version: cursor.version },
+      });
+      assert(roll.status === 200, `d1 roll ${JSON.stringify(roll.data)}`);
+      cursor = roll.data;
+    }
+    if (cursor.state.phase === 'move') {
+      const token = cursor.state.legal[0].token;
+      const move = await api('/api/aerger/move', {
+        method: 'POST',
+        ip: '203.0.113.123',
+        body: { code: roomCode, secret: secrets[seat], version: cursor.version, token },
+      });
+      assert(move.status === 200, `d1 move ${JSON.stringify(move.data)}`);
+      const stale = await api('/api/aerger/move', {
+        method: 'POST',
+        ip: '203.0.113.123',
+        body: { code: roomCode, secret: secrets[seat], version: cursor.version, token },
+      });
+      assert(stale.status === 409 && stale.data.error === 'stale', 'd1 stale move');
+      moved = true;
+    }
+  }
+  assert(moved, 'd1 played a legal move');
+  const scoreRows = db._sqlite.prepare('SELECT COUNT(*) AS n FROM scores').get().n;
+  const roomRows = db._sqlite.prepare('SELECT COUNT(*) AS n FROM aerger_rooms').get().n;
+  assert(roomRows >= 1, 'room row stored');
+  assert(scoreRows > 0, 'scores table still populated');
 
   db._sqlite.exec('DROP INDEX IF EXISTS idx_scores_game_board');
   db._sqlite.exec('ALTER TABLE scores DROP COLUMN game');
