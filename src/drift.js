@@ -5,6 +5,10 @@
  * the walls slide toward you when you leave the glowing path. Three hull hits
  * end the run. Rings and near-misses use the Rush score formula so the shared
  * leaderboard check accepts the run. The board is `game=drift`.
+ *
+ * Difficulty (Einfach / Mittel / Schwer / Baba) scales speed, bend, lane width,
+ * and tunnel obstacles. Mittel is harder than the original single ramp.
+ * Einfach stays wide and slow. Scores keep the same difficulty field as Rush.
  */
 import {
   computeScore,
@@ -14,6 +18,7 @@ import {
   COMBO_MAX,
   COMBO_STEP,
 } from './game.js';
+import { normalizeDifficulty } from './difficulty.js';
 
 const TWO_PI = Math.PI * 2;
 const STEP = 12;
@@ -21,6 +26,157 @@ const LOOKAHEAD = 240;
 const NEAR_CLEARANCE = 0.24;
 const RING_RADIUS = 0.46;
 const HULL_MAX = 3;
+const SHIP_R = 0.14;
+
+/**
+ * Scaling is absolute, not a multiplier on the old ramp.
+ * The old tunnel was speed 24→44 and half-width 1.32→0.82, with no obstacles.
+ *
+ * @type {Record<'einfach'|'mittel'|'schwer'|'baba', object>}
+ */
+export const DRIFT_DIFFICULTIES = {
+  einfach: {
+    id: 'einfach',
+    label: 'Einfach',
+    blurb: 'Langsam · weite Bahn · wenige Trümmer',
+    speedBase: 19,
+    speedGain: 12,
+    speedDist: 2200,
+    rampDist: 2200,
+    laneStart: 1.52,
+    laneShrink: 0.28,
+    halfMin: 1.18,
+    bendAmp: 0.24,
+    bendGain: 0.85,
+    bendGap: 150,
+    bendGapRand: 120,
+    bendTighten: 0.15,
+    bendFollow: 0.036,
+    bendFollowRamp: 0.016,
+    firstBend: 220,
+    obsStart: 360,
+    obsGap: 230,
+    obsGapRand: 100,
+    debrisWeight: 0.82,
+    barrierWeight: 0.16,
+    debrisRadius: 0.18,
+    barrierCover: 0.46,
+    spikeDepth: 0.2,
+    spikeDepthRamp: 0.06,
+    minGap: 0.92,
+    grace: 1.25,
+    invuln: 1,
+    steerAccel: 8.2,
+    steerMax: 2.35,
+  },
+  mittel: {
+    id: 'mittel',
+    label: 'Mittel',
+    blurb: 'Schneller · engere Kurven · Hindernisse',
+    speedBase: 33,
+    speedGain: 28,
+    speedDist: 1250,
+    rampDist: 1400,
+    laneStart: 1.06,
+    laneShrink: 0.4,
+    halfMin: 0.64,
+    bendAmp: 0.68,
+    bendGain: 2.05,
+    bendGap: 60,
+    bendGapRand: 54,
+    bendTighten: 0.4,
+    bendFollow: 0.07,
+    bendFollowRamp: 0.045,
+    firstBend: 100,
+    obsStart: 140,
+    obsGap: 86,
+    obsGapRand: 44,
+    debrisWeight: 0.4,
+    barrierWeight: 0.34,
+    debrisRadius: 0.26,
+    barrierCover: 0.68,
+    spikeDepth: 0.32,
+    spikeDepthRamp: 0.12,
+    minGap: 0.48,
+    grace: 0.58,
+    invuln: 0.6,
+    steerAccel: 9.6,
+    steerMax: 2.9,
+  },
+  schwer: {
+    id: 'schwer',
+    label: 'Schwer',
+    blurb: 'Hohes Tempo · enge Bahn · viele Barrieren',
+    speedBase: 44,
+    speedGain: 38,
+    speedDist: 1000,
+    rampDist: 1100,
+    laneStart: 0.92,
+    laneShrink: 0.34,
+    halfMin: 0.56,
+    bendAmp: 0.88,
+    bendGain: 2.4,
+    bendGap: 44,
+    bendGapRand: 36,
+    bendTighten: 0.48,
+    bendFollow: 0.086,
+    bendFollowRamp: 0.05,
+    firstBend: 64,
+    obsStart: 72,
+    obsGap: 58,
+    obsGapRand: 28,
+    debrisWeight: 0.24,
+    barrierWeight: 0.38,
+    debrisRadius: 0.28,
+    barrierCover: 0.76,
+    spikeDepth: 0.36,
+    spikeDepthRamp: 0.14,
+    minGap: 0.4,
+    grace: 0.4,
+    invuln: 0.46,
+    steerAccel: 10.5,
+    steerMax: 3.15,
+  },
+  baba: {
+    id: 'baba',
+    label: 'Baba',
+    blurb: '⚠ Extrem · Spikes · kaum Luft',
+    speedBase: 54,
+    speedGain: 48,
+    speedDist: 820,
+    rampDist: 900,
+    laneStart: 0.84,
+    laneShrink: 0.3,
+    halfMin: 0.52,
+    bendAmp: 1.05,
+    bendGain: 2.75,
+    bendGap: 32,
+    bendGapRand: 22,
+    bendTighten: 0.55,
+    bendFollow: 0.1,
+    bendFollowRamp: 0.055,
+    firstBend: 36,
+    obsStart: 28,
+    obsGap: 40,
+    obsGapRand: 16,
+    debrisWeight: 0.16,
+    barrierWeight: 0.4,
+    debrisRadius: 0.3,
+    barrierCover: 0.82,
+    spikeDepth: 0.4,
+    spikeDepthRamp: 0.16,
+    minGap: 0.34,
+    grace: 0.26,
+    invuln: 0.34,
+    steerAccel: 11.2,
+    steerMax: 3.45,
+  },
+};
+
+/** @param {unknown} id */
+export function getDriftDifficulty(id) {
+  return DRIFT_DIFFICULTIES[normalizeDifficulty(id)];
+}
 
 function clamp(v, a, b) {
   return Math.max(a, Math.min(b, v));
@@ -66,22 +222,33 @@ export class DriftGame {
     this.input = { left: false, right: false, dragX: null, pointerId: null };
     this._bound = false;
     this._overTimer = 0;
+    this.difficultyId = 'mittel';
+    this.diff = getDriftDifficulty('mittel');
+    this.stars = [];
     this.resetState();
   }
 
+  /** @param {unknown} id */
+  setDifficulty(id) {
+    this.difficultyId = normalizeDifficulty(id);
+    this.diff = getDriftDifficulty(this.difficultyId);
+  }
+
   resetState() {
+    const cfg = this.diff || getDriftDifficulty('mittel');
     this.playerZ = 0;
     this.cursorZ = 0;
     this.x = 0;
     this.vx = 0;
     this.center = 0;
     this.bendTarget = 0;
-    this.nextBendAt = 150;
+    this.nextBendAt = cfg.firstBend;
+    this.nextObstacleAt = cfg.obsStart;
     this.samples = [];
     this.rings = [];
+    this.obstacles = [];
     this.particles = [];
     this.floatTexts = [];
-    this.stars = [];
     this.pendingNear = [];
     this.lastGateZ = -1;
     this.orbsCollected = 0;
@@ -94,7 +261,7 @@ export class DriftGame {
     this.comboPeak = 1;
     this.hull = HULL_MAX;
     this.invuln = 0;
-    this.grace = 0.85;
+    this.grace = cfg.grace;
     this.alive = true;
     this.shake = 0;
     this.flash = 0;
@@ -103,8 +270,9 @@ export class DriftGame {
   }
 
   speedAt(z) {
-    const ramp = Math.min(1, Math.max(0, z) / 1700);
-    return 24 + ramp * 20;
+    const cfg = this.diff;
+    const ramp = Math.min(1, Math.max(0, z) / cfg.speedDist);
+    return cfg.speedBase + ramp * cfg.speedGain;
   }
 
   resize() {
@@ -143,17 +311,19 @@ export class DriftGame {
   }
 
   ensureTrack() {
+    const cfg = this.diff;
     const ahead = this.playerZ + LOOKAHEAD;
     while (this.cursorZ < ahead) {
-      const ramp = Math.min(1, this.cursorZ / 1600);
+      const ramp = Math.min(1, this.cursorZ / cfg.rampDist);
       if (this.cursorZ >= this.nextBendAt) {
-        const amp = 0.4 + ramp * 1.65;
+        const amp = cfg.bendAmp + ramp * cfg.bendGain;
         this.bendTarget = (Math.random() * 2 - 1) * amp;
-        const gap = 78 + Math.random() * 90 * (1 - ramp * 0.4);
+        const gap = cfg.bendGap + Math.random() * cfg.bendGapRand * (1 - ramp * cfg.bendTighten);
         this.nextBendAt = this.cursorZ + gap;
       }
-      this.center += (this.bendTarget - this.center) * (0.05 + ramp * 0.035);
-      const half = 1.32 - ramp * 0.5;
+      const follow = cfg.bendFollow + ramp * cfg.bendFollowRamp;
+      this.center += (this.bendTarget - this.center) * follow;
+      const half = Math.max(cfg.halfMin, cfg.laneStart - ramp * cfg.laneShrink);
       const index = Math.round(this.cursorZ / STEP);
       const gate = index > 2 && index % 4 === 0;
       this.samples.push({
@@ -165,11 +335,81 @@ export class DriftGame {
       if (index > 2 && index % 7 === 0) {
         this.rings.push({ z: this.cursorZ, x: this.center, taken: false });
       }
+      if (this.cursorZ >= this.nextObstacleAt) {
+        this.spawnObstacle(this.cursorZ, this.center, half, ramp);
+        const gap = cfg.obsGap + Math.random() * cfg.obsGapRand * (1 - ramp * 0.35);
+        this.nextObstacleAt = this.cursorZ + Math.max(STEP * 2, gap);
+      }
       this.cursorZ += STEP;
     }
     const keep = this.playerZ - 36;
     while (this.samples.length && this.samples[0].z < keep) this.samples.shift();
     while (this.rings.length && this.rings[0].z < keep) this.rings.shift();
+    while (this.obstacles.length && this.obstacles[0].z < keep) this.obstacles.shift();
+  }
+
+  /**
+   * Place one obstacle that still leaves a threadable gap of `minGap`.
+   * Returns false when a ring already owns this slice.
+   * @param {number} z
+   * @param {number} center
+   * @param {number} half
+   * @param {number} ramp
+   */
+  spawnObstacle(z, center, half, ramp) {
+    const cfg = this.diff;
+    for (const ring of this.rings) {
+      if (!ring.taken && Math.abs(ring.z - z) < 18) return false;
+    }
+    const roll = Math.random();
+    const side = Math.random() < 0.5 ? -1 : 1;
+    let kind = 'spike';
+    if (roll < cfg.debrisWeight) kind = 'debris';
+    else if (roll < cfg.debrisWeight + cfg.barrierWeight) kind = 'barrier';
+
+    if (kind === 'debris') {
+      const radius = Math.min(
+        cfg.debrisRadius * (0.85 + ramp * 0.35),
+        Math.max(0.12, half - cfg.minGap)
+      );
+      const maxOffset = Math.max(0, half - radius - cfg.minGap);
+      const offset = side * maxOffset * (0.55 + Math.random() * 0.45);
+      this.obstacles.push({
+        z,
+        kind,
+        x: center + offset,
+        radius,
+        side,
+        resolved: false,
+      });
+      return true;
+    }
+    if (kind === 'barrier') {
+      const maxCover = Math.max(0.16, 2 * half - cfg.minGap);
+      const cover = Math.min(maxCover, Math.max(0.16, half * cfg.barrierCover));
+      this.obstacles.push({ z, kind, side, cover, resolved: false });
+      return true;
+    }
+    const depth = Math.min(
+      cfg.spikeDepth + ramp * cfg.spikeDepthRamp,
+      Math.max(0.12, half - cfg.minGap)
+    );
+    this.obstacles.push({ z, kind, side, depth, resolved: false });
+    return true;
+  }
+
+  /** @param {object} obs @param {number} x */
+  obstacleHits(obs, x) {
+    const lane = this.sampleAt(obs.z);
+    if (obs.kind === 'debris') return Math.abs(x - obs.x) <= obs.radius + SHIP_R;
+    if (obs.kind === 'barrier') {
+      const wall = lane.center + obs.side * lane.half;
+      const inner = wall - obs.side * obs.cover;
+      return obs.side > 0 ? x >= inner - SHIP_R : x <= inner + SHIP_R;
+    }
+    const wall = lane.center + obs.side * lane.half;
+    const tip = wall - obs.side * obs.depth;
+    return obs.side > 0 ? x >= tip - SHIP_R : x <= tip + SHIP_R;
   }
 
   sampleAt(z) {
@@ -258,7 +498,11 @@ export class DriftGame {
     this.input = { left: false, right: false, dragX: null, pointerId: null };
   }
 
-  start() {
+  /**
+   * @param {string} [difficultyId]
+   */
+  start(difficultyId) {
+    if (difficultyId != null && difficultyId !== '') this.setDifficulty(difficultyId);
     clearTimeout(this._overTimer);
     this.resetState();
     this.resize();
@@ -325,10 +569,11 @@ export class DriftGame {
   }
 
   step(dt) {
+    const cfg = this.diff;
     const steer = (this.input.right ? 1 : 0) - (this.input.left ? 1 : 0);
-    if (steer !== 0) this.vx += steer * 9.5 * dt;
+    if (steer !== 0) this.vx += steer * cfg.steerAccel * dt;
     else this.vx *= Math.exp(-5.5 * dt);
-    this.vx = clamp(this.vx, -2.7, 2.7);
+    this.vx = clamp(this.vx, -cfg.steerMax, cfg.steerMax);
     this.x += this.vx * dt;
 
     const prevZ = this.playerZ;
@@ -352,6 +597,20 @@ export class DriftGame {
         const clearance = s.half - Math.abs(this.x - s.center);
         if (clearance >= 0 && clearance < NEAR_CLEARANCE) {
           this.pendingNear.push({ confirmAt: this.survivalMs + NEAR_MISS_CONFIRM_MS });
+        }
+      }
+      for (const obs of this.obstacles) {
+        if (obs.resolved || obs.z <= prevZ || obs.z > this.playerZ) continue;
+        obs.resolved = true;
+        if (this.invuln > 0) continue;
+        if (this.obstacleHits(obs, this.x)) {
+          this.hitObstacle(obs);
+          if (!this.alive) break;
+        } else if (obs.kind === 'debris') {
+          const dist = Math.abs(this.x - obs.x) - obs.radius;
+          if (dist >= 0 && dist < 0.22) {
+            this.pendingNear.push({ confirmAt: this.survivalMs + NEAR_MISS_CONFIRM_MS });
+          }
         }
       }
     }
@@ -392,10 +651,31 @@ export class DriftGame {
     this.floatText(this.cx, this.shipY - 36, this.comboCount > 1 ? `x${this.comboCount}` : 'RING', '#00f0ff');
   }
 
+  hitObstacle(obs) {
+    if (!this.alive) return;
+    const lane = this.sampleAt(this.playerZ);
+    this.hull -= 1;
+    this.invuln = this.diff.invuln;
+    let sign = -obs.side || 1;
+    if (obs.kind === 'debris') sign = Math.sign(this.x - obs.x) || -obs.side || 1;
+    this.x += sign * 0.28;
+    this.vx = sign * 1.35;
+    this.x = clamp(this.x, lane.center - lane.half + 0.08, lane.center + lane.half - 0.08);
+    this.audio.hit();
+    this.shake = 1;
+    this.flash = 0.45;
+    const label = obs.kind === 'barrier' ? 'BARRIERE' : obs.kind === 'spike' ? 'SPIKE' : 'TRÜMMER';
+    const color = obs.kind === 'spike' ? '#ff4d6d' : obs.kind === 'barrier' ? '#ff2bd6' : '#ffe566';
+    this.flashColor = obs.kind === 'spike' ? '255, 77, 109' : obs.kind === 'barrier' ? '255, 43, 214' : '255, 229, 102';
+    this.floatText(this.cx, this.shipY - 42, label, color);
+    this.burst(this.cx, this.shipY, color, 14);
+    if (this.hull <= 0) this.die();
+  }
+
   hitWall(lane) {
     if (!this.alive) return;
     this.hull -= 1;
-    this.invuln = 0.9;
+    this.invuln = this.diff.invuln;
     const sign = Math.sign(this.x - lane.center) || 1;
     this.x = lane.center + sign * Math.max(0.05, lane.half - 0.12);
     this.vx = -sign * 1.5;
@@ -488,7 +768,7 @@ export class DriftGame {
       orbs: this.orbsCollected,
       comboBonus: this.comboBonus,
       nearMisses: this.nearMisses,
-      difficulty: 'mittel',
+      difficulty: this.difficultyId,
       daily: false,
       comboPeak: this.comboPeak,
       distanceKm,
@@ -637,6 +917,8 @@ export class DriftGame {
       ctx.globalAlpha = 1;
     }
 
+    this.drawObstacles(ctx);
+
     for (const ring of this.rings) {
       if (ring.taken) continue;
       const ahead = ring.z - this.playerZ;
@@ -687,6 +969,118 @@ export class DriftGame {
       ctx.fillStyle = `rgba(${this.flashColor}, ${Math.min(0.38, this.flash)})`;
       ctx.fillRect(-20, -20, w + 40, h + 40);
     }
+    ctx.restore();
+  }
+
+  drawObstacles(ctx) {
+    for (const obs of this.obstacles) {
+      const ahead = obs.z - this.playerZ;
+      if (ahead < -16 || ahead > 210) continue;
+      if (obs.kind === 'debris') this.drawDebris(ctx, obs, ahead);
+      else if (obs.kind === 'barrier') this.drawBarrier(ctx, obs);
+      else this.drawSpike(ctx, obs);
+    }
+  }
+
+  drawDebris(ctx, obs, ahead) {
+    const p = this.project(Math.max(0, ahead), obs.x);
+    const s = Math.max(3.5, (9 + obs.radius * 26) * p.scale);
+    const fade = Math.max(0.4, 1 - Math.max(0, ahead) / 220);
+    ctx.save();
+    ctx.translate(p.x, p.y);
+    ctx.rotate(obs.z * 0.2 + performance.now() / 380);
+    ctx.globalAlpha = fade;
+    ctx.shadowColor = '#ffe566';
+    ctx.shadowBlur = 12;
+    ctx.fillStyle = '#ffe566';
+    ctx.beginPath();
+    ctx.moveTo(0, -s);
+    ctx.lineTo(s * 0.7, 0);
+    ctx.lineTo(0, s * 0.82);
+    ctx.lineTo(-s * 0.7, 0);
+    ctx.closePath();
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = '#ff2bd6';
+    ctx.lineWidth = Math.max(1, 1.8 * p.scale);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  drawBarrier(ctx, obs) {
+    const z0 = obs.z;
+    const z1 = obs.z + 14;
+    if (z1 - this.playerZ < 0 || z0 - this.playerZ > 210) return;
+    const slice = (z) => {
+      const ahead = Math.max(0, z - this.playerZ);
+      const lane = this.sampleAt(Math.max(this.playerZ, z));
+      const wallX = lane.center + obs.side * lane.half;
+      const innerX = wallX - obs.side * obs.cover;
+      return {
+        wall: this.project(ahead, wallX),
+        inner: this.project(ahead, innerX),
+      };
+    };
+    const a = slice(z0);
+    const b = slice(z1);
+    const fade = Math.max(0.45, 1 - Math.max(0, z0 - this.playerZ) / 220);
+    ctx.save();
+    ctx.globalAlpha = fade;
+    ctx.beginPath();
+    ctx.moveTo(a.wall.x, a.wall.y);
+    ctx.lineTo(a.inner.x, a.inner.y);
+    ctx.lineTo(b.inner.x, b.inner.y);
+    ctx.lineTo(b.wall.x, b.wall.y);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(255, 43, 214, 0.72)';
+    ctx.shadowColor = '#ff2bd6';
+    ctx.shadowBlur = 16;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = '#ffe566';
+    ctx.lineWidth = 1.6;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(a.inner.x, a.inner.y);
+    ctx.lineTo(b.inner.x, b.inner.y);
+    ctx.strokeStyle = '#00f0ff';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  drawSpike(ctx, obs) {
+    this.drawSpikeWedge(ctx, obs, obs.z, 1);
+    this.drawSpikeWedge(ctx, obs, obs.z + 8, 0.62);
+  }
+
+  drawSpikeWedge(ctx, obs, z, scale) {
+    const ahead0 = z - this.playerZ;
+    if (ahead0 > 210 || ahead0 < -8) return;
+    const lane = this.sampleAt(Math.max(this.playerZ, z));
+    const wallX = lane.center + obs.side * lane.half;
+    const tipX = wallX - obs.side * obs.depth * scale;
+    const a0 = Math.max(0, ahead0);
+    const a1 = Math.max(0, ahead0 + 9);
+    const wall0 = this.project(a0, wallX);
+    const wall1 = this.project(a1, wallX);
+    const tip = this.project((a0 + a1) * 0.5, tipX);
+    const fade = Math.max(0.45, 1 - Math.max(0, ahead0) / 220);
+    ctx.save();
+    ctx.globalAlpha = fade;
+    ctx.beginPath();
+    ctx.moveTo(wall0.x, wall0.y);
+    ctx.lineTo(tip.x, tip.y);
+    ctx.lineTo(wall1.x, wall1.y);
+    ctx.closePath();
+    ctx.fillStyle = '#ff4d6d';
+    ctx.shadowColor = '#ff4d6d';
+    ctx.shadowBlur = 14;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = '#ffe566';
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
     ctx.restore();
   }
 

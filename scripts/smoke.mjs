@@ -436,6 +436,125 @@ assert(scoresMod.normalizeGame('nope') === 'rush', 'unknown game defaults to rus
   walls.x = 2;
   walls.update(1 / 60);
   assert(walls.hull === 0 && walls.alive === false, 'the third wall hit ends the run');
+
+  const pace = makeDrift(390, 844);
+  pace.setDifficulty('einfach');
+  const easySpeed = pace.speedAt(0);
+  pace.setDifficulty('mittel');
+  const midSpeed = pace.speedAt(0);
+  pace.setDifficulty('schwer');
+  const hardSpeed = pace.speedAt(0);
+  pace.setDifficulty('baba');
+  const babaSpeed = pace.speedAt(0);
+  assert(easySpeed < 24, 'einfach starts slower than the old tunnel');
+  assert(midSpeed > 24, 'mittel starts faster than the old tunnel');
+  assert(easySpeed < midSpeed && midSpeed < hardSpeed && hardSpeed < babaSpeed, 'speed climbs with difficulty');
+  assert(pace.speedAt(2000) > babaSpeed, 'baba ramps above its base speed');
+
+  function laneHalf(id, z) {
+    const d = makeDrift(390, 844);
+    d.setDifficulty(id);
+    d.resetState();
+    d.playerZ = z;
+    d.ensureTrack();
+    return d.sampleAt(z).half;
+  }
+  assert(laneHalf('mittel', 700) < laneHalf('einfach', 700), 'mittel lane is narrower than einfach');
+  assert(laneHalf('baba', 700) < laneHalf('schwer', 700), 'baba lane is narrower than schwer');
+
+  const graded = makeDrift(390, 844);
+  graded.setDifficulty('schwer');
+  const gradedResult = graded.buildResult();
+  assert(gradedResult.game === 'drift' && gradedResult.difficulty === 'schwer', 'drift score keeps the chosen difficulty');
+
+  for (const id of ['einfach', 'mittel', 'schwer', 'baba']) {
+    const d = makeDrift(390, 844);
+    d.setDifficulty(id);
+    const half = d.diff.halfMin;
+    d.obstacles = [];
+    for (let i = 0; i < 24; i++) d.spawnObstacle(80 + i * 20, 0, half, 1);
+    assert(d.obstacles.length > 0, `${id} spawns obstacles`);
+    for (const obs of d.obstacles) {
+      if (obs.kind === 'barrier') {
+        assert(2 * half - obs.cover >= d.diff.minGap - 0.001, `${id} barrier leaves a gap`);
+      } else if (obs.kind === 'spike') {
+        assert(half - obs.depth >= d.diff.minGap - 0.001, `${id} spike leaves a gap`);
+      } else {
+        const near = half - Math.abs(obs.x) - obs.radius;
+        assert(near >= d.diff.minGap - 0.02, `${id} debris leaves a gap`);
+      }
+    }
+  }
+
+  const wide = [
+    { z: 0, center: 0, half: 1.4, gate: false },
+    { z: 400, center: 0, half: 1.4, gate: false },
+  ];
+  const crash = makeDrift(390, 844);
+  crash.grace = 0;
+  crash.invuln = 0;
+  crash.samples = wide.map((s) => ({ ...s }));
+  crash.cursorZ = 2000;
+  crash.rings = [];
+  crash.obstacles = [{ z: 8, kind: 'debris', x: 0, radius: 0.45, side: 1, resolved: false }];
+  crash.playerZ = 0;
+  crash.x = 0;
+  crash.vx = 0;
+  crash.update(0.4);
+  assert(crash.hull === 2 && crash.alive, 'debris in the lane costs one hull');
+
+  const dodge = makeDrift(390, 844);
+  dodge.grace = 0;
+  dodge.invuln = 0;
+  dodge.samples = wide.map((s) => ({ ...s }));
+  dodge.cursorZ = 2000;
+  dodge.rings = [];
+  dodge.obstacles = [{ z: 8, kind: 'debris', x: -0.9, radius: 0.2, side: -1, resolved: false }];
+  dodge.playerZ = 0;
+  dodge.x = 0.8;
+  dodge.vx = 0;
+  dodge.update(0.4);
+  assert(dodge.hull === 3, 'a clear line past debris keeps the hull');
+
+  const bar = makeDrift(390, 844);
+  bar.grace = 0;
+  bar.invuln = 0;
+  bar.samples = wide.map((s) => ({ ...s }));
+  bar.cursorZ = 2000;
+  bar.rings = [];
+  bar.obstacles = [{ z: 8, kind: 'barrier', side: 1, cover: 0.9, resolved: false }];
+  bar.playerZ = 0;
+  bar.x = 1;
+  bar.vx = 0;
+  bar.update(0.4);
+  assert(bar.hull === 2, 'a barrier on your side costs hull');
+
+  const slip = makeDrift(390, 844);
+  slip.grace = 0;
+  slip.invuln = 0;
+  slip.samples = wide.map((s) => ({ ...s }));
+  slip.cursorZ = 2000;
+  slip.rings = [];
+  slip.obstacles = [{ z: 8, kind: 'barrier', side: 1, cover: 0.9, resolved: false }];
+  slip.playerZ = 0;
+  slip.x = -0.6;
+  slip.vx = 0;
+  slip.update(0.4);
+  assert(slip.hull === 3, 'the open side of a barrier is safe');
+
+  const spike = makeDrift(390, 844);
+  spike.grace = 0;
+  spike.invuln = 0;
+  spike.hull = 1;
+  spike.samples = wide.map((s) => ({ ...s }));
+  spike.cursorZ = 2000;
+  spike.rings = [];
+  spike.obstacles = [{ z: 8, kind: 'spike', side: -1, depth: 0.7, resolved: false }];
+  spike.playerZ = 0;
+  spike.x = -1.0;
+  spike.vx = 0;
+  spike.update(0.4);
+  assert(spike.hull === 0 && spike.alive === false, 'a third spike hit ends the run');
 }
 
 const env = { ...process.env, PORT: String(PORT), AERGER_FILE: path.join(root, 'data', `aerger-smoke-${PORT}.json`) };
@@ -685,6 +804,16 @@ try {
   assert(!mirrorAfterDrift.scores.some((s) => s.name === 'DriftPilot'), 'express keeps drift off mirror');
   const driftBoard = await fetch(`http://127.0.0.1:${PORT}/api/scores?game=drift`).then((r) => r.json());
   assert(driftBoard.game === 'drift' && driftBoard.scores.some((s) => s.name === 'DriftPilot'), 'express drift filter');
+  assert(
+    driftBoard.scores.some((s) => s.name === 'DriftPilot' && s.difficulty === 'mittel'),
+    'drift default difficulty stays mittel'
+  );
+  const driftMittel = await fetch(`http://127.0.0.1:${PORT}/api/scores?game=drift&difficulty=mittel`).then((r) => r.json());
+  assert(driftMittel.scores.some((s) => s.name === 'DriftPilot'), 'drift difficulty filter includes mittel');
+  const driftSchwer = await fetch(`http://127.0.0.1:${PORT}/api/scores?game=drift&difficulty=schwer`).then((r) => r.json());
+  assert(!driftSchwer.scores.some((s) => s.name === 'DriftPilot'), 'drift difficulty filter excludes other grades');
+  const rushStill = await fetch(`http://127.0.0.1:${PORT}/api/scores?difficulty=mittel`).then((r) => r.json());
+  assert(!rushStill.scores.some((s) => s.name === 'DriftPilot'), 'drift difficulty filter does not leak onto rush');
 
   const aergerBase = `http://127.0.0.1:${PORT}`;
   const created = await fetch(`${aergerBase}/api/aerger/create`, {
