@@ -92,3 +92,7 @@ SQLite here has no `ADD COLUMN IF NOT EXISTS`. The migration runs once. The Work
 ## 7. Game column
 
 `migrations/0003_game.sql` adds `scores.game` (`rush` or `mirror`) with default `rush`, so rows already in D1 stay on the Orbit Rush board. `GET /api/scores?game=mirror` is the Orbit Mirror top 50. The Worker adds the column on startup if it is missing. If the migration reports `duplicate column name: game`, the column is already there — deploy the Worker anyway.
+
+## 8. Orbit Ärger rooms
+
+`migrations/0004_aerger_rooms.sql` creates `aerger_rooms` (one JSON `state` blob, `version`, timestamps). It does not alter `scores`. The Worker also creates the table on startup. Rooms are HTTP-polled; there is no Durable Object and no WebSocket. Do not point Ärger at the Rush/Mirror leaderboard.

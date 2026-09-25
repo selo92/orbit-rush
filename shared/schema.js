@@ -3,7 +3,8 @@
  * migrations/0001_init.sql is the original table (no client_id, no game).
  * migrations/0002_client_id.sql adds nullable scores.client_id.
  * migrations/0003_game.sql adds scores.game, default 'rush' for existing rows.
- * CREATE below is the full fresh schema. worker/api.js ALTERs legacy tables.
+ * migrations/0004_aerger_rooms.sql adds aerger_rooms (Orbit Ärger). Scores stay untouched.
+ * CREATE below is the full fresh schema. worker/api.js ALTERs legacy score columns.
  */
 
 export const SCHEMA_STATEMENTS = [
@@ -31,6 +32,14 @@ export const SCHEMA_STATEMENTS = [
     window_start INTEGER NOT NULL DEFAULT 0,
     hit_count INTEGER NOT NULL DEFAULT 0
   )`,
+  `CREATE TABLE IF NOT EXISTS aerger_rooms (
+    code TEXT PRIMARY KEY,
+    version INTEGER NOT NULL,
+    state TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    created_at INTEGER NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_aerger_rooms_updated ON aerger_rooms (updated_at)`,
 ];
 
 /** Applied after legacy tables gain client_id. Safe to run more than once. */

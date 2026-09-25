@@ -74,6 +74,13 @@ assert(rngMod.isValidDailyDate('2026-09-22'), 'valid daily date');
 assert(!rngMod.isValidDailyDate('2026-13-40'), 'invalid daily date');
 assert(rngMod.utcDateString(new Date(Date.UTC(2026, 8, 22))).startsWith('2026-09-22'), 'utc date string');
 
+const aergerMod = await import(path.join(root, 'shared', 'aerger.js'));
+aergerMod.selfCheck();
+const aergerMigration = fs.readFileSync(path.join(root, 'migrations', '0004_aerger_rooms.sql'), 'utf8');
+assert(aergerMigration.includes('aerger_rooms'), 'aerger migration creates rooms');
+assert(aergerMigration.includes('version'), 'aerger migration has version');
+assert(!/ALTER TABLE scores/i.test(aergerMigration), 'aerger migration does not alter scores');
+
 const achMod = await import(path.join(root, 'src', 'achievements.js'));
 assert(achMod.ACHIEVEMENTS.length >= 6, 'at least 6 achievements');
 assert(achMod.ACHIEVEMENTS.some((x) => x.id === 'daily_win'), 'daily achievement present');
@@ -284,7 +291,7 @@ assert(scoresMod.normalizeGame('nope') === 'rush', 'unknown game defaults to rus
   assert(Math.abs(shard.safeR - shard.r) >= shard.hitR, 'shard leaves a safe pocket');
 }
 
-const env = { ...process.env, PORT: String(PORT) };
+const env = { ...process.env, PORT: String(PORT), AERGER_FILE: path.join(root, 'data', `aerger-smoke-${PORT}.json`) };
 const scoresPath = path.join(root, 'data', 'scores.json');
 const backup = fs.existsSync(scoresPath) ? fs.readFileSync(scoresPath, 'utf8') : '[]';
 
@@ -505,6 +512,95 @@ try {
   const badGame = await fetch(`http://127.0.0.1:${PORT}/api/scores?game=puzzle`);
   assert(badGame.status === 400, 'express rejects bad game filter');
 
+  const aergerBase = `http://127.0.0.1:${PORT}`;
+  const created = await fetch(`${aergerBase}/api/aerger/create`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Ada' }),
+  }).then(async (res) => ({ status: res.status, data: await res.json() }));
+  assert(created.status === 200 && created.data.code?.length === 6, 'aerger create');
+  assert(created.data.state.seats[0].you === true, 'host is you');
+  assert(!JSON.stringify(created.data.state).includes(created.data.secret), 'secret stays off the public state');
+  const roomCode = created.data.code;
+  const peekRes = await fetch(`${aergerBase}/api/aerger/room/${roomCode}`);
+  const peek = await peekRes.json();
+  assert(peekRes.status === 200 && peek.version === 1, 'aerger peek');
+  const etag = peekRes.headers.get('etag');
+  const cached = await fetch(`${aergerBase}/api/aerger/room/${roomCode}`, { headers: { 'If-None-Match': etag } });
+  assert(cached.status === 304, 'aerger unchanged poll is 304');
+  const tiny = await fetch(`${aergerBase}/api/aerger/room/${roomCode}?since=1`).then((res) => res.json());
+  assert(tiny.unchanged === true && tiny.version === 1, 'aerger since=version is a tiny payload');
+  const joined = await fetch(`${aergerBase}/api/aerger/join`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code: roomCode, name: 'Bea', version: 1 }),
+  }).then(async (res) => ({ status: res.status, data: await res.json() }));
+  assert(joined.status === 200, `aerger join ${JSON.stringify(joined.data)}`);
+  const started = await fetch(`${aergerBase}/api/aerger/start`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code: roomCode, secret: created.data.secret, version: joined.data.version }),
+  }).then(async (res) => ({ status: res.status, data: await res.json() }));
+  assert(started.status === 200 && started.data.state.status === 'playing', 'aerger start');
+  const version = started.data.version;
+  const [rollA, rollB] = await Promise.all([
+    fetch(`${aergerBase}/api/aerger/roll`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: roomCode, secret: created.data.secret, version }),
+    }).then(async (res) => ({ status: res.status, data: await res.json() })),
+    fetch(`${aergerBase}/api/aerger/roll`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: roomCode, secret: created.data.secret, version }),
+    }).then(async (res) => ({ status: res.status, data: await res.json() })),
+  ]);
+  const race = [rollA.status, rollB.status].sort();
+  assert(race[0] === 200 && race[1] === 409, `aerger roll race ${race}`);
+  let cursor = rollA.status === 200 ? rollA.data : rollB.data;
+  const secrets = [created.data.secret, joined.data.secret];
+  let moved = false;
+  for (let i = 0; i < 60 && !moved; i += 1) {
+    const seat = cursor.state.turn;
+    if (cursor.state.phase !== 'move') {
+      const roll = await fetch(`${aergerBase}/api/aerger/roll`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: roomCode, secret: secrets[seat], version: cursor.version }),
+      }).then(async (res) => ({ status: res.status, data: await res.json() }));
+      assert(roll.status === 200, `aerger roll ${JSON.stringify(roll.data)}`);
+      cursor = roll.data;
+    }
+    if (cursor.state.phase === 'move') {
+      const token = cursor.state.legal[0].token;
+      const move = await fetch(`${aergerBase}/api/aerger/move`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: roomCode, secret: secrets[seat], version: cursor.version, token }),
+      }).then(async (res) => ({ status: res.status, data: await res.json() }));
+      assert(move.status === 200, `aerger move ${JSON.stringify(move.data)}`);
+      const stale = await fetch(`${aergerBase}/api/aerger/move`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: roomCode, secret: secrets[seat], version: cursor.version, token }),
+      });
+      assert(stale.status === 409, 'aerger stale move rejected');
+      moved = true;
+    }
+  }
+  assert(moved, 'aerger played a legal move');
+  const solo = await fetch(`${aergerBase}/api/aerger/create`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Solo' }),
+  }).then((res) => res.json());
+  const tooSoon = await fetch(`${aergerBase}/api/aerger/start`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code: solo.code, secret: solo.secret, version: solo.version }),
+  });
+  assert(tooSoon.status === 409, 'aerger needs two players');
+
   console.log('SMOKE OK', {
     formula: score,
     top: listAll.scores[0]?.name,
@@ -515,4 +611,5 @@ try {
 } finally {
   child.kill('SIGTERM');
   void backup;
+  fs.rmSync(path.join(root, 'data', `aerger-smoke-${PORT}.json`), { force: true });
 }

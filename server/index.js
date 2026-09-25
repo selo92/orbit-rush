@@ -25,6 +25,8 @@ import {
   rankOf,
   hashClientKey,
 } from '../shared/scores.js';
+import { handleAerger } from '../worker/aerger-api.js';
+import { createFileAergerStore } from './aerger-file-store.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, '..', 'data');
@@ -46,7 +48,56 @@ const limiter = rateLimit({
   legacyHeaders: false,
   message: { error: 'Too many requests' },
 });
-app.use('/api/', limiter);
+// Ärger polls every ~2s and has its own in-memory limiter. The score limiter
+// stays at 30/min so leaderboard spam protection does not change.
+app.use('/api/', (req, res, next) => {
+  if (req.originalUrl.startsWith('/api/aerger')) return next();
+  return limiter(req, res, next);
+});
+
+const aergerStore = createFileAergerStore(
+  process.env.AERGER_FILE || path.join(DATA_DIR, 'aerger-rooms.json')
+);
+
+app.use('/api/aerger', async (req, res) => {
+  try {
+    const response = await handleAerger(expressToRequest(req), aergerStore);
+    await sendWebResponse(res, response);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+function expressToRequest(req) {
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(req.headers)) {
+    if (value == null) continue;
+    headers.set(key, Array.isArray(value) ? value.join(', ') : String(value));
+  }
+  headers.delete('content-length');
+  headers.delete('transfer-encoding');
+  if (!headers.has('x-forwarded-for')) {
+    headers.set('x-forwarded-for', req.ip || req.socket?.remoteAddress || 'unknown');
+  }
+  const method = req.method || 'GET';
+  const hasBody = method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS';
+  return new Request(`http://127.0.0.1${req.originalUrl}`, {
+    method,
+    headers,
+    body: hasBody ? JSON.stringify(req.body ?? {}) : undefined,
+  });
+}
+
+async function sendWebResponse(res, response) {
+  const buf = Buffer.from(await response.arrayBuffer());
+  const headers = {};
+  response.headers.forEach((value, key) => {
+    headers[key] = value;
+  });
+  res.writeHead(response.status, headers);
+  res.end(buf);
+}
 
 /** Recent submit fingerprints for double-submit / spam guard */
 const recentSubmits = new Map(); // key -> timestamp

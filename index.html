@@ -7,7 +7,7 @@
       content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
     />
     <meta name="theme-color" content="#050510" />
-    <meta name="description" content="Orbit Rush arcade — Orbit Rush and Orbit Mirror. Steer, mirror your reflexes, climb two leaderboards." />
+    <meta name="description" content="Orbit Arcade — Orbit Rush, Orbit Mirror, and Orbit Ärger. Skill runs plus a four-player board game." />
     <title>Orbit Rush</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='10' fill='%2300f0ff'/%3E%3Ccircle cx='32' cy='32' r='22' fill='none' stroke='%23ff2bd6' stroke-width='3'/%3E%3C/svg%3E" />
     <link rel="stylesheet" href="/src/style.css" />
@@ -65,7 +65,7 @@
         <div class="panel hub-panel">
           <p class="eyebrow">ORBIT RUSH</p>
           <h1 class="logo">ORBIT<span>ARCADE</span></h1>
-          <p class="tagline">Zwei Spiele. Ein Pilot.</p>
+          <p class="tagline">Drei Spiele. Ein Pilot.</p>
           <p id="hub-identity" class="identity-line hidden">Welcome back, <strong id="hub-identity-name"></strong></p>
           <div class="hub-tiles">
             <button type="button" id="btn-hub-rush" class="hub-tile rush">
@@ -76,6 +76,67 @@
               <strong>ORBIT MIRROR</strong>
               <span>Dein Reflex lügt. Das Schiff fliegt gespiegelt.</span>
             </button>
+            <button type="button" id="btn-hub-aerger" class="hub-tile aerger">
+              <strong>ORBIT ÄRGER</strong>
+              <span>Würfeln. Schmeißen. Zu viert online.</span>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Orbit Ärger: lobby + board. Polls the Worker; no WebSocket. -->
+      <section id="screen-aerger" class="screen hidden">
+        <div class="panel aerger-panel">
+          <div id="aerger-menu">
+            <p class="eyebrow">BRETTSPIEL · BOARD</p>
+            <h1 class="logo">ORBIT<span>ÄRGER</span></h1>
+            <p class="tagline">Würfeln. Schmeißen. Zu viert online.</p>
+            <p class="tagline aerger-en">Roll a 6 to leave home. Up to four players, one room code.</p>
+            <label for="aerger-name">Pilot · Name</label>
+            <input id="aerger-name" maxlength="16" placeholder="PILOT" autocomplete="nickname" enterkeyhint="done" />
+            <button type="button" id="aerger-create" class="btn primary">RAUM ERSTELLEN</button>
+            <label for="aerger-code">Raumcode</label>
+            <input id="aerger-code" maxlength="6" placeholder="ABC234" autocomplete="off" autocapitalize="characters" spellcheck="false" />
+            <button type="button" id="aerger-join" class="btn ghost">BEITRETEN</button>
+            <p id="aerger-menu-status" class="status" aria-live="polite"></p>
+            <button type="button" id="aerger-menu-hub" class="btn ghost">ARCADE</button>
+          </div>
+
+          <div id="aerger-lobby" class="hidden">
+            <p class="eyebrow">LOBBY</p>
+            <h2>ORBIT ÄRGER</h2>
+            <p id="aerger-lobby-code" class="aerger-code">------</p>
+            <button type="button" id="aerger-copy" class="btn ghost">CODE KOPIEREN</button>
+            <p class="tagline">Schick den Code. 2–4 Spieler. Der Host startet.</p>
+            <p class="aerger-rules">6 zum Rauskommen. Startfeld ist sicher. Dreimal 6, dann ist der Nächste dran. Genau ins Haus.</p>
+            <ul id="aerger-seats" class="aerger-seats"></ul>
+            <button type="button" id="aerger-start" class="btn primary" disabled>START</button>
+            <p id="aerger-lobby-status" class="status" aria-live="polite"></p>
+            <button type="button" id="aerger-lobby-hub" class="btn ghost">ARCADE</button>
+          </div>
+
+          <div id="aerger-table" class="hidden">
+            <div class="aerger-top">
+              <p id="aerger-table-code" class="aerger-code aerger-code-sm">------</p>
+              <button type="button" id="aerger-copy-2" class="btn ghost aerger-copy-sm">KOPIEREN</button>
+            </div>
+            <p id="aerger-turn" class="aerger-turn" aria-live="polite">Warten…</p>
+            <p id="aerger-players" class="aerger-players"></p>
+            <p id="aerger-notice" class="aerger-notice"></p>
+            <div class="aerger-dice-row">
+              <div id="aerger-dice" class="aerger-dice" aria-hidden="true">–</div>
+              <button type="button" id="aerger-roll" class="btn primary" disabled>WÜRFELN</button>
+            </div>
+            <div id="aerger-board" class="aerger-board" role="group" aria-label="Spielbrett"></div>
+            <div id="aerger-moves" class="aerger-moves"></div>
+            <div id="aerger-win" class="aerger-win hidden">
+              <h2 id="aerger-win-title">Gewonnen</h2>
+              <p id="aerger-win-body" class="tagline"></p>
+              <button type="button" id="aerger-rematch" class="btn primary hidden">NOCHMAL</button>
+            </div>
+            <p id="aerger-table-status" class="status" aria-live="polite"></p>
+            <button type="button" id="aerger-leave" class="btn ghost">VERLASSEN</button>
+            <button type="button" id="aerger-table-hub" class="btn ghost">ARCADE</button>
           </div>
         </div>
       </section>

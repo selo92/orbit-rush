@@ -1,13 +1,14 @@
 # Orbit Rush
 
-Neon-Skill-Spiele für kurze Runs und zwei globale Top-50-Bestenlisten. **v1.4**
+Neon-Skill-Spiele plus ein Online-Brett. **v1.4** bleibt die Rush/Mirror-Bestenliste. Dazu kommt **Orbit Ärger**.
 
-Die Seite bleibt **Orbit Rush** (gleiche URL, gleicher Pilot). Der erste Screen ist die **Orbit Arcade**: zwei große Kacheln, **Orbit Rush** und **Orbit Mirror**. Name (`orbit-rush-name`) und `orbit-rush-client-id` gelten für beide Spiele. „Welcome back“ steht auf der Arcade.
+Die Seite bleibt **Orbit Rush** (gleiche URL, gleicher Pilot). Der erste Screen ist die **Orbit Arcade**: drei Kacheln, **Orbit Rush**, **Orbit Mirror** und **Orbit Ärger**. Name (`orbit-rush-name`) und `orbit-rush-client-id` gelten für die Skill-Spiele. „Welcome back“ steht auf der Arcade. Ärger nutzt denselben Namen, schreibt aber **nicht** in die Top-50.
 
 | Spiel | Pitch |
 |-------|--------|
 | **Orbit Rush** | Steuere den Orbit. Sammle Orbs. Überlebe. |
 | **Orbit Mirror** | Dein Reflex lügt. Das Schiff fliegt gespiegelt. |
+| **Orbit Ärger** | Würfeln. Schmeißen. Zu viert online. |
 
 Von jedem Spielmenü führt **ARCADE** zurück zur Auswahl. Orbit Rush selbst ist unverändert: **Einfach · Mittel · Schwer · Baba**, Daily, Achievements, Skins, Auto-Submit.
 
@@ -25,11 +26,55 @@ score = floor(Sekunden) × 10 + Orbs × 100 + comboBonus + nearMisses × 75
 
 Dieselbe Formel wie Rush, damit der Server sie prüfen kann. Die Rangliste ist nur `game=mirror`. Die **Clean streak** (Splitter in Folge, lokal `orbit-mirror-streak`) steht im HUD und auf dem Game-Over-Screen und ist keine zweite Bestenliste.
 
+## Orbit Ärger
+
+Mensch ärgere dich nicht für bis zu 4 Spieler im selben Neon-Look. Hochformat. Deutsch ist die Hauptsprache, kurze englische Zeilen stehen daneben.
+
+**Ablauf:** Raum erstellen → 6-stelliger Code → die anderen treten mit Code und Namen bei → Lobby (Farben Rot, Blau, Gelb, Grün der Reihe nach) → Host startet bei 2–4 Spielern → Züge → Gewinnscreen → Arcade oder **Nochmal** (Host). Der gespeicherte Pilot-Name wird vorausgefüllt.
+
+**Regeln (klassisch, mit zwei festgehaltenen Ausnahmen):**
+
+- Jede Farbe hat 4 Figuren. Vom Hof kommt man nur mit einer **6** aufs eigene Startfeld. Welche Figur zieht, sucht der Spieler aus (Rauskommen ist nicht erzwungen).
+- Eine **6** gibt einen Extra-Wurf. **Nach der dritten 6 in Folge ist die Runde vorbei** (der Zug zählt noch, es gibt keinen vierten Wurf). Das verhindert, dass eine Serie den Raum blockiert.
+- Eine 6 ohne legalen Zug gibt **keinen** Extra-Wurf. Der Zug geht weiter.
+- Gegner darf man überholen. Wer genau auf einem Gegner landet, schickt ihn in den Hof. **Ausnahme:** eine Figur auf ihrem eigenen Startfeld ist sicher.
+- Eigene Figuren darf man weder überspringen noch mit ihnen das Feld teilen.
+- Ins Haus (4 Felder) und aufs letzte Hausfeld nur mit exakter Augenzahl. Zu viel ist kein Zug.
+- Schmeißen gibt keinen Extra-Wurf, nur die 6.
+- Kein legaler Zug: automatisch weiter. Ein Zug, der 45 Sekunden nichts tut, wird übersprungen. Wer 90 Sekunden keinen Heartbeat schickt, ist `abandoned` — der Sitz bleibt, Züge werden übersprungen, Figuren bleiben auf dem Brett (kein KI-Ersatz). Der Host kann leere oder abgemeldete Sitze in der Lobby rauswerfen; im Spiel nur Sitze, die schon weg sind oder seit 30 Sekunden still.
+
+### Polling auf dem Workers-Free-Tarif
+
+Kein Durable Object, kein WebSocket, keine Queue. Ein Raum ist **eine D1-Zeile** (`aerger_rooms`): JSON `state`, `version`, `updated_at`. `migrations/0004_aerger_rooms.sql` legt nur diese Tabelle an. `scores.game` bleibt `rush` oder `mirror`.
+
+| Aufruf | Wirkung |
+|--------|---------|
+| `POST /api/aerger/create` | Raum + Secret für den Host |
+| `POST /api/aerger/join` | Sitz, braucht `version` |
+| `POST /api/aerger/start` `roll` `move` `leave` `kick` `rematch` | Server prüft Sitz und Zug. Alte `version` → **409** |
+| `POST /api/aerger/heartbeat` | höchstens alle 15 s eine Schreibaktion pro Sitz |
+| `GET /api/aerger/room/:code` | Stand lesen |
+
+Der Client pollt etwa alle **1,8 s**, solange Lobby oder Partie offen sind, und **pausiert**, wenn der Tab versteckt ist (`document.hidden`). Unverändert:
+
+- `If-None-Match: W/"<version>"` → **304** ohne Body
+- `?since=<version>` → **200** mit `{ unchanged: true, version, code, pollMs }` (klein, für `fetch`, das eine 304 manchmal schluckt)
+
+Beides liest die Zeile trotzdem einmal. D1 kann den Read nicht überspringen. Der 304/Tiny-Pfad spart vor allem Transfer und JSON auf dem Client, und er vermeidet Folge-Writes. Schreibzugriffe gibt es nur bei Zügen, Heartbeats, Zug-Timeouts und gelegentlichem Aufräumen.
+
+**Budget (Annahme Free: 5 Mio. Reads/Tag, 100k Writes/Tag):**
+
+- 4 Spieler × Poll alle 1,8 s × 20 Minuten ≈ 4 × 33 × 20 ≈ **2.700 Reads** pro Partie. 5 Mio. / 2.700 ≈ 1.800 solche Partien am Tag, bevor das Read-Limit kippt. Versteckte Tabs zählen nicht.
+- Polls: höchstens etwa **200/Minute pro IP** im Isolate, und sie schreiben **nicht** nach D1. Vier Spieler hinter derselben Verbindung bleiben darunter (4 × 33 Polls/Minute). Züge sind enger gedeckelt. Heartbeats schreiben höchstens alle 15 s pro Sitz. Das Limit gilt pro Isolate, nicht global.
+- Räume ohne Update seit **3 Stunden** gelten als abgelaufen. Beim Zugriff löscht der Worker gelegentlich bis zu 4 solche Zeilen (`DELETE … LIMIT` über eine Subquery).
+
+Die Skill-Bestenliste bleibt bei 30 Requests/Minute und einem POST alle 2 Sekunden. Ärger hängt nicht an diesem Zähler.
+
 ## English
 
 **Orbit Rush** is a mobile-first Canvas 2D reflex game. You auto-orbit a planet and steer the radius with A/D, arrow keys, or a horizontal drag. Collect orbs, dodge debris, chain combos and near-misses. A finished run saves to the top 50 under your pilot name. The first game over asks for that name once; later visits show “Welcome back” and submit on their own.
 
-v1.4 opens on an **Orbit Arcade** hub and adds **Orbit Mirror**: left input moves the ship outward, a ghost shows the unmirrored reflex, and scores post to a separate top 50. Rush keeps daily, difficulty, achievements, skins, and auto-submit. `VITE_API_BASE` empty means the page calls `/api` on the same host. Local play uses `data/scores.json`. Production uses Cloudflare D1 on the same host: https://orbit-rush.selimv18.workers.dev
+v1.4 opens on an **Orbit Arcade** hub. **Orbit Mirror** posts to its own top 50. **Orbit Ärger** is a 2–4 player Mensch-ärgere-dich-nicht room on the same host: one D1 row per room, HTTP polling every ~1.8s, no Durable Objects or WebSockets. Ärger wins are not leaderboard rows. `VITE_API_BASE` empty means the page calls `/api` on the same host. Local play uses `data/scores.json` plus `data/aerger-rooms.json`. Production uses Cloudflare D1 on the same host: https://orbit-rush.selimv18.workers.dev
 
 ## Spielen
 
@@ -142,10 +187,12 @@ Frontend: `VITE_API_BASE` leer lassen (gleicher Origin). Nur setzen, wenn die AP
 index.html
 src/                  Spiel, UI, Skins, Achievements, Leaderboard-Client
 src/mirror.js         Orbit Mirror (eigener Loop, gespiegelter Radius)
-server/index.js       lokale Express-API
-worker/               Produktion: /api auf D1
+src/aerger-ui.js      Orbit Ärger Brett, Lobby, Polling
+server/index.js       lokale Express-API (Scores + Ärger-Datei)
+worker/               Produktion: /api auf D1, Ärger ohne Durable Objects
+shared/aerger.js      MADN-Regeln (rein, testbar)
 shared/               gemeinsame Prüfung (Name, Score, Filter, game)
-migrations/           D1-Schema (`0003_game.sql` setzt bestehende Zeilen auf rush)
+migrations/           D1-Schema (`0003_game.sql` setzt bestehende Zeilen auf rush, `0004_aerger_rooms.sql` ist nur die Raum-Tabelle)
 scripts/              smoke, worker-smoke, playtest, cf-deploy
 wrangler.toml
 DEPLOY.md
