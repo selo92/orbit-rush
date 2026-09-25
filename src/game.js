@@ -14,6 +14,28 @@ import { getSkin, DEFAULT_SKIN, normalizeSkin } from './skins.js';
 
 const TWO_PI = Math.PI * 2;
 
+/**
+ * Radius steering feel.
+ * The craft only changes orbit radius; it still auto-revolves.
+ *
+ * Keyboard used to cross the band at 1.15× per second (~0.87s) and the
+ * displayed radius chased `rTarget` with `min(1, 14*dt)` (~190ms to 95%).
+ * That chase kept moving after a key-up, which reads as sticky ("hängt").
+ *
+ * Drag used `(rMax-rMin) / (canvasWidth * 0.55)`, so a wide desktop needed
+ * a long mouse sweep for a small on-screen radius change.
+ */
+/** Full usable radius band per second while A/D or arrows are held. */
+const RADIUS_KEY_BANDS_PER_SEC = 2.4;
+/** Exponential catch-up (1/s) for keyboard. ~47ms to close 95% of the gap. */
+const RADIUS_KEY_FOLLOW = 64;
+/**
+ * Fraction of the shorter canvas side that covers the full radius band.
+ * Near 1:1 radial pixels on both phones and wide desktops, without a
+ * hair-trigger thumb (full band ≈ 0.38 × min(width, height)).
+ */
+const DRAG_BAND_OF_SHORT_SIDE = 0.38;
+
 export const NEAR_MISS_POINTS = 75;
 /** Near-miss only counts if player stays alive this long after graze */
 export const NEAR_MISS_CONFIRM_MS = 100;
@@ -269,7 +291,9 @@ export class Game {
       if (this.input.pointerId !== e.pointerId || this.input.dragX == null) return;
       const dx = e.clientX - this.input.dragX;
       this.input.dragX = e.clientX;
-      const sensitivity = (this.rMax - this.rMin) / (this.w * 0.55);
+      const span = Math.max(1, this.rMax - this.rMin);
+      const shortSide = Math.max(1, Math.min(this.w, this.h));
+      const sensitivity = span / (shortSide * DRAG_BAND_OF_SHORT_SIDE);
       this.rTarget = clamp(this.rTarget + dx * sensitivity, this.rMin, this.rMax);
     };
     this._onPointerUp = (e) => {
@@ -524,12 +548,20 @@ export class Game {
     if (this.slowMo > 0) this.slowMo = Math.max(0, this.slowMo - dt);
     if (this.magnet > 0) this.magnet = Math.max(0, this.magnet - dt);
 
-    // Keyboard radius
-    const rSpeed = (this.rMax - this.rMin) * 1.15;
+    // Radius: keys move the target; drag already wrote rTarget in the pointer handler.
+    // While dragging, radius matches the pointer this frame (no rubber band).
+    // Keys use a short exponential follow so a release stops within a couple of frames.
+    const span = this.rMax - this.rMin;
+    const rSpeed = span * RADIUS_KEY_BANDS_PER_SEC;
     if (this.input.left) this.rTarget -= rSpeed * dt;
     if (this.input.right) this.rTarget += rSpeed * dt;
     this.rTarget = clamp(this.rTarget, this.rMin, this.rMax);
-    this.radius += (this.rTarget - this.radius) * Math.min(1, 14 * dt);
+    if (this.input.pointerId != null) {
+      this.radius = this.rTarget;
+    } else {
+      const follow = 1 - Math.exp(-RADIUS_KEY_FOLLOW * dt);
+      this.radius += (this.rTarget - this.radius) * follow;
+    }
 
     if (
       !this.didOrbitChange &&
