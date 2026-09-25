@@ -8,7 +8,7 @@ Steuere den Orbit-Radius, sammle Orbs, weiche Asteroiden aus. Vor jedem Run: **E
 
 **Orbit Rush** is a mobile-first Canvas 2D reflex game. You auto-orbit a planet and steer the radius with A/D, arrow keys, or a horizontal drag. Collect orbs, dodge debris, chain combos and near-misses, then submit a name to the top 50.
 
-v1.3 adds a seeded **Daily** mode, six achievements, four craft skins, and a share button. `VITE_API_BASE` empty means the page calls `/api` on the same host. Local play uses `data/scores.json`. Production uses Cloudflare D1 (see [DEPLOY.md](DEPLOY.md)). A temporary preview is at https://orbit-rush.boom-cheek.workers.dev until 2026-09-25 01:54 UTC unless the account is claimed.
+v1.3 adds a seeded **Daily** mode, six achievements, four craft skins, and a share button. `VITE_API_BASE` empty means the page calls `/api` on the same host. Local play uses `data/scores.json`. Production uses Cloudflare D1 on the same host: https://orbit-rush.selimv18.workers.dev
 
 ## Spielen
 
@@ -22,9 +22,9 @@ npm run dev         # Terminal 2 — Spiel :5173, Proxy /api → 8787
 
 Öffne **http://127.0.0.1:5173**.
 
-Preview auf Cloudflare (Spiel + API, gleicher Host): **https://orbit-rush.boom-cheek.workers.dev**
+Öffentlich (Spiel + Bestenliste, gleicher Host): **https://orbit-rush.selimv18.workers.dev**
 
-Das ist ein temporäres Konto. Ohne Claim löscht Cloudflare es am **2026-09-25 01:54 UTC** zusammen mit der D1-Bestenliste. Der Claim-Link ist ein Bearer-Token und steht deshalb **nicht** in diesem öffentlichen Repo; er liegt in der Agent-Nachricht an den Owner. Von diesem Deploy-Rechner aus antwortet `workers.dev` mit einer Cloudflare-Bot-Challenge (`cf-mitigated: challenge`), deshalb ist die URL hier nicht als ungehindertes öffentliches Spiel bestätigt. Nach einem eigenen Konto: [DEPLOY.md](DEPLOY.md).
+Die Scores liegen in Cloudflare D1 (`orbit-rush-scores`, `ecd023bc-1557-4c28-b287-5f50f65ec8d9`), nicht in `data/scores.json`. `GET /` und `GET /api/scores` antworten mit 200.
 
 ```bash
 npm run smoke         # Formel, Daily-Seed, Express-API
@@ -125,4 +125,4 @@ DEPLOY.md
 
 - Lokale JSON-Datei ist nicht für mehrere Prozesse gedacht. Produktion (D1) schon.
 - Anti-Cheat ist weich: Formel, Obergrenze, Rate-Limit.
-- Die Preview-URL oben hängt an einem temporären Cloudflare-Konto (Ablauf 2026-09-25 01:54 UTC ohne Claim) und war von hier aus hinter einer Bot-Challenge. Dauerhaft: Konto claimen oder `npm run deploy` im eigenen Konto.
+- Öffentliche URL: https://orbit-rush.selimv18.workers.dev (Workers + D1 im Konto des Owners).
