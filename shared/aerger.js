@@ -40,7 +40,18 @@ export const TURN_TIMEOUT_MS = 45_000;
 export const ABANDON_MS = 90_000;
 export const ROOM_TTL_MS = 3 * 60 * 60 * 1000;
 export const POLL_MS = 1800;
+/**
+ * Spectators waiting for someone else to roll. The player who is rolling
+ * already receives `state.dice` in the POST response, so they stay on POLL_MS.
+ * 1s keeps a full table on one IP under the in-memory poll cap (3×60 + ~33).
+ */
+export const POLL_MS_WAITING_ROLL = 1000;
 export const HEARTBEAT_MS = 20_000;
+
+export function pollDelayMs({ status, phase, myTurn } = {}) {
+  if (status === 'playing' && phase === 'roll' && !myTurn) return POLL_MS_WAITING_ROLL;
+  return POLL_MS;
+}
 
 /** 11×11 board. Track walks counter-clockwise from red's start. */
 export const TRACK_CELLS = [
@@ -152,6 +163,7 @@ export function createLobby({ name, secret, now }) {
       winner: null,
       notice: null,
       sixes: 0,
+      rollSeq: 0,
       turnStartedAt: now,
     },
   };
@@ -373,6 +385,7 @@ export function applyRoll(state, secret, now, rng = Math.random) {
   const dice = rollDie(rng);
   seat.sixes = dice === 6 ? (seat.sixes || 0) + 1 : 0;
   next.dice = dice;
+  next.rollSeq = (state.rollSeq || 0) + 1;
   next.sixes = seat.sixes;
   next.turnStartedAt = now;
   const moves = legalMoves(next, seat.color, dice);
@@ -558,6 +571,7 @@ export function publicState(state, secret) {
     winner: state.winner,
     notice: state.notice,
     sixes: state.sixes || 0,
+    rollSeq: state.rollSeq || 0,
     turnStartedAt: state.turnStartedAt,
     seats: state.seats.map((seat) => ({
       color: seat.color,
@@ -686,6 +700,10 @@ export function selfCheck() {
   rolled = applyRoll(paired, 'h', now, die(6));
   if (!rolled.ok) throw new Error('host should be able to roll after start');
   if (rolled.state.phase !== 'move') throw new Error('a 6 from the yard should be playable');
+  if (rolled.state.rollSeq !== 1 || rolled.state.dice !== 6) {
+    throw new Error('a roll should record the face and bump rollSeq');
+  }
+  if (publicState(rolled.state, 'h').rollSeq !== 1) throw new Error('public state should expose rollSeq');
   let moved = applyMove(rolled.state, 'h', 0, now);
   if (moved.state.tokens.red[0].zone !== 'track' || moved.state.phase !== 'roll' || moved.state.turn !== 0) {
     throw new Error('first 6 should leave the yard and grant another roll');
@@ -698,6 +716,7 @@ export function selfCheck() {
   if (moved.state.turn !== 1 || moved.state.notice !== 'six-cap') {
     throw new Error('third consecutive 6 should pass the turn');
   }
+  if (moved.state.rollSeq !== 3) throw new Error('each roll increments rollSeq');
   let state = applyStart(
     applyJoin(createLobby({ name: 'A', secret: 'h', now }).state, { name: 'B', secret: 'g', now }).state,
     'h',
@@ -728,6 +747,18 @@ export function selfCheck() {
   }
   if (!legalMoves(state, 'red', 1).some((move) => move.token === 0 && move.to.zone === 'home' && move.to.pos === 3)) {
     throw new Error('exact count should enter the last home field');
+  }
+  if (pollDelayMs({ status: 'playing', phase: 'roll', myTurn: false }) !== POLL_MS_WAITING_ROLL) {
+    throw new Error('spectators should poll faster while waiting for a roll');
+  }
+  if (pollDelayMs({ status: 'playing', phase: 'roll', myTurn: true }) !== POLL_MS) {
+    throw new Error('the roller already gets the face from the POST');
+  }
+  if (pollDelayMs({ status: 'playing', phase: 'move', myTurn: false }) !== POLL_MS) {
+    throw new Error('move phase keeps the normal poll');
+  }
+  if (pollDelayMs({ status: 'lobby', phase: 'roll', myTurn: false }) !== POLL_MS) {
+    throw new Error('lobby keeps the normal poll');
   }
 }
 

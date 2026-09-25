@@ -1078,30 +1078,174 @@ h2 {
 .aerger-dice-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
+}
+
+.aerger-dice-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex: none;
 }
 
 .aerger-dice {
-  width: 64px;
-  height: 64px;
-  flex: none;
+  --die-glow: rgba(255, 229, 102, 0.55);
+  width: 84px;
+  height: 84px;
+  position: relative;
   display: grid;
   place-items: center;
-  border-radius: 14px;
-  font-size: 32px;
-  font-weight: 800;
-  color: #041018;
-  background: #ffe566;
-  box-shadow: 0 0 18px rgba(255, 229, 102, 0.45);
+  flex: none;
+  background: transparent;
+  box-shadow: none;
+  border-radius: 0;
 }
 
-.aerger-dice.red { background: #ff3355; color: #fff; }
-.aerger-dice.blue { background: #4d8dff; color: #fff; }
-.aerger-dice.green { background: #3dff9a; }
-.aerger-dice.yellow { background: #ffe566; }
+.aerger-dice.red { --die-glow: rgba(255, 51, 85, 0.72); }
+.aerger-dice.blue { --die-glow: rgba(77, 141, 255, 0.72); }
+.aerger-dice.green { --die-glow: rgba(61, 255, 154, 0.62); }
+.aerger-dice.yellow { --die-glow: rgba(255, 229, 102, 0.72); }
+
+.aerger-die-glow {
+  position: absolute;
+  width: 58px;
+  height: 58px;
+  border-radius: 16px;
+  background: var(--die-glow);
+  filter: blur(12px);
+  opacity: 0.9;
+  pointer-events: none;
+}
+
+.aerger-die-scene {
+  width: 72px;
+  height: 72px;
+  display: grid;
+  place-items: center;
+  perspective: 320px;
+  z-index: 1;
+}
+
+.aerger-die {
+  width: 64px;
+  height: 64px;
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  padding: 8px;
+  border-radius: 14px;
+  background: linear-gradient(160deg, #fffefb, #f4f0e6 58%, #e6e1d4);
+  box-shadow:
+    inset 0 0 0 1px rgba(20, 16, 32, 0.16),
+    0 10px 16px rgba(0, 0, 0, 0.35);
+}
+
+.aerger-die .pip {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #1b1224;
+  align-self: center;
+  justify-self: center;
+}
+
+.aerger-die .pip.off {
+  background: transparent;
+}
+
+.aerger-die .die-num {
+  display: none;
+  position: absolute;
+  font-weight: 800;
+  line-height: 1;
+  color: #1b1224;
+}
+
+.aerger-die.is-idle .pip {
+  visibility: hidden;
+}
+
+.aerger-die.is-idle .die-num {
+  inset: 0;
+  right: auto;
+  bottom: auto;
+  display: grid;
+  place-items: center;
+  font-size: 28px;
+  color: #6a6478;
+}
+
+.aerger-die.tumbling {
+  /* Poses are set from JS so each face paints, including without GPU compositing. */
+}
+
+.aerger-die.tumbling .pip {
+  opacity: 0;
+}
+
+.aerger-die.tumbling .die-num {
+  inset: 0;
+  right: auto;
+  bottom: auto;
+  display: grid;
+  place-items: center;
+  font-size: 32px;
+}
+
+.aerger-die.landing {
+  animation: aerger-land 0.42s cubic-bezier(0.16, 0.9, 0.24, 1) both;
+}
+
+@keyframes aerger-land {
+  0% { transform: rotateZ(160deg) scaleX(0.15) scale(1.12); }
+  55% { transform: rotateZ(-16deg) scaleX(1.05) scale(1.06); }
+  100% { transform: rotateZ(0deg) scaleX(1) scale(1); }
+}
+
+@keyframes aerger-pop {
+  0% { transform: scale(0.6); opacity: 0.4; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.aerger-dice-readout {
+  min-width: 1.4em;
+  min-height: 1.1em;
+  text-align: center;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  line-height: 1;
+  color: #ffe566;
+}
+
+.aerger-dice-readout.pop {
+  animation: aerger-pop 0.35s cubic-bezier(0.2, 1.35, 0.32, 1);
+}
+
+.aerger-dice-readout.red { color: #ff6b86; }
+.aerger-dice-readout.blue { color: #8cb4ff; }
+.aerger-dice-readout.green { color: #3dff9a; }
+.aerger-dice-readout.yellow { color: #ffe566; }
+
+.aerger-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
 
 .aerger-dice-row .btn {
   margin-top: 0;
+  flex: 1;
+  width: auto;
+  min-height: 52px;
 }
 
 .aerger-board {
@@ -1195,7 +1339,10 @@ h2 {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .aerger-token.legal {
+  .aerger-token.legal,
+  .aerger-die.tumbling,
+  .aerger-die.landing,
+  .aerger-dice-readout.pop {
     animation: none;
   }
 }

@@ -48,7 +48,7 @@ const limiter = rateLimit({
   legacyHeaders: false,
   message: { error: 'Too many requests' },
 });
-// Ärger polls every ~2s and has its own in-memory limiter. The score limiter
+// Ärger polls about every 1–2s and has its own in-memory limiter. The score limiter
 // stays at 30/min so leaderboard spam protection does not change.
 app.use('/api/', (req, res, next) => {
   if (req.originalUrl.startsWith('/api/aerger')) return next();
