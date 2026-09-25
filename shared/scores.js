@@ -55,7 +55,24 @@ export function computeExpected(survivalMs, orbs, comboBonus, nearMisses) {
   return t * 10 + o * 100 + cb + nm * NEAR_MISS_POINTS;
 }
 
+/** UUID v4 from the browser. Missing means an older client. */
+const CLIENT_ID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+/**
+ * @param {unknown} raw
+ * @returns {{ ok: true, clientId: string|null } | { ok: false }}
+ */
+export function normalizeClientId(raw) {
+  if (raw == null || raw === '') return { ok: true, clientId: null };
+  if (typeof raw !== 'string') return { ok: false };
+  const clientId = raw.trim().toLowerCase();
+  if (!CLIENT_ID_RE.test(clientId)) return { ok: false };
+  return { ok: true, clientId };
+}
+
 export function mapRow(e, i) {
+  const id = normalizeClientId(e.clientId ?? e.client_id ?? null);
   return {
     rank: i + 1,
     name: e.name,
@@ -64,6 +81,7 @@ export function mapRow(e, i) {
     difficulty: normalizeDifficulty(e.difficulty),
     mode: normalizeMode(e.mode),
     dailyDate: e.dailyDate || null,
+    clientId: id.ok ? id.clientId : null,
   };
 }
 
@@ -145,6 +163,11 @@ export function validatePostBody(body) {
     difficulty = 'schwer';
   }
 
+  const clientParsed = normalizeClientId(reqBody.clientId);
+  if (!clientParsed.ok) {
+    return { ok: false, status: 400, error: 'Invalid clientId' };
+  }
+
   const name = sanitizeName(reqBody.name);
   const score = Number(reqBody.score);
   const survivalMs = Number(reqBody.survivalMs ?? 0);
@@ -198,6 +221,7 @@ export function validatePostBody(body) {
       difficulty,
       mode,
       dailyDate,
+      clientId: clientParsed.clientId,
     },
   };
 }

@@ -9,6 +9,7 @@ import { fileURLToPath } from 'url';
 import { createMemoryDb } from '../worker/memory-db.js';
 import { handleApi, resetSchemaForTests } from '../worker/api.js';
 import { selectBoard } from '../shared/scores.js';
+import { isOwnRow } from '../src/identity.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, '..');
@@ -32,6 +33,26 @@ const migration = fs.readFileSync(path.join(root, 'migrations', '0001_init.sql')
 for (const table of ['scores', 'rate_limits', 'client_key', 'daily_date']) {
   assert(migration.includes(table), `migration mentions ${table}`);
 }
+const migrationClient = fs.readFileSync(path.join(root, 'migrations', '0002_client_id.sql'), 'utf8');
+assert(migrationClient.includes('client_id'), 'client id migration');
+assert(
+  isOwnRow(
+    { name: 'Other', clientId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' },
+    { name: 'Pilot', clientId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' }
+  ),
+  'own row matches client id'
+);
+assert(
+  isOwnRow({ name: 'Pilot', clientId: null }, { name: 'Pilot', clientId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' }),
+  'legacy row matches saved name'
+);
+assert(
+  !isOwnRow(
+    { name: 'Pilot', clientId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc' },
+    { name: 'Pilot', clientId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' }
+  ),
+  'different client id is not you'
+);
 
 const server = http.createServer(async (req, res) => {
   try {
@@ -110,6 +131,10 @@ try {
   });
   assert(post.status === 200, `post failed ${post.status} ${JSON.stringify(post.data)}`);
   assert(post.data.scores.some((s) => s.name === 'bSmoke Botb' && s.difficulty === 'schwer'), 'sanitized name');
+  assert(
+    post.data.scores.some((s) => s.name === 'bSmoke Botb' && s.clientId == null),
+    'post without clientId stays compatible'
+  );
 
   const again = await api('/api/scores', {
     method: 'POST',
@@ -282,6 +307,84 @@ try {
     }
   }
   assert(limited === 31, `expected 31st hit to 429, got ${limited}`);
+
+  const pilotId = 'A1B2C3D4-E5F6-4789-A012-3456789ABCDE';
+  const idScore = computeScore(8000, 1, 0, 0);
+  const idPost = await api('/api/scores', {
+    method: 'POST',
+    ip: '203.0.113.60',
+    body: {
+      name: 'IdPilot',
+      score: idScore,
+      survivalMs: 8000,
+      orbs: 1,
+      comboBonus: 0,
+      nearMisses: 0,
+      difficulty: 'mittel',
+      clientId: pilotId,
+    },
+  });
+  assert(idPost.status === 200, `clientId post ${JSON.stringify(idPost.data)}`);
+  assert(
+    idPost.data.scores.some((s) => s.name === 'IdPilot' && s.clientId === pilotId.toLowerCase()),
+    'clientId stored lowercase'
+  );
+
+  const badId = await api('/api/scores', {
+    method: 'POST',
+    ip: '203.0.113.61',
+    body: {
+      name: 'BadId',
+      score: computeScore(1000, 0, 0, 0),
+      survivalMs: 1000,
+      orbs: 0,
+      clientId: 'not-a-uuid',
+    },
+  });
+  assert(badId.status === 400, 'invalid clientId rejected');
+  assert(badId.data.error === 'Invalid clientId', 'invalid clientId message');
+
+  const dupId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const dupBody = {
+    name: 'DupPilot',
+    score: computeScore(4000, 1, 0, 0),
+    survivalMs: 4000,
+    orbs: 1,
+    comboBonus: 0,
+    nearMisses: 0,
+    difficulty: 'einfach',
+    clientId: dupId,
+  };
+  const dupFirst = await api('/api/scores', { method: 'POST', ip: '203.0.113.62', body: dupBody });
+  assert(dupFirst.status === 200 && !dupFirst.data.duplicate, 'first dup pilot saved');
+  await new Promise((r) => setTimeout(r, 2100));
+  const dupAgain = await api('/api/scores', { method: 'POST', ip: '203.0.113.62', body: dupBody });
+  assert(dupAgain.status === 200 && dupAgain.data.duplicate === true, `duplicate flag ${JSON.stringify(dupAgain.data)}`);
+
+  db._sqlite.exec('DROP INDEX IF EXISTS idx_scores_client_id');
+  db._sqlite.exec('ALTER TABLE scores DROP COLUMN client_id');
+  resetSchemaForTests();
+  const legacyScore = computeScore(2000, 0, 0, 0);
+  const legacy = await api('/api/scores', {
+    method: 'POST',
+    ip: '203.0.113.77',
+    body: {
+      name: 'LegacyPilot',
+      score: legacyScore,
+      survivalMs: 2000,
+      orbs: 0,
+      clientId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+    },
+  });
+  assert(legacy.status === 200, `legacy migrate post ${JSON.stringify(legacy.data)}`);
+  assert(
+    legacy.data.scores.some(
+      (s) => s.name === 'LegacyPilot' && s.clientId === 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'
+    ),
+    'legacy table gained client_id'
+  );
+  const colNames = db._sqlite.prepare('PRAGMA table_info(scores)').all().map((c) => c.name);
+  assert(colNames.includes('client_id'), `client_id column missing: ${colNames.join(',')}`);
 
   console.log('WORKER SMOKE OK', {
     formula: score,

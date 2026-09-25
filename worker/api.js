@@ -2,7 +2,7 @@
  * Production /api/scores handler. Persistence is a D1-compatible database
  * (prepare/bind/first/all/run/batch). Same JSON contract as server/index.js.
  */
-import { SCHEMA_STATEMENTS } from '../shared/schema.js';
+import { CLIENT_ID_INDEX_SQL, SCHEMA_STATEMENTS } from '../shared/schema.js';
 import {
   RATE_MAX,
   RATE_WINDOW_MS,
@@ -52,6 +52,31 @@ export function clientIpFromRequest(request) {
   return 'unknown';
 }
 
+function rowsOf(result) {
+  if (Array.isArray(result)) return result;
+  if (Array.isArray(result?.results)) return result.results;
+  return [];
+}
+
+async function ensureClientIdColumn(db) {
+  let hasColumn = false;
+  try {
+    const info = await db.prepare('PRAGMA table_info(scores)').all();
+    hasColumn = rowsOf(info).some((row) => row.name === 'client_id');
+  } catch (err) {
+    console.error('pragma scores', err);
+  }
+  if (!hasColumn) {
+    try {
+      await db.prepare('ALTER TABLE scores ADD COLUMN client_id TEXT').run();
+    } catch (err) {
+      const msg = String(err?.message || err);
+      if (!/duplicate column/i.test(msg)) throw err;
+    }
+  }
+  await db.prepare(CLIENT_ID_INDEX_SQL).run();
+}
+
 async function ensureSchema(db) {
   if (schemaReady) return;
   if (!db?.prepare) throw new Error('D1 binding DB is missing');
@@ -62,6 +87,7 @@ async function ensureSchema(db) {
       await db.prepare(sql).run();
     }
   }
+  await ensureClientIdColumn(db);
   schemaReady = true;
 }
 
@@ -120,7 +146,7 @@ async function listBoard(db, query) {
       params.push(query.difficulty);
     }
   }
-  const sql = `SELECT name, score, ts, difficulty, mode, daily_date AS dailyDate
+  const sql = `SELECT name, score, ts, difficulty, mode, daily_date AS dailyDate, client_id AS clientId
     FROM scores
     ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
     ORDER BY score DESC, ts ASC
@@ -135,6 +161,7 @@ async function listBoard(db, query) {
     difficulty: e.difficulty,
     mode: e.mode === 'daily' ? 'daily' : 'normal',
     dailyDate: e.dailyDate || null,
+    clientId: e.clientId || e.client_id || null,
   }));
 }
 
@@ -183,8 +210,8 @@ async function insertAndTrim(db, value, key, now) {
     .prepare(
       `INSERT INTO scores (
          name, score, survival_ms, orbs, combo_bonus, near_misses,
-         difficulty, mode, daily_date, ts, client_key
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         difficulty, mode, daily_date, ts, client_key, client_id
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .bind(
       value.name,
@@ -197,7 +224,8 @@ async function insertAndTrim(db, value, key, now) {
       value.mode,
       value.dailyDate,
       now,
-      key
+      key,
+      value.clientId || null
     );
   const trim = db.prepare(
     `DELETE FROM scores WHERE id NOT IN (

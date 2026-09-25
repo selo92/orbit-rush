@@ -1,4 +1,9 @@
-/** D1 / SQLite statements. migrations/0001_init.sql must stay in sync. */
+/**
+ * D1 / SQLite statements.
+ * migrations/0001_init.sql is the original table (no client_id).
+ * migrations/0002_client_id.sql adds nullable scores.client_id.
+ * CREATE below is the full fresh schema. worker/api.js ALTERs legacy tables.
+ */
 
 export const SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS scores (
@@ -13,7 +18,8 @@ export const SCHEMA_STATEMENTS = [
     mode TEXT NOT NULL,
     daily_date TEXT,
     ts INTEGER NOT NULL,
-    client_key TEXT NOT NULL
+    client_key TEXT NOT NULL,
+    client_id TEXT
   )`,
   `CREATE INDEX IF NOT EXISTS idx_scores_rank ON scores (score DESC, ts ASC)`,
   `CREATE INDEX IF NOT EXISTS idx_scores_board ON scores (mode, difficulty, daily_date, score DESC, ts ASC)`,
@@ -24,3 +30,7 @@ export const SCHEMA_STATEMENTS = [
     hit_count INTEGER NOT NULL DEFAULT 0
   )`,
 ];
+
+/** Applied after legacy tables gain client_id. Safe to run more than once. */
+export const CLIENT_ID_INDEX_SQL =
+  'CREATE INDEX IF NOT EXISTS idx_scores_client_id ON scores (client_id)';

@@ -6,7 +6,7 @@ Steuere den Orbit-Radius, sammle Orbs, weiche Asteroiden aus. Vor jedem Run: **E
 
 ## English
 
-**Orbit Rush** is a mobile-first Canvas 2D reflex game. You auto-orbit a planet and steer the radius with A/D, arrow keys, or a horizontal drag. Collect orbs, dodge debris, chain combos and near-misses, then submit a name to the top 50.
+**Orbit Rush** is a mobile-first Canvas 2D reflex game. You auto-orbit a planet and steer the radius with A/D, arrow keys, or a horizontal drag. Collect orbs, dodge debris, chain combos and near-misses. A finished run saves to the top 50 under your pilot name. The first game over asks for that name once; later visits show “Welcome back” and submit on their own.
 
 v1.3 adds a seeded **Daily** mode, six achievements, four craft skins, and a share button. `VITE_API_BASE` empty means the page calls `/api` on the same host. Local play uses `data/scores.json`. Production uses Cloudflare D1 on the same host: https://orbit-rush.selimv18.workers.dev
 
@@ -96,12 +96,16 @@ Am besten Hochformat, etwa 390×844.
 
 `GET /api/health` → `{ ok, service, version }` (Produktion zusätzlich `storage: "d1"`)
 
-- `GET /api/scores` → Top 50 `{ rank, name, score, ts, difficulty, mode, dailyDate }`
+- `GET /api/scores` → Top 50 `{ rank, name, score, ts, difficulty, mode, dailyDate, clientId }`
 - `GET /api/scores?difficulty=baba` → `einfach|mittel|schwer|baba` (Daily-Einträge sind hier nicht dabei)
 - `GET /api/scores?mode=daily&dailyDate=YYYY-MM-DD`
-- `POST /api/scores` `{ name, score, survivalMs, orbs, comboBonus, nearMisses, difficulty?, mode?, dailyDate? }`
+- `POST /api/scores` `{ name, score, survivalMs, orbs, comboBonus, nearMisses, difficulty?, mode?, dailyDate?, clientId? }`
+
+`clientId` ist optional (UUID v4). Ältere Clients lassen es weg; die Spalte bleibt dann `null`. Der Browser speichert Name (`orbit-rush-name`) und Id (`orbit-rush-client-id`). Eigene Zeilen mit derselben Id — oder ältere Zeilen nur mit demselben Namen — bekommen ein **YOU**. Nach dem ersten Namen speichert jeder beendete Run automatisch; ein erneutes Senden ist nur noch „Change name“.
 
 Name wird bereinigt (1–16 Zeichen). Score-Maximum **750000**. Formel-Check, IP-Hash, höchstens ein POST alle 2 Sekunden, 30 API-Requests pro Minute, Doppel-Submit innerhalb von 10 s ist idempotent. Die Antwort-Liste ist die passende Top 50 (gleiche Difficulty bzw. das Daily-Datum).
+
+Schema-Nachzug: `migrations/0002_client_id.sql` (nullable `client_id`). `npm run deploy` wendet die Migration an. Der Worker legt die Spalte beim Start ebenfalls an, falls sie noch fehlt.
 
 Lokal speichert Express höchstens 500 Zeilen in `data/scores.json` (nicht im Git). Produktion speichert dieselben 500 Zeilen in Cloudflare **D1** und serviert das gebaute Spiel vom selben Host. Fällt die API aus, zeigt der Client die `localStorage`-Liste.
 

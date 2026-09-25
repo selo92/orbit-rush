@@ -13,6 +13,7 @@ import {
 } from './difficulty.js';
 import { AudioBus } from './audio.js';
 import { fetchScores, submitScore, sanitizeName } from './leaderboard.js';
+import { getOrCreateClientId, isOwnRow, loadPlayerName, savePlayerName } from './identity.js';
 import { utcDateString } from './rng.js';
 import {
   ACHIEVEMENTS,
@@ -39,7 +40,6 @@ const LS_BEST_PREFIX = 'orbit-rush-best-';
 const LS_DAILY_PREFIX = 'orbit-rush-daily-best-';
 const LS_DIFF = 'orbit-rush-difficulty';
 const LS_ONBOARD = 'orbit-rush-onboard-v1';
-const LS_NAME = 'orbit-rush-name';
 const SHARE_NOTE = '(Orbit Rush — play locally / LiveCodes)';
 
 const canvas = /** @type {HTMLCanvasElement} */ ($('game'));
@@ -76,6 +76,9 @@ let lastResult = null;
 let lbBackTo = 'title';
 let lbFilter = 'all';
 let submitting = false;
+let runSeq = 0;
+/** runId of the finish that already triggered an automatic submit */
+let autoSubmittedRun = 0;
 let onboardStep = 0;
 let pendingAfterOnboard = null; // 'play' | 'daily' | null
 /** @type {'normal'|'daily'} */
@@ -223,6 +226,7 @@ function refreshTitleBest() {
     el.classList.add('hidden');
   }
   dailyDate = utcDateString();
+  refreshTitleIdentity();
   $('title-daily-date').textContent = dailyDate;
   const db = getDailyBest(dailyDate);
   const dailyLine = $('title-daily');
@@ -283,6 +287,126 @@ function finishOnboard() {
   } else {
     showScreen('title');
   }
+}
+
+function refreshTitleIdentity() {
+  const name = loadPlayerName();
+  const line = $('title-identity');
+  if (!line) return;
+  if (name) {
+    $('title-identity-name').textContent = name;
+    line.classList.remove('hidden');
+  } else {
+    line.classList.add('hidden');
+  }
+}
+
+function showWelcome(name) {
+  refreshTitleIdentity();
+  $('over-identity-name').textContent = name;
+  $('over-identity').classList.remove('hidden');
+  $('score-form').classList.add('hidden');
+  $('btn-change-name').classList.remove('hidden');
+  $('player-name').value = name;
+}
+
+function showNameEditor({ firstTime }) {
+  $('score-form').classList.remove('hidden');
+  $('name-hint').classList.toggle('hidden', !firstTime);
+  $('btn-change-name').classList.add('hidden');
+  $('btn-submit').textContent = firstTime ? 'SAVE & SUBMIT' : 'RESUBMIT';
+  $('btn-submit').disabled = false;
+  if (!firstTime) {
+    const name = loadPlayerName();
+    $('over-identity').classList.remove('hidden');
+    $('over-identity-name').textContent = name;
+    $('player-name').value = name;
+  }
+}
+
+function formatSubmitStatus(res) {
+  if (res.duplicate) {
+    return res.rank
+      ? `Already on the leaderboard. Rank #${res.rank}.`
+      : 'Already on the leaderboard.';
+  }
+  if (res.rateLimited) {
+    return 'Saved on this device. The global board asked for a short pause.';
+  }
+  if (res.fallback || res.source !== 'api') {
+    const rankTxt = res.rank ? ` Rank #${res.rank}.` : '';
+    return `Saved on this device.${rankTxt} Global board unreachable.`;
+  }
+  return res.rank ? `Saved to the leaderboard. Rank #${res.rank}.` : 'Saved to the leaderboard.';
+}
+
+async function sendScore(name, { auto = false } = {}) {
+  if (!lastResult || submitting) return;
+  const clean = sanitizeName(name);
+  const status = $('submit-status');
+  if (!clean) {
+    status.textContent = 'Enter a name (max 16).';
+    status.classList.add('error');
+    status.classList.remove('calm');
+    $('over-identity').classList.add('hidden');
+    showNameEditor({ firstTime: true });
+    $('player-name').value = '';
+    return;
+  }
+  submitting = true;
+  $('btn-submit').disabled = true;
+  $('btn-change-name').disabled = true;
+  status.classList.remove('error', 'calm');
+  status.textContent = auto ? 'Saving score…' : 'Submitting…';
+  savePlayerName(clean);
+  refreshTitleIdentity();
+  try {
+    const res = await submitScore({
+      name: clean,
+      clientId: getOrCreateClientId(),
+      score: lastResult.score,
+      survivalMs: lastResult.survivalMs,
+      orbs: lastResult.orbs,
+      comboBonus: lastResult.comboBonus ?? 0,
+      nearMisses: lastResult.nearMisses ?? 0,
+      difficulty: lastResult.difficulty || selectedDifficulty,
+      mode: lastResult.daily ? 'daily' : 'normal',
+      dailyDate: lastResult.daily ? lastResult.dailyDate || dailyDate : undefined,
+    });
+    status.classList.remove('error');
+    status.classList.toggle('calm', !!(res.duplicate || res.rateLimited));
+    status.textContent = formatSubmitStatus(res);
+    showWelcome(clean);
+  } catch (err) {
+    status.textContent = err.message || 'Submit failed';
+    status.classList.add('error');
+    status.classList.remove('calm');
+    showNameEditor({ firstTime: !loadPlayerName() });
+  } finally {
+    submitting = false;
+    $('btn-submit').disabled = false;
+    $('btn-change-name').disabled = false;
+  }
+}
+
+function presentGameOverIdentity(result) {
+  submitting = false;
+  $('btn-submit').disabled = false;
+  $('btn-change-name').disabled = false;
+  $('submit-status').textContent = '';
+  $('submit-status').classList.remove('error', 'calm');
+  const name = loadPlayerName();
+  if (name) {
+    showWelcome(name);
+    if (autoSubmittedRun !== result.runId) {
+      autoSubmittedRun = result.runId;
+      void sendScore(name, { auto: true });
+    }
+    return;
+  }
+  $('over-identity').classList.add('hidden');
+  showNameEditor({ firstTime: true });
+  $('player-name').value = '';
 }
 
 function setOverDiffBadge(result) {
@@ -444,6 +568,7 @@ const game = new Game(canvas, {
     }
   },
   onGameOver(result) {
+    result.runId = ++runSeq;
     lastResult = result;
     hud.classList.add('hidden');
     touchHint.classList.add('hidden');
@@ -490,17 +615,8 @@ const game = new Game(canvas, {
     $('over-best').classList.toggle('hidden', best <= 0);
     $('over-best-val').textContent = String(best);
 
-    $('submit-status').textContent = '';
-    $('submit-status').classList.remove('error');
-    $('btn-submit').disabled = false;
-    submitting = false;
-    try {
-      const n = localStorage.getItem(LS_NAME);
-      if (n) $('player-name').value = sanitizeName(n);
-    } catch {
-      /* ignore */
-    }
     refreshTitleBest();
+    presentGameOverIdentity(result);
     showScreen('over');
   },
 });
@@ -603,6 +719,7 @@ async function renderLeaderboard() {
       scores = res.scores;
       source = res.source;
     }
+    const identity = { name: loadPlayerName(), clientId: getOrCreateClientId() };
     list.innerHTML = '';
     if (!scores.length) {
       empty.classList.remove('hidden');
@@ -614,12 +731,23 @@ async function renderLeaderboard() {
     }
     for (const row of scores) {
       const li = document.createElement('li');
+      const own = isOwnRow(row, identity);
+      if (own) li.classList.add('is-you');
       const rank = document.createElement('span');
       rank.className = 'rank';
       rank.textContent = `#${row.rank}`;
       const name = document.createElement('span');
       name.className = 'name';
-      name.textContent = row.name;
+      const nameText = document.createElement('span');
+      nameText.className = 'name-text';
+      nameText.textContent = row.name;
+      name.append(nameText);
+      if (own) {
+        const you = document.createElement('span');
+        you.className = 'you-badge';
+        you.textContent = 'YOU';
+        name.append(you);
+      }
       const badge = document.createElement('span');
       if (row.mode === 'daily' || lbFilter === 'daily') {
         badge.className = 'diff-badge daily';
@@ -761,6 +889,15 @@ btnMute.addEventListener('click', () => {
   }
 });
 
+$('btn-change-name').addEventListener('click', () => {
+  if (submitting) return;
+  audio.click();
+  showNameEditor({ firstTime: false });
+  const input = $('player-name');
+  input.focus();
+  input.select();
+});
+
 $('score-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   if (!lastResult || submitting) return;
@@ -768,40 +905,11 @@ $('score-form').addEventListener('submit', async (e) => {
   if (!name) {
     $('submit-status').textContent = 'Enter a name (max 16).';
     $('submit-status').classList.add('error');
+    $('submit-status').classList.remove('calm');
     return;
   }
-  submitting = true;
-  $('btn-submit').disabled = true;
-  $('submit-status').classList.remove('error');
-  $('submit-status').textContent = 'Submitting…';
-  try {
-    localStorage.setItem(LS_NAME, name);
-  } catch {
-    /* ignore */
-  }
-  try {
-    const payload = {
-      name,
-      score: lastResult.score,
-      survivalMs: lastResult.survivalMs,
-      orbs: lastResult.orbs,
-      comboBonus: lastResult.comboBonus ?? 0,
-      nearMisses: lastResult.nearMisses ?? 0,
-      difficulty: lastResult.difficulty || selectedDifficulty,
-      mode: lastResult.daily ? 'daily' : 'normal',
-      dailyDate: lastResult.daily ? lastResult.dailyDate || dailyDate : undefined,
-    };
-    const res = await submitScore(payload);
-    const src = res.source === 'api' ? '' : ' (saved locally — API offline)';
-    const rankTxt = res.rank ? ` Rank #${res.rank}.` : '';
-    $('submit-status').textContent = `Saved!${rankTxt}${src}`;
-    if (res.duplicate) $('submit-status').textContent += ' (already submitted)';
-  } catch (err) {
-    $('submit-status').textContent = err.message || 'Submit failed';
-    $('submit-status').classList.add('error');
-    $('btn-submit').disabled = false;
-    submitting = false;
-  }
+  if (lastResult.runId) autoSubmittedRun = lastResult.runId;
+  await sendScore(name, { auto: false });
 });
 
 function onResize() {
@@ -845,6 +953,9 @@ window.__ORBIT_RUSH__ = {
   beginRun,
   openDifficultyPicker,
   sanitizeName,
+  getOrCreateClientId,
+  loadPlayerName,
+  isOwnRow,
   getBest,
   getDailyBest,
   buildShareText,
