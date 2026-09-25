@@ -1,17 +1,26 @@
 /**
- * Orbit Ärger client. Polls GET /api/aerger/room/:code about every 1.8s.
+ * Orbit Ärger client. Polls GET /api/aerger/room/:code about every 1.8s,
+ * or every 1s while waiting for someone else to roll.
+ * The roll POST already returns `state.dice`; the die tumbles from the click
+ * until that face arrives, so the wait is not a frozen button.
  * Hidden tabs pause. Mutations send the room version; a 409 refetches.
  */
 import { loadPlayerName, savePlayerName } from './identity.js';
 import {
+  isFreshRoll,
+  mountDie,
+  reducedMotion,
+  tumbleHoldMs,
+} from './aerger-dice.js';
+import {
   COLOR_LABEL,
   HEARTBEAT_MS,
-  POLL_MS,
   START_INDEX,
   TRACK_CELLS,
   HOME_CELLS,
   YARD_CELLS,
   normalizeRoomCode,
+  pollDelayMs,
   tokenCell,
 } from '../shared/aerger.js';
 
@@ -29,6 +38,7 @@ const NOTICES = {
 
 let live = false;
 let pollTimer = 0;
+let armedDelay = 0;
 let heartTimer = 0;
 let busy = false;
 let code = '';
@@ -37,6 +47,9 @@ let version = 0;
 let state = null;
 let showHub = () => {};
 let playClick = () => {};
+let die = null;
+let localRolling = false;
+let rollGen = 0;
 
 function readSession() {
   try {
@@ -97,15 +110,37 @@ function youIndex() {
   return state.seats.findIndex((seat) => seat.you);
 }
 
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function cancelRollMotion() {
+  rollGen += 1;
+  localRolling = false;
+  die?.show(state?.dice ?? null, true);
+}
+
+function watchRemoteRoll(prev, next) {
+  if (!die || localRolling || !isFreshRoll(prev, next)) return;
+  if (document.hidden || reducedMotion()) {
+    die.show(next.dice, true);
+    if (!document.hidden) die.announce(next.dice);
+    return;
+  }
+  die.land(next.dice);
+}
+
 function applyEnvelope(data) {
   if (!data) return;
   const incoming = Number.isInteger(data.version) ? data.version : 0;
   if (incoming && version && incoming < version) return;
+  const prev = state;
   if (data.secret) secret = data.secret;
   if (data.code) code = data.code;
   if (incoming) version = incoming;
   if (data.state) state = data.state;
   saveSession();
+  if (data.state) watchRemoteRoll(prev, state);
   render();
 }
 
@@ -150,16 +185,25 @@ async function poll() {
   if (status === 200 && data?.state) applyEnvelope(data);
 }
 
+function currentPollDelay() {
+  const me = youIndex();
+  const myTurn = me >= 0 && state?.turn === me;
+  return pollDelayMs({ status: state?.status, phase: state?.phase, myTurn });
+}
+
 function stopTimers() {
   clearTimeout(pollTimer);
   clearInterval(heartTimer);
   pollTimer = 0;
+  armedDelay = 0;
   heartTimer = 0;
 }
 
 function schedule() {
   clearTimeout(pollTimer);
   if (!live) return;
+  const delay = currentPollDelay();
+  armedDelay = delay;
   pollTimer = setTimeout(async () => {
     if (!live) return;
     if (!document.hidden) {
@@ -170,7 +214,13 @@ function schedule() {
       }
     }
     schedule();
-  }, POLL_MS);
+  }, delay);
+}
+
+function ensurePollRate() {
+  if (!live || !pollTimer) return;
+  const delay = currentPollDelay();
+  if (delay < armedDelay) schedule();
 }
 
 async function heartbeat() {
@@ -294,6 +344,7 @@ async function mutate(action, extra = {}) {
     return null;
   } finally {
     busy = false;
+    render();
   }
 }
 
@@ -468,9 +519,18 @@ function renderSeats() {
   });
 }
 
+function syncDie(turnSeat) {
+  if (!die) return;
+  die.setTone(turnSeat?.color || '');
+  if (localRolling || die.animating) return;
+  const value = state && state.status !== 'lobby' ? state.dice : null;
+  die.show(value);
+}
+
 function render() {
   if (!state) {
     showView('menu');
+    ensurePollRate();
     return;
   }
   const view = state.status === 'lobby' ? 'lobby' : 'table';
@@ -488,6 +548,7 @@ function render() {
       start.disabled = !isHost || active < 2;
       start.textContent = isHost ? `START · ${active}/4` : `WARTEN · ${active}/4`;
     }
+    ensurePollRate();
     return;
   }
   renderBoard();
@@ -513,11 +574,7 @@ function render() {
       .map((seat) => `${COLOR_LABEL[seat.color]} ${seat.name || ''}`.trim())
       .join('  ·  ');
   }
-  const dice = $('aerger-dice');
-  if (dice) {
-    dice.textContent = state.dice ? String(state.dice) : '–';
-    dice.className = `aerger-dice ${turnSeat?.color || ''}`;
-  }
+  syncDie(turnSeat);
   const notice = $('aerger-notice');
   if (notice) {
     const extra = mine && state.phase === 'roll' && state.sixes > 0 ? ` Sechser ${state.sixes}/3.` : '';
@@ -525,9 +582,10 @@ function render() {
   }
   const roll = $('aerger-roll');
   if (roll) {
-    const canRoll = mine && state.phase === 'roll';
+    const canRoll = mine && state.phase === 'roll' && !localRolling;
     roll.disabled = !canRoll || busy;
-    roll.textContent = canRoll ? 'WÜRFELN' : 'WARTEN';
+    roll.textContent = localRolling ? 'WÜRFELT…' : canRoll ? 'WÜRFELN' : 'WARTEN';
+    roll.setAttribute('aria-busy', localRolling ? 'true' : 'false');
   }
   const win = $('aerger-win');
   const over = state.status === 'finished' || state.status === 'stalled';
@@ -545,6 +603,7 @@ function render() {
   const rematch = $('aerger-rematch');
   const me = youIndex();
   if (rematch) rematch.classList.toggle('hidden', !(over && me >= 0 && state.seats[me].host));
+  ensurePollRate();
 }
 
 function onVisible() {
@@ -557,6 +616,7 @@ function onVisible() {
 export function mountAerger({ onHub, audioClick }) {
   showHub = onHub;
   playClick = audioClick || (() => {});
+  die = mountDie($('aerger-dice'), $('aerger-dice-readout'), $('aerger-dice-live'));
   paintBoardShell();
   $('aerger-create')?.addEventListener('click', () => {
     playClick();
@@ -579,10 +639,36 @@ export function mountAerger({ onHub, audioClick }) {
   });
   $('aerger-roll')?.addEventListener('click', () => {
     const roll = $('aerger-roll');
-    if (!roll || roll.disabled || busy) return;
-    roll.disabled = true;
+    if (!roll || roll.disabled || busy || localRolling) return;
+    const gen = ++rollGen;
+    localRolling = true;
     playClick();
-    mutate('roll');
+    const started = die ? die.tumble() : performance.now();
+    render();
+    mutate('roll')
+      .then(async (result) => {
+        if (gen !== rollGen) return;
+        const face = Number.isInteger(result?.data?.state?.dice) ? result.data.state.dice : null;
+        const ok = result?.status === 200 && face >= 1 && face <= 6;
+        if (!ok) {
+          localRolling = false;
+          die?.show(state?.dice ?? null, true);
+          render();
+          return;
+        }
+        const hold = tumbleHoldMs(started, performance.now(), reducedMotion());
+        if (hold) await wait(hold);
+        if (gen !== rollGen) return;
+        localRolling = false;
+        die?.land(face);
+        render();
+      })
+      .catch(() => {
+        if (gen !== rollGen) return;
+        localRolling = false;
+        die?.show(state?.dice ?? null, true);
+        render();
+      });
   });
   $('aerger-rematch')?.addEventListener('click', () => {
     playClick();
@@ -612,6 +698,7 @@ export function mountAerger({ onHub, audioClick }) {
     pause() {
       live = false;
       stopTimers();
+      cancelRollMotion();
     },
     open() {
       live = true;

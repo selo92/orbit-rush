@@ -22,7 +22,9 @@ import {
   publicState,
 } from '../shared/aerger.js';
 
-const POLL_LIMIT = 200;
+// In-memory only — a poll never writes D1. 360/min covers a same-IP table
+// while three spectators poll at 1s during someone else's roll (~213/min).
+const POLL_LIMIT = 360;
 const MUTATION_LIMIT = 240;
 const ROOM_MUTATION_LIMIT = 120;
 const WINDOW_MS = 60_000;

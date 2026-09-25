@@ -55,7 +55,9 @@ Kein Durable Object, kein WebSocket, keine Queue. Ein Raum ist **eine D1-Zeile**
 | `POST /api/aerger/heartbeat` | höchstens alle 15 s eine Schreibaktion pro Sitz |
 | `GET /api/aerger/room/:code` | Stand lesen |
 
-Der Client pollt etwa alle **1,8 s**, solange Lobby oder Partie offen sind, und **pausiert**, wenn der Tab versteckt ist (`document.hidden`). Unverändert:
+Der Client pollt etwa alle **1,8 s**, solange Lobby oder Partie offen sind, und **pausiert**, wenn der Tab versteckt ist (`document.hidden`). **Wer auf den Wurf eines anderen wartet** (`playing` + `phase: roll` + nicht selbst dran), pollt alle **1 s**, damit die Augenzahl früher da ist. Der eigene Wurf wartet nicht auf den nächsten Poll: `POST /api/aerger/roll` liefert `state.dice` in der Antwort. Vorher blieb der Würfel bis zu dieser Antwort leer — und für die anderen bis zum nächsten Poll. Das wirkte wie eine Pause von bis zu zwei Sekunden. Jetzt startet die Animation beim Tippen und läuft, bis die Server-Zahl landet. Dieselbe Landung spielt, wenn sich `rollSeq` bei jemand anderem erhöht.
+
+Unverändert:
 
 - `If-None-Match: W/"<version>"` → **304** ohne Body
 - `?since=<version>` → **200** mit `{ unchanged: true, version, code, pollMs }` (klein, für `fetch`, das eine 304 manchmal schluckt)
@@ -64,8 +66,8 @@ Beides liest die Zeile trotzdem einmal. D1 kann den Read nicht überspringen. De
 
 **Budget (Annahme Free: 5 Mio. Reads/Tag, 100k Writes/Tag):**
 
-- 4 Spieler × Poll alle 1,8 s × 20 Minuten ≈ 4 × 33 × 20 ≈ **2.700 Reads** pro Partie. 5 Mio. / 2.700 ≈ 1.800 solche Partien am Tag, bevor das Read-Limit kippt. Versteckte Tabs zählen nicht.
-- Polls: höchstens etwa **200/Minute pro IP** im Isolate, und sie schreiben **nicht** nach D1. Vier Spieler hinter derselben Verbindung bleiben darunter (4 × 33 Polls/Minute). Züge sind enger gedeckelt. Heartbeats schreiben höchstens alle 15 s pro Sitz. Das Limit gilt pro Isolate, nicht global.
+- 4 Spieler × Poll alle 1,8 s × 20 Minuten ≈ 4 × 33 × 20 ≈ **2.700 Reads** pro Partie. Drei Wartende, die während fremder Würfe auf 1 s gehen, legen nur in dieser Phase zu (3 × 60 statt 3 × 33). Selbst eine ganze Partie auf dem schnelleren Takt bliebe bei etwa 4 × 60 × 20 ≈ 4.800 Reads — weit unter 5 Mio./Tag. Versteckte Tabs zählen nicht.
+- Polls: höchstens **360/Minute pro IP** im Isolate (früher 200), und sie schreiben **nicht** nach D1. Drei Wartende à 60/min plus der Werfer à ~33/min ≈ 213, plus Luft fürs Tab-Aufwecken. Züge sind enger gedeckelt. Heartbeats schreiben höchstens alle 15 s pro Sitz. Das Limit gilt pro Isolate, nicht global.
 - Räume ohne Update seit **3 Stunden** gelten als abgelaufen. Beim Zugriff löscht der Worker gelegentlich bis zu 4 solche Zeilen (`DELETE … LIMIT` über eine Subquery).
 
 Die Skill-Bestenliste bleibt bei 30 Requests/Minute und einem POST alle 2 Sekunden. Ärger hängt nicht an diesem Zähler.
@@ -74,7 +76,7 @@ Die Skill-Bestenliste bleibt bei 30 Requests/Minute und einem POST alle 2 Sekund
 
 **Orbit Rush** is a mobile-first Canvas 2D reflex game. You auto-orbit a planet and steer the radius with A/D, arrow keys, or a horizontal drag. Collect orbs, dodge debris, chain combos and near-misses. A finished run saves to the top 50 under your pilot name. The first game over asks for that name once; later visits show “Welcome back” and submit on their own.
 
-v1.4 opens on an **Orbit Arcade** hub. **Orbit Mirror** posts to its own top 50. **Orbit Ärger** is a 2–4 player Mensch-ärgere-dich-nicht room on the same host: one D1 row per room, HTTP polling every ~1.8s, no Durable Objects or WebSockets. Ärger wins are not leaderboard rows. `VITE_API_BASE` empty means the page calls `/api` on the same host. Local play uses `data/scores.json` plus `data/aerger-rooms.json`. Production uses Cloudflare D1 on the same host: https://orbit-rush.selimv18.workers.dev
+v1.4 opens on an **Orbit Arcade** hub. **Orbit Mirror** posts to its own top 50. **Orbit Ärger** is a 2–4 player Mensch-ärgere-dich-nicht room on the same host: one D1 row per room, HTTP polling every ~1.8s (1s while waiting for someone else to roll), no Durable Objects or WebSockets. Your own roll is in the POST response; the die tumbles from the click until that face lands. Ärger wins are not leaderboard rows. `VITE_API_BASE` empty means the page calls `/api` on the same host. Local play uses `data/scores.json` plus `data/aerger-rooms.json`. Production uses Cloudflare D1 on the same host: https://orbit-rush.selimv18.workers.dev
 
 ## Spielen
 

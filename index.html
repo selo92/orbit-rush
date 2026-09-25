@@ -124,7 +124,11 @@
             <p id="aerger-players" class="aerger-players"></p>
             <p id="aerger-notice" class="aerger-notice"></p>
             <div class="aerger-dice-row">
-              <div id="aerger-dice" class="aerger-dice" aria-hidden="true">–</div>
+              <div class="aerger-dice-stack">
+                <div id="aerger-dice" class="aerger-dice" aria-hidden="true"></div>
+                <span id="aerger-dice-readout" class="aerger-dice-readout" aria-hidden="true">–</span>
+              </div>
+              <span id="aerger-dice-live" class="aerger-sr" aria-live="polite" aria-atomic="true"></span>
               <button type="button" id="aerger-roll" class="btn primary" disabled>WÜRFELN</button>
             </div>
             <div id="aerger-board" class="aerger-board" role="group" aria-label="Spielbrett"></div>

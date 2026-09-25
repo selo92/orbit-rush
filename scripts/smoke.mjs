@@ -76,6 +76,39 @@ assert(rngMod.utcDateString(new Date(Date.UTC(2026, 8, 22))).startsWith('2026-09
 
 const aergerMod = await import(path.join(root, 'shared', 'aerger.js'));
 aergerMod.selfCheck();
+const diceMod = await import(path.join(root, 'src', 'aerger-dice.js'));
+assert(diceMod.tumbleHoldMs(0, 100, false) === diceMod.MIN_LOCAL_TUMBLE_MS - 100, 'tumble bridges a fast POST');
+assert(diceMod.tumbleHoldMs(0, 5000, false) === 0, 'a slow POST does not add extra wait');
+assert(diceMod.tumbleHoldMs(0, 0, true) === 0, 'reduced motion skips the tumble hold');
+assert(
+  diceMod.isFreshRoll(
+    { phase: 'roll', turn: 0, dice: null, rollSeq: 0 },
+    { phase: 'move', turn: 0, dice: 6, rollSeq: 1 }
+  ),
+  'rollSeq bump is a fresh roll'
+);
+assert(
+  diceMod.isFreshRoll(
+    { phase: 'roll', turn: 0, dice: 6, rollSeq: 1 },
+    { phase: 'move', turn: 0, dice: 6, rollSeq: 2 }
+  ),
+  'the same face still counts as a new roll'
+);
+assert(
+  !diceMod.isFreshRoll(
+    { phase: 'move', turn: 0, dice: 6, rollSeq: 2 },
+    { phase: 'roll', turn: 0, dice: 6, rollSeq: 2 }
+  ),
+  'a move does not look like a roll'
+);
+assert(
+  diceMod.isFreshRoll(
+    { phase: 'roll', turn: 0, dice: null },
+    { phase: 'move', turn: 0, dice: 4 }
+  ),
+  'legacy rooms still detect a roll from the phase change'
+);
+assert(!diceMod.isFreshRoll(null, { dice: 3, rollSeq: 1 }), 'the first snapshot does not animate');
 const aergerMigration = fs.readFileSync(path.join(root, 'migrations', '0004_aerger_rooms.sql'), 'utf8');
 assert(aergerMigration.includes('aerger_rooms'), 'aerger migration creates rooms');
 assert(aergerMigration.includes('version'), 'aerger migration has version');
