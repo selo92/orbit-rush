@@ -614,6 +614,10 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
     buildBeatChart,
     judgeHit,
     getPulseDifficulty,
+    limitPulseFingers,
+    pulseFingersAt,
+    pulsePeakFingers,
+    PULSE_MAX_FINGERS,
     applyPulseHit,
     pulseShouldFail,
     PulseGame,
@@ -736,6 +740,18 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
   const easyHolds = easyChart.notes.filter((n) => n.hold).length;
   const babaHolds = babaChart.notes.filter((n) => n.hold).length;
   assert(babaHolds > easyHolds, 'baba charts more holds');
+  assert(PULSE_MAX_FINGERS === 2, 'the finger budget is two');
+  const tapBesideHold = (notes) =>
+    notes.some(
+      (tap) =>
+        !tap.hold &&
+        notes.some((hold) => hold.hold && hold.time <= tap.time + 1e-9 && tap.time < hold.endTime - 1e-9)
+    );
+  assert(tapBesideHold(schwerChart.notes) || tapBesideHold(babaChart.notes), 'a tap still sits beside one hold');
+  for (const chart of [easyChart, midChart, schwerChart, babaChart]) {
+    assert(pulsePeakFingers(chart.notes) <= PULSE_MAX_FINGERS, 'a chart never needs a third finger');
+    assert(chart.notes.some((n) => n.hold), 'holds survive the two-finger cap');
+  }
   for (const chart of [easyChart, midChart]) {
     for (const note of chart.notes) {
       assert(note.time + EPS >= fixture.beatTimes[0], 'no note before the first analyzed beat');
@@ -780,7 +796,64 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
       if (note.hold) assert(onBeat(note.endTime, fixture.beatTimes), 'later-stage holds still end on a beat');
     }
     assert(stagedEasy[stage].travelSec < stagedEasy[stage - 1].travelSec, 'later stages scroll faster');
+    assert(pulsePeakFingers(stagedEasy[stage].notes) <= PULSE_MAX_FINGERS, 'later stages stay within two fingers');
   }
+  for (const id of ['einfach', 'mittel', 'schwer', 'baba']) {
+    const files = orderPulsePool(manifest, id);
+    for (let stage = 0; stage < files.length; stage++) {
+      const run = preparePulseRun(manifest, {
+        difficulty: id,
+        stage,
+        beatmap: loadBeatmap(files[stage]),
+      });
+      assert(
+        pulsePeakFingers(run.chart.notes) <= PULSE_MAX_FINGERS,
+        `${id} level ${stage + 1} never needs a third finger`
+      );
+      assert(run.chart.notes.some((n) => n.hold), `${id} level ${stage + 1} still has a hold`);
+      assert(
+        tapBesideHold(run.chart.notes),
+        `${id} level ${stage + 1} still places a tap beside a hold`
+      );
+    }
+  }
+  assert(
+    pulsePeakFingers(dailyA.chart.notes) <= PULSE_MAX_FINGERS,
+    'daily beat never needs a third finger'
+  );
+  assert(dailyA.chart.notes.some((n) => n.hold), 'daily beat still has holds');
+  const overlapHold = [
+    { time: 0, lane: 0, hold: true, endTime: 4 },
+    { time: 1, lane: 1, hold: true, endTime: 3 },
+    { time: 2, lane: 2, hold: false, endTime: 2 },
+  ];
+  const overlapFixed = limitPulseFingers(overlapHold);
+  assert(overlapFixed.length === 3, 'a tap during two holds is kept');
+  assert(overlapFixed.filter((n) => n.hold).length === 1, 'the second hold becomes a tap');
+  assert(pulsePeakFingers(overlapFixed) <= 2, 'two holds plus a tap resolve to two fingers');
+  assert(pulseFingersAt(overlapFixed, 2) === 2, 'the kept hold and the later tap use both fingers');
+  const quietPair = limitPulseFingers([
+    { time: 0, lane: 0, hold: true, endTime: 4 },
+    { time: 1, lane: 1, hold: true, endTime: 3 },
+  ]);
+  assert(quietPair.filter((n) => n.hold).length === 2, 'two holds may overlap when nothing else starts');
+  assert(pulsePeakFingers(quietPair) === 2, 'a quiet double hold uses exactly two fingers');
+  const beside = limitPulseFingers([
+    { time: 0, lane: 0, hold: true, endTime: 4 },
+    { time: 1, lane: 1, hold: false, endTime: 1 },
+    { time: 2.5, lane: 2, hold: false, endTime: 2.5 },
+  ]);
+  assert(beside.length === 3 && beside[0].hold, 'taps stay beside a single hold');
+  assert(pulsePeakFingers(beside) === 2, 'one hold plus a tap is the two-finger case');
+  const chord = limitPulseFingers([
+    { time: 1, lane: 0, hold: false, endTime: 1 },
+    { time: 1, lane: 1, hold: false, endTime: 1 },
+    { time: 1, lane: 2, hold: false, endTime: 1 },
+  ]);
+  assert(chord.length === 2, 'three taps on one instant drop to two');
+  assert(pulsePeakFingers(chord) <= 2, 'a three-note chord stays within two fingers');
+  const again = limitPulseFingers(overlapFixed);
+  assert(JSON.stringify(again) === JSON.stringify(overlapFixed), 'the finger cap is stable');
   const einfachChain = orderPulsePool(manifest, 'einfach');
   const chainRun = preparePulseRun(manifest, {
     difficulty: 'einfach',
