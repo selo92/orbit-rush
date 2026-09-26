@@ -12,6 +12,10 @@
  * t=0 of that mp3). Judgment reads the playing clip's currentTime. BPM is only
  * a label — the grid is never rebuilt from it.
  *
+ * A phone has two thumbs. A hold occupies a finger until it ends, so the chart
+ * never asks for a third finger: one hold plus a tap is fine, and a second
+ * hold is kept only when no other note starts during that overlap.
+ *
  * Hits map onto the shared Rush formula so `game=pulse` passes the server check:
  * survivalMs ≈ run length, orbs ≈ perfect + good, comboBonus from perfect
  * streaks, nearMisses ≈ Good.
@@ -325,12 +329,129 @@ function medianBeatSec(times) {
 }
 
 /**
+ * Two fingers, max. A hold uses one for its whole length; a tap uses one at
+ * the instant it starts. One hold beside a tap is the dense case we keep.
+ */
+export const PULSE_MAX_FINGERS = 2;
+
+/** Notes this close together each need their own finger. Wider than float dust, narrower than a beat. */
+const PULSE_SAME_INSTANT_SEC = 1e-3;
+
+/**
+ * A hold occupies [start, end). The finger is free again at `endTime`, so a
+ * note that begins as the hold ends can reuse it.
+ * @param {{ hold?: boolean, time: number, endTime?: number }} note
+ * @param {number} time
+ */
+function holdOccupies(note, time) {
+  if (!note?.hold) return false;
+  const end = Number(note.endTime);
+  return note.time <= time + 1e-9 && time < end - 1e-9;
+}
+
+/**
+ * Fingers required at `time`: every hold covering it, plus every tap that
+ * starts on that instant.
+ * @param {{ hold?: boolean, time: number, endTime?: number }[]} notes
+ * @param {number} time
+ */
+export function pulseFingersAt(notes, time) {
+  const t = Number(time);
+  if (!Number.isFinite(t) || !Array.isArray(notes)) return 0;
+  let count = 0;
+  for (const note of notes) {
+    if (!note || !Number.isFinite(Number(note.time))) continue;
+    if (holdOccupies(note, t)) count++;
+    else if (!note.hold && Math.abs(note.time - t) <= PULSE_SAME_INSTANT_SEC) count++;
+  }
+  return count;
+}
+
+/**
+ * Peak finger demand. Demand only steps up when a note starts.
+ * @param {{ hold?: boolean, time: number, endTime?: number }[]} notes
+ */
+export function pulsePeakFingers(notes) {
+  if (!Array.isArray(notes) || notes.length === 0) return 0;
+  let peak = 0;
+  for (const note of notes) {
+    peak = Math.max(peak, pulseFingersAt(notes, note.time));
+    if (peak >= notes.length) break;
+  }
+  return peak;
+}
+
+/**
+ * Hard cap on simultaneous fingers.
+ * Every note stays (a dropped start only happens when too many notes share
+ * one instant to be taps). Holds are kept from earliest to latest. A later
+ * hold stays a hold only when adding it never pushes any note-start in its
+ * window over the cap — so two holds may overlap only if the second finger
+ * covers that window alone. Anything else becomes a tap, which leaves one
+ * finger free beside a single hold.
+ * @param {{ time: number, lane: number, hold?: boolean, endTime?: number }[]} notes
+ * @param {number} [maxFingers]
+ * @returns {{ time: number, lane: number, hold: boolean, endTime: number }[]}
+ */
+export function limitPulseFingers(notes, maxFingers = PULSE_MAX_FINGERS) {
+  const max = Math.max(1, Math.floor(Number(maxFingers)) || PULSE_MAX_FINGERS);
+  if (!Array.isArray(notes) || notes.length === 0) return [];
+  const sorted = notes
+    .filter((note) => note && Number.isFinite(Number(note.time)))
+    .map((note, index) => ({ note, index }))
+    .sort((a, b) => a.note.time - b.note.time || a.note.lane - b.note.lane || a.index - b.index);
+
+  /** @type {{ time: number, lane: number, hold: boolean, endTime: number, wantHold: boolean, holdEnd: number }[]} */
+  const kept = [];
+  for (const { note } of sorted) {
+    const time = Number(note.time);
+    const lane = Math.max(0, Math.floor(Number(note.lane)) || 0);
+    let sharing = 0;
+    for (const placed of kept) {
+      if (Math.abs(placed.time - time) <= PULSE_SAME_INSTANT_SEC) sharing++;
+    }
+    if (sharing >= max) continue;
+    const holdEnd = Number(note.endTime);
+    const wantHold = !!note.hold && holdEnd > time + 0.05;
+    kept.push({
+      time,
+      lane,
+      hold: false,
+      endTime: time,
+      wantHold,
+      holdEnd,
+    });
+  }
+
+  for (const note of kept) {
+    if (!note.wantHold) continue;
+    const probe = { time: note.time, lane: note.lane, hold: true, endTime: note.holdEnd };
+    let ok = true;
+    for (const other of kept) {
+      if (other.time < note.time - 1e-9 || other.time >= note.holdEnd - 1e-9) continue;
+      const snapshot = kept.map((item) => (item === note ? probe : item));
+      if (pulseFingersAt(snapshot, other.time) > max) {
+        ok = false;
+        break;
+      }
+    }
+    if (!ok) continue;
+    note.hold = true;
+    note.endTime = note.holdEnd;
+  }
+
+  return kept.map(({ time, lane, hold, endTime }) => ({ time, lane, hold, endTime }));
+}
+
+/**
  * Tap/hold chart locked to analyzed `beatTimes` (seconds from audio t=0).
  * Einfach keeps every `beatEvery` beat. Schwer/Baba may add strong onsets.
  * Holds start on a chosen hit and end on a later beatTimes entry (~1–2 bars).
  * A missing beatmap yields an empty chart — BPM is never used to invent hits.
  * Stage 0 is the tier chart. Later stages keep those hits and add more
  * `beatTimes` from the same map, with slightly more holds and lane changes.
+ * After placement, holds that would demand a third finger become taps. The
+ * beat grid is unchanged. Stage charts and Daily Beat share this pass.
  * @param {{ beatTimes?: number[], onsetTimes?: number[], onsetStrengths?: number[], bpm?: number, durationSec?: number, difficulty: string, trackId: string, dailyDate?: string, stage?: number }} spec
  */
 export function buildBeatChart(spec) {
@@ -455,7 +576,8 @@ export function buildBeatChart(spec) {
   }
 
   notes.sort((a, b) => a.time - b.time || a.lane - b.lane);
-  return { notes, bpm, beatSec, travelSec: cfg.travelSec, lanes: cfg.lanes, durationSec, stage };
+  const budgeted = limitPulseFingers(notes);
+  return { notes: budgeted, bpm, beatSec, travelSec: cfg.travelSec, lanes: cfg.lanes, durationSec, stage };
 }
 
 /**
