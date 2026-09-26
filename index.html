@@ -7,7 +7,7 @@
       content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
     />
     <meta name="theme-color" content="#050510" />
-    <meta name="description" content="Orbit Arcade — Orbit Rush, Orbit Mirror, Orbit Ärger, Orbit Drift, and Orbit Pulse. Skill runs plus a four-player board game." />
+    <meta name="description" content="Orbit Arcade — Orbit Rush, Orbit Mirror, Orbit Ärger, Orbit Drift, Orbit Pulse, and Orbit Jet. Skill runs plus a four-player board game." />
     <title>Orbit Rush</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='10' fill='%2300f0ff'/%3E%3Ccircle cx='32' cy='32' r='22' fill='none' stroke='%23ff2bd6' stroke-width='3'/%3E%3C/svg%3E" />
     <link rel="stylesheet" href="/src/style.css" />
@@ -30,6 +30,8 @@
             <span id="pwr-shield" class="pwr hidden" title="Shield">🛡</span>
             <span id="pwr-slow" class="pwr hidden" title="Slow-mo">⏱</span>
             <span id="pwr-magnet" class="pwr hidden" title="Magnet">🧲</span>
+            <span id="pwr-overdrive" class="pwr hidden" title="Boost">⚡</span>
+            <span id="pwr-drone" class="pwr hidden" title="Drohne">◈</span>
           </div>
         </div>
         <div class="hud-right">
@@ -40,6 +42,9 @@
       </div>
 
       <div id="touch-hint" class="touch-hint hidden">Drag left / right to change orbit</div>
+      <button type="button" id="btn-jet-bomb" class="jet-bomb hidden" aria-label="Bombe">
+        💣<span id="jet-bomb-count">0</span>
+      </button>
       <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
       <!-- First-run onboarding -->
@@ -65,7 +70,7 @@
         <div class="panel hub-panel">
           <p class="eyebrow">ORBIT RUSH</p>
           <h1 class="logo">ORBIT<span>ARCADE</span></h1>
-          <p class="tagline">Fünf Spiele. Ein Pilot.</p>
+          <p class="tagline">Sechs Spiele. Ein Pilot.</p>
           <p id="hub-identity" class="identity-line hidden">Welcome back, <strong id="hub-identity-name"></strong></p>
           <div class="hub-tiles">
             <button type="button" id="btn-hub-rush" class="hub-tile rush">
@@ -87,6 +92,10 @@
             <button type="button" id="btn-hub-pulse" class="hub-tile pulse">
               <strong>ORBIT PULSE</strong>
               <span>Tippe den Beat. Halt den Flow.</span>
+            </button>
+            <button type="button" id="btn-hub-jet" class="hub-tile jet">
+              <strong>ORBIT JET</strong>
+              <span>Flieg den Jet. Auto-Feuer. Besiege den Boss.</span>
             </button>
           </div>
         </div>
@@ -156,7 +165,7 @@
       <!-- Title -->
       <section id="screen-title" class="screen hidden">
         <div class="panel title-panel">
-          <p class="eyebrow">NEON SKILL RUN · v1.4</p>
+          <p class="eyebrow">NEON SKILL RUN · v1.5</p>
           <h1 class="logo">ORBIT<span>RUSH</span></h1>
           <p class="tagline">Steer your orbit. Grab orbs. Survive the debris.</p>
           <p id="title-identity" class="identity-line hidden">Welcome back, <strong id="title-identity-name"></strong></p>
@@ -331,6 +340,66 @@
           <p id="pulse-diff-best" class="best-line muted">Rekord auf Mittel: <strong id="pulse-diff-best-val">—</strong></p>
           <button type="button" id="btn-pulse-diff-start" class="btn primary pulse">START</button>
           <button type="button" id="btn-pulse-diff-back" class="btn ghost">ZURÜCK</button>
+        </div>
+      </section>
+
+      <!-- Orbit Jet menu -->
+      <section id="screen-jet" class="screen hidden">
+        <div class="panel jet-panel">
+          <p class="eyebrow">COMBAT-JET</p>
+          <h1 class="logo">ORBIT<span>JET</span></h1>
+          <p class="tagline">Flieg den Jet. Auto-Feuer. Besiege den Boss.</p>
+          <p class="tagline">Vier Stufen, Waffenstufen, Schild und Bombe.</p>
+          <p id="jet-best" class="best-line">
+            Rekord (Mittel): <strong id="jet-best-val">—</strong>
+          </p>
+          <button type="button" id="btn-jet-play" class="btn primary pulse">SPIELEN</button>
+          <button type="button" id="btn-jet-lb" class="btn ghost">BESTENLISTE</button>
+          <button type="button" id="btn-jet-hub" class="btn ghost">ARCADE</button>
+        </div>
+      </section>
+
+      <section id="screen-jet-onboard" class="screen hidden">
+        <div class="panel onboard-panel">
+          <p class="eyebrow">JET-STEUERUNG</p>
+          <h2>Ziehen = fliegen</h2>
+          <p class="tagline">
+            Ziehen = fliegen · Auto-Feuer · Einsammeln = stärker.
+            Der Jet schießt von selbst. Finger oder Maus folgen in der Bahn, Pfeile und WASD auch.
+            Waffen steigen von Einzel bis Laser. Ein Treffer ohne Schild kostet ein Leben und eine Waffenstufe.
+            Leertaste oder die Bombe räumt das Feld. Jede Stufe endet mit einem Boss.
+          </p>
+          <button type="button" id="btn-jet-onboard" class="btn primary">VERSTANDEN</button>
+          <button type="button" id="btn-jet-onboard-skip" class="btn ghost">SPÄTER</button>
+        </div>
+      </section>
+
+      <section id="screen-jet-diff" class="screen hidden">
+        <div class="panel diff-panel jet-diff-panel">
+          <p class="eyebrow">SCHWIERIGKEIT</p>
+          <h2>WIE HART?</h2>
+          <p class="tagline diff-hint">Tempo, Feuer und Leben. Die vier Stufen bleiben.</p>
+          <div id="jet-diff-options" class="diff-options" role="radiogroup" aria-label="Schwierigkeit">
+            <button type="button" class="diff-chip" data-jet-diff="einfach" aria-pressed="false">
+              <span class="diff-label">Einfach</span>
+              <span class="diff-blurb">Langsam · 4 Leben · ruhiges Feuer</span>
+            </button>
+            <button type="button" class="diff-chip" data-jet-diff="mittel" aria-pressed="true">
+              <span class="diff-label">Mittel</span>
+              <span class="diff-blurb">Klassisch · Bosse · Auto-Feuer</span>
+            </button>
+            <button type="button" class="diff-chip" data-jet-diff="schwer" aria-pressed="false">
+              <span class="diff-label">Schwer</span>
+              <span class="diff-blurb">Dichter · härtere Bosse · mehr Feuer</span>
+            </button>
+            <button type="button" class="diff-chip baba" data-jet-diff="baba" aria-pressed="false">
+              <span class="diff-label">Baba</span>
+              <span class="diff-blurb">⚠ Extrem · 2 Leben · kaum Luft</span>
+            </button>
+          </div>
+          <p id="jet-diff-best" class="best-line muted">Rekord auf Mittel: <strong id="jet-diff-best-val">—</strong></p>
+          <button type="button" id="btn-jet-diff-start" class="btn primary pulse">START</button>
+          <button type="button" id="btn-jet-diff-back" class="btn ghost">ZURÜCK</button>
         </div>
       </section>
 

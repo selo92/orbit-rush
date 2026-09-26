@@ -10,6 +10,7 @@ import {
   getPulseDifficulty,
   preloadPulseManifest,
 } from './pulse.js';
+import { JetGame, getJetDifficulty } from './jet.js';
 import { mountAerger } from './aerger-ui.js';
 import {
   DIFFICULTIES,
@@ -59,6 +60,9 @@ const LS_PULSE_BEST_PREFIX = 'orbit-pulse-best-';
 const LS_PULSE_DAILY_PREFIX = 'orbit-pulse-daily-best-';
 const LS_PULSE_DIFF = 'orbit-pulse-difficulty';
 const LS_PULSE_ONBOARD = 'orbit-pulse-onboard-v1';
+const LS_JET_BEST_PREFIX = 'orbit-jet-best-';
+const LS_JET_DIFF = 'orbit-jet-difficulty';
+const LS_JET_ONBOARD = 'orbit-jet-onboard-v1';
 const SHARE_NOTE = '(Orbit Rush — play locally / LiveCodes)';
 
 const canvas = /** @type {HTMLCanvasElement} */ ($('game'));
@@ -82,6 +86,9 @@ const screens = {
   pulse: $('screen-pulse'),
   pulseOnboard: $('screen-pulse-onboard'),
   pulseDiff: $('screen-pulse-diff'),
+  jet: $('screen-jet'),
+  jetOnboard: $('screen-jet-onboard'),
+  jetDiff: $('screen-jet-diff'),
   aerger: $('screen-aerger'),
 };
 
@@ -104,11 +111,11 @@ const toastEl = $('toast');
 let lastResult = null;
 let lbBackTo = 'title';
 let lbFilter = 'all';
-/** @type {'hub'|'rush'|'mirror'|'aerger'|'drift'|'pulse'} */
+/** @type {'hub'|'rush'|'mirror'|'aerger'|'drift'|'pulse'|'jet'} */
 let activeGame = 'hub';
 /** @type {() => void} */
 let pauseAerger = () => {};
-/** @type {'rush'|'mirror'|'drift'|'pulse'} */
+/** @type {'rush'|'mirror'|'drift'|'pulse'|'jet'} */
 let lbGame = 'rush';
 let submitting = false;
 let runSeq = 0;
@@ -125,6 +132,8 @@ let selectedDifficulty = loadSavedDifficulty();
 let driftDifficulty = loadDriftDifficulty();
 /** @type {import('./difficulty.js').DifficultyId} */
 let pulseDifficulty = loadPulseDifficulty();
+/** @type {import('./difficulty.js').DifficultyId} */
+let jetDifficulty = loadJetDifficulty();
 /** @type {string} */
 let selectedSkin = normalizeSkin(loadSavedSkin());
 
@@ -340,6 +349,69 @@ function markDriftOnboard() {
   }
 }
 
+function loadJetDifficulty() {
+  try {
+    return normalizeDifficulty(localStorage.getItem(LS_JET_DIFF) || DEFAULT_DIFFICULTY);
+  } catch {
+    return DEFAULT_DIFFICULTY;
+  }
+}
+
+function saveJetDifficulty(id) {
+  const d = normalizeDifficulty(id);
+  jetDifficulty = d;
+  try {
+    localStorage.setItem(LS_JET_DIFF, d);
+  } catch {
+    /* ignore */
+  }
+}
+
+function getJetBest(id = jetDifficulty) {
+  const d = normalizeDifficulty(id);
+  try {
+    return Math.max(0, Math.floor(Number(localStorage.getItem(LS_JET_BEST_PREFIX + d)) || 0));
+  } catch {
+    return 0;
+  }
+}
+
+function setJetBest(score, id = jetDifficulty) {
+  const d = normalizeDifficulty(id);
+  try {
+    localStorage.setItem(LS_JET_BEST_PREFIX + d, String(Math.floor(score)));
+  } catch {
+    /* ignore */
+  }
+}
+
+function refreshJetMenu() {
+  const best = getJetBest(jetDifficulty);
+  const label = getJetDifficulty(jetDifficulty).label;
+  const bestEl = $('jet-best-val');
+  const line = $('jet-best');
+  if (line?.childNodes[0]?.nodeType === 3) {
+    line.childNodes[0].textContent = `Rekord (${label}): `;
+  }
+  if (bestEl) bestEl.textContent = best > 0 ? String(best) : '—';
+}
+
+function jetOnboardDone() {
+  try {
+    return localStorage.getItem(LS_JET_ONBOARD) === '1';
+  } catch {
+    return true;
+  }
+}
+
+function markJetOnboard() {
+  try {
+    localStorage.setItem(LS_JET_ONBOARD, '1');
+  } catch {
+    /* ignore */
+  }
+}
+
 function loadPulseDifficulty() {
   try {
     return normalizeDifficulty(localStorage.getItem(LS_PULSE_DIFF) || DEFAULT_DIFFICULTY);
@@ -461,22 +533,36 @@ function markOnboardDone() {
 }
 
 function resultGame(result) {
-  if (result?.game === 'mirror' || result?.game === 'drift' || result?.game === 'pulse') return result.game;
+  if (
+    result?.game === 'mirror' ||
+    result?.game === 'drift' ||
+    result?.game === 'pulse' ||
+    result?.game === 'jet'
+  ) {
+    return result.game;
+  }
   return 'rush';
 }
 
 function setHudChrome(mode) {
   const drift = mode === 'drift';
   const pulse = mode === 'pulse';
+  const jetMode = mode === 'jet';
   const scoreLabel = $('hud-score-label');
   const orbsLabel = $('hud-orbs-label');
   const timeLabel = $('hud-time-label');
-  if (scoreLabel) scoreLabel.textContent = drift || pulse ? 'PUNKTE' : 'SCORE';
-  if (orbsLabel) orbsLabel.textContent = pulse ? 'TREFFER' : drift ? 'RINGE' : 'ORBS';
-  if (timeLabel) timeLabel.textContent = pulse ? 'TAKT' : drift ? 'KM' : 'TIME';
+  if (scoreLabel) scoreLabel.textContent = drift || pulse || jetMode ? 'PUNKTE' : 'SCORE';
+  if (orbsLabel) orbsLabel.textContent = jetMode ? 'LEBEN' : pulse ? 'TREFFER' : drift ? 'RINGE' : 'ORBS';
+  if (timeLabel) timeLabel.textContent = jetMode ? 'STUFE' : pulse ? 'TAKT' : drift ? 'KM' : 'TIME';
   hud.classList.toggle('drift-mode', drift);
   hud.classList.toggle('pulse-mode', pulse);
+  hud.classList.toggle('jet-mode', jetMode);
   hud.classList.toggle('mirror-mode', mode === 'mirror');
+  if (!jetMode) {
+    $('pwr-overdrive')?.classList.add('hidden');
+    $('pwr-drone')?.classList.add('hidden');
+    $('btn-jet-bomb')?.classList.add('hidden');
+  }
 }
 
 function showScreen(name) {
@@ -750,6 +836,13 @@ function setOverDiffBadge(result) {
     badge.className = `diff-badge ${d}`;
     return;
   }
+  if (result.game === 'jet') {
+    const d = normalizeDifficulty(result.difficulty || jetDifficulty);
+    const stage = Math.max(1, Math.floor(result.stage) || 1);
+    badge.textContent = `${getJetDifficulty(d).label} · ${result.stageName || `Stufe ${stage}`}`;
+    badge.className = `diff-badge ${d}`;
+    return;
+  }
   if (result.game === 'pulse') {
     if (result.daily) {
       badge.textContent = `Daily · ${result.dailyDate || utcDateString()}`;
@@ -873,6 +966,11 @@ function buildShareText(result) {
     const tag = getDriftDifficulty(result.difficulty || driftDifficulty).label;
     return `Orbit Drift [${tag}] — ${score} Punkte — ${km} km — schlag mich!`;
   }
+  if (result?.game === 'jet') {
+    const tag = getJetDifficulty(result.difficulty || jetDifficulty).label;
+    const bosses = Math.max(0, Math.floor(result.bossesCleared || 0));
+    return `Orbit Jet [${tag}] — ${score} Punkte — ${bosses} Bosse — ${result.stageName || 'Neon City'} — schlag mich!`;
+  }
   if (result?.game === 'pulse') {
     const tag = result.daily
       ? `Daily · ${result.dailyDate || utcDateString()}`
@@ -896,7 +994,7 @@ async function shareScore() {
   audio.click();
   try {
     if (navigator.share) {
-      const titles = { mirror: 'Orbit Mirror', drift: 'Orbit Drift', pulse: 'Orbit Pulse' };
+      const titles = { mirror: 'Orbit Mirror', drift: 'Orbit Drift', pulse: 'Orbit Pulse', jet: 'Orbit Jet' };
       await navigator.share({ title: titles[lastResult?.game] || 'Orbit Rush', text });
       $('submit-status').textContent = 'Shared!';
       $('submit-status').classList.remove('error');
@@ -956,33 +1054,42 @@ function showGameOver(result) {
   const mirrorRun = result.game === 'mirror';
   const driftRun = result.game === 'drift';
   const pulseRun = result.game === 'pulse';
+  const jetRun = result.game === 'jet';
   const hint = $('name-hint');
   if (hint) {
     hint.textContent =
-      driftRun || pulseRun
+      driftRun || pulseRun || jetRun
         ? 'Ein Name, einmal. Spätere Runs speichern automatisch.'
         : 'Enter a name once. Later runs save automatically.';
   }
-  $('over-title').textContent = pulseRun
-    ? result.cleared
-      ? !result.daily && result.stageCount > 1
-        ? 'RUN GESCHAFFT'
-        : 'FLOW GEHALTEN'
-      : 'AUS DEM TAKT'
-    : driftRun
-      ? 'BAHN VERLASSEN'
-      : mirrorRun
-        ? 'SPIEGEL BRICHT'
-        : 'ORBIT LOST';
+  $('over-title').textContent = jetRun
+    ? 'ABGESCHOSSEN'
+    : pulseRun
+      ? result.cleared
+        ? !result.daily && result.stageCount > 1
+          ? 'RUN GESCHAFFT'
+          : 'FLOW GEHALTEN'
+        : 'AUS DEM TAKT'
+      : driftRun
+        ? 'BAHN VERLASSEN'
+        : mirrorRun
+          ? 'SPIEGEL BRICHT'
+          : 'ORBIT LOST';
   const retry = $('btn-retry');
-  if (retry) retry.textContent = pulseRun ? 'NOCHMAL' : 'PLAY AGAIN';
-  $('over-streak').classList.toggle('hidden', !mirrorRun && !driftRun && !pulseRun);
+  if (retry) retry.textContent = pulseRun || jetRun ? 'NOCHMAL' : 'PLAY AGAIN';
+  $('over-streak').classList.toggle('hidden', !mirrorRun && !driftRun && !pulseRun && !jetRun);
   const streakLine = $('over-streak');
   if (streakLine?.childNodes[0]?.nodeType === 3) {
-    streakLine.childNodes[0].textContent = pulseRun ? 'Treffer: ' : driftRun ? 'Strecke: ' : 'Clean streak: ';
+    streakLine.childNodes[0].textContent = jetRun
+      ? 'Bosse: '
+      : pulseRun
+        ? 'Treffer: '
+        : driftRun
+          ? 'Strecke: '
+          : 'Clean streak: ';
   }
 
-  if (!mirrorRun && !driftRun && !pulseRun) processAchievements(result);
+  if (!mirrorRun && !driftRun && !pulseRun && !jetRun) processAchievements(result);
 
   let isNew = false;
   let best = 0;
@@ -1009,6 +1116,17 @@ function showGameOver(result) {
       }
     }
     $('over-streak-val').textContent = `${result.perfects || 0} perfekt · ${result.goods || 0} gut`;
+  } else if (jetRun) {
+    const diff = normalizeDifficulty(result.difficulty || jetDifficulty);
+    const prev = getJetBest(diff);
+    isNew = result.score > prev;
+    if (isNew) setJetBest(result.score, diff);
+    best = Math.max(prev, result.score);
+    $('over-streak-val').textContent = String(Math.max(0, Math.floor(result.bossesCleared || 0)));
+    const ob = $('over-best');
+    if (ob.childNodes[0] && ob.childNodes[0].nodeType === 3) {
+      ob.childNodes[0].textContent = `Rekord (${getJetDifficulty(diff).label}): `;
+    }
   } else if (driftRun) {
     const diff = normalizeDifficulty(result.difficulty || driftDifficulty);
     const prev = getDriftBest(diff);
@@ -1070,7 +1188,8 @@ function showGameOver(result) {
       result.nearMisses,
       result.score
     );
-  $('over-new-best').textContent = driftRun || pulseRun ? '★ NEUER REKORD ★' : '★ NEW PERSONAL BEST ★';
+  $('over-new-best').textContent = driftRun || pulseRun || jetRun ? '★ NEUER REKORD ★' : '★ NEW PERSONAL BEST ★';
+  $('btn-jet-bomb')?.classList.add('hidden');
   $('over-new-best').classList.toggle('hidden', !isNew || result.score <= 0);
   $('over-best').classList.toggle('hidden', best <= 0);
   $('over-best-val').textContent = String(best);
@@ -1079,6 +1198,7 @@ function showGameOver(result) {
   refreshMirrorMenu();
   refreshDriftMenu();
   refreshPulseMenu();
+  refreshJetMenu();
   refreshHub();
   presentGameOverIdentity(result);
   showScreen('over');
@@ -1171,10 +1291,57 @@ const pulse = new PulseGame(canvas, {
   },
 });
 
+const jet = new JetGame(canvas, {
+  audio,
+  onHud({
+    score,
+    lives,
+    combo,
+    weapon,
+    weaponLabel,
+    stage,
+    stageCount,
+    stageName,
+    shield,
+    slow,
+    magnet,
+    overdrive,
+    drone,
+    bombs,
+    tutorial,
+  }) {
+    hudScore.textContent = String(score);
+    hudOrbs.textContent = String(lives);
+    hudTime.textContent = `${stage}/${stageCount}`;
+    $('hud-combo-label').textContent = 'WAFFE';
+    hudCombo.classList.remove('hidden');
+    hudComboVal.textContent = weaponLabel || 'Einzel';
+    hudCombo.classList.toggle('hot', weapon >= 4 || combo >= 4);
+    pwrShield.classList.toggle('hidden', !(shield > 0));
+    pwrSlow.classList.toggle('hidden', !(slow > 0));
+    pwrMagnet.classList.toggle('hidden', !(magnet > 0));
+    $('pwr-overdrive')?.classList.toggle('hidden', !(overdrive > 0));
+    $('pwr-drone')?.classList.toggle('hidden', !(drone > 0));
+    const bomb = $('btn-jet-bomb');
+    if (bomb) {
+      bomb.classList.toggle('hidden', !(bombs > 0) || jet.paused);
+      const count = $('jet-bomb-count');
+      if (count) count.textContent = String(bombs || 0);
+    }
+    hudMode.textContent = stageName || 'Neon City';
+    hudMode.classList.remove('hidden');
+    if (tutorial <= 0) touchHint.classList.add('hidden');
+  },
+  onGameOver(result) {
+    showGameOver(result);
+  },
+});
+
 function liveGame() {
   if (activeGame === 'mirror') return mirror;
   if (activeGame === 'drift') return drift;
   if (activeGame === 'pulse') return pulse;
+  if (activeGame === 'jet') return jet;
   return game;
 }
 
@@ -1184,6 +1351,7 @@ function showHub() {
   if (mirror.running) mirror.stop();
   if (drift.running) drift.stop();
   if (pulse.running) pulse.stop();
+  if (jet.running) jet.stop();
   audio.stopMusic();
   audio.stopClip();
   hud.classList.add('hidden');
@@ -1198,6 +1366,7 @@ function openRushMenu() {
   if (mirror.running) mirror.stop();
   if (drift.running) drift.stop();
   if (pulse.running) pulse.stop();
+  if (jet.running) jet.stop();
   audio.stopMusic();
   audio.stopClip();
   hud.classList.add('hidden');
@@ -1213,6 +1382,7 @@ function openMirrorMenu() {
   if (mirror.running) mirror.stop();
   if (drift.running) drift.stop();
   if (pulse.running) pulse.stop();
+  if (jet.running) jet.stop();
   audio.stopMusic();
   audio.stopClip();
   hud.classList.add('hidden');
@@ -1227,6 +1397,7 @@ function openDriftMenu() {
   if (mirror.running) mirror.stop();
   if (drift.running) drift.stop();
   if (pulse.running) pulse.stop();
+  if (jet.running) jet.stop();
   audio.stopMusic();
   audio.stopClip();
   hud.classList.add('hidden');
@@ -1240,6 +1411,7 @@ function beginMirror() {
   if (game.running) game.stop();
   if (drift.running) drift.stop();
   if (pulse.running) pulse.stop();
+  if (jet.running) jet.stop();
   audio.resume();
   audio.startMusic();
   hideAllScreens();
@@ -1276,6 +1448,7 @@ function beginDrift() {
   if (game.running) game.stop();
   if (mirror.running) mirror.stop();
   if (pulse.running) pulse.stop();
+  if (jet.running) jet.stop();
   audio.resume();
   audio.startMusic();
   hideAllScreens();
@@ -1314,6 +1487,7 @@ function openPulseMenu() {
   if (mirror.running) mirror.stop();
   if (drift.running) drift.stop();
   if (pulse.running) pulse.stop();
+  if (jet.running) jet.stop();
   audio.stopMusic();
   audio.stopClip();
   hud.classList.add('hidden');
@@ -1359,6 +1533,7 @@ function beginPulse(opts = {}) {
   if (game.running) game.stop();
   if (mirror.running) mirror.stop();
   if (drift.running) drift.stop();
+  if (jet.running) jet.stop();
   audio.resume();
   audio.stopMusic();
   hideAllScreens();
@@ -1423,11 +1598,103 @@ function startPulseDaily() {
   beginPulse({ daily: true });
 }
 
+function syncJetDiffChips() {
+  document.querySelectorAll('#jet-diff-options .diff-chip').forEach((btn) => {
+    const id = btn.getAttribute('data-jet-diff');
+    btn.setAttribute('aria-pressed', id === jetDifficulty ? 'true' : 'false');
+  });
+  const best = getJetBest(jetDifficulty);
+  const label = getJetDifficulty(jetDifficulty).label;
+  const line = $('jet-diff-best');
+  if (line?.childNodes[0]?.nodeType === 3) {
+    line.childNodes[0].textContent = `Rekord auf ${label}: `;
+  }
+  const val = $('jet-diff-best-val');
+  if (val) val.textContent = best > 0 ? String(best) : '—';
+  const startBtn = $('btn-jet-diff-start');
+  if (startBtn) {
+    if (jetDifficulty === 'baba') {
+      startBtn.textContent = 'BABA STARTEN';
+      startBtn.classList.add('baba-start');
+    } else {
+      startBtn.textContent = 'START';
+      startBtn.classList.remove('baba-start');
+    }
+  }
+  if (!jet.running) {
+    jet.setDifficulty(jetDifficulty);
+    jet.resetState();
+  }
+}
+
+function openJetDifficulty() {
+  activeGame = 'jet';
+  syncJetDiffChips();
+  showScreen('jetDiff');
+}
+
+function openJetMenu() {
+  activeGame = 'jet';
+  if (game.running) game.stop();
+  if (mirror.running) mirror.stop();
+  if (drift.running) drift.stop();
+  if (pulse.running) pulse.stop();
+  if (jet.running) jet.stop();
+  audio.stopMusic();
+  audio.stopClip();
+  hud.classList.add('hidden');
+  setHudChrome('rush');
+  refreshJetMenu();
+  showScreen('jet');
+}
+
+function beginJet() {
+  activeGame = 'jet';
+  if (game.running) game.stop();
+  if (mirror.running) mirror.stop();
+  if (drift.running) drift.stop();
+  if (pulse.running) pulse.stop();
+  audio.resume();
+  audio.startMusic();
+  hideAllScreens();
+  hud.classList.remove('hidden');
+  setHudChrome('jet');
+  $('hud-combo-label').textContent = 'WAFFE';
+  hudCombo.classList.remove('hidden');
+  hudComboVal.textContent = 'Einzel';
+  pwrShield.classList.add('hidden');
+  pwrSlow.classList.add('hidden');
+  pwrMagnet.classList.add('hidden');
+  $('pwr-overdrive')?.classList.add('hidden');
+  $('pwr-drone')?.classList.add('hidden');
+  $('btn-jet-bomb')?.classList.add('hidden');
+  hudMode.textContent = 'Neon City';
+  hudMode.classList.remove('hidden');
+  touchHint.textContent = 'Ziehen = fliegen · Auto-Feuer · Einsammeln = stärker';
+  touchHint.classList.add('hidden');
+  touchHint.classList.remove('fade-fast');
+  void touchHint.offsetWidth;
+  touchHint.classList.remove('hidden');
+  jet.start(jetDifficulty);
+}
+
+function startJet() {
+  activeGame = 'jet';
+  audio.resume();
+  audio.click();
+  if (!jetOnboardDone()) {
+    showScreen('jetOnboard');
+    return;
+  }
+  openJetDifficulty();
+}
+
 function beginRun(opts = {}) {
   activeGame = 'rush';
   if (mirror.running) mirror.stop();
   if (drift.running) drift.stop();
   if (pulse.running) pulse.stop();
+  if (jet.running) jet.stop();
   setHudChrome('rush');
   $('hud-combo-label').textContent = 'COMBO';
   touchHint.textContent = 'Drag left / right to change orbit';
@@ -1496,11 +1763,14 @@ function startDaily() {
 
 function openLeaderboard(from, gameId = 'rush') {
   lbBackTo = from;
-  lbGame = gameId === 'mirror' || gameId === 'drift' || gameId === 'pulse' ? gameId : 'rush';
+  lbGame =
+    gameId === 'mirror' || gameId === 'drift' || gameId === 'pulse' || gameId === 'jet' ? gameId : 'rush';
   if (lbGame === 'rush') {
     lbFilter = runMode === 'daily' ? 'daily' : selectedDifficulty || 'all';
   } else if (lbGame === 'drift') {
     lbFilter = driftDifficulty || 'all';
+  } else if (lbGame === 'jet') {
+    lbFilter = jetDifficulty || 'all';
   } else if (lbGame === 'pulse') {
     lbFilter =
       from === 'over' && lastResult?.game === 'pulse' && lastResult?.daily
@@ -1517,7 +1787,7 @@ function syncLbFilters() {
     const filter = btn.getAttribute('data-filter');
     btn.classList.toggle('hidden', filter === 'daily' && lbGame !== 'rush' && lbGame !== 'pulse');
     btn.classList.toggle('active', filter === lbFilter);
-    if (filter === 'all') btn.textContent = lbGame === 'drift' || lbGame === 'pulse' ? 'Alle' : 'All';
+    if (filter === 'all') btn.textContent = lbGame === 'drift' || lbGame === 'pulse' || lbGame === 'jet' ? 'Alle' : 'All';
   });
 }
 
@@ -1540,6 +1810,11 @@ async function renderLeaderboard() {
     if (heading) heading.textContent = 'PULSE TOP 50';
     filters?.classList.remove('hidden');
     syncLbFilters();
+  } else if (lbGame === 'jet') {
+    if (heading) heading.textContent = 'JET TOP 50';
+    if (lbFilter === 'daily') lbFilter = jetDifficulty || 'all';
+    filters?.classList.remove('hidden');
+    syncLbFilters();
   } else {
     if (heading) heading.textContent = 'GLOBAL TOP 50';
     filters?.classList.remove('hidden');
@@ -1555,6 +1830,11 @@ async function renderLeaderboard() {
     } else if (lbGame === 'drift') {
       const filter = !lbFilter || lbFilter === 'all' ? undefined : lbFilter;
       const res = await fetchScores(filter ? { difficulty: filter, game: 'drift' } : { game: 'drift' });
+      scores = res.scores;
+      source = res.source;
+    } else if (lbGame === 'jet') {
+      const filter = !lbFilter || lbFilter === 'all' ? undefined : lbFilter;
+      const res = await fetchScores(filter ? { difficulty: filter, game: 'jet' } : { game: 'jet' });
       scores = res.scores;
       source = res.source;
     } else if (lbGame === 'pulse' && lbFilter === 'daily') {
@@ -1580,7 +1860,7 @@ async function renderLeaderboard() {
     list.innerHTML = '';
     if (!scores.length) {
       empty.classList.remove('hidden');
-      if (lbGame === 'drift' || lbGame === 'pulse') {
+      if (lbGame === 'drift' || lbGame === 'pulse' || lbGame === 'jet') {
         empty.textContent =
           source === 'local'
             ? 'Noch keine Punkte (lokal). Sei der Erste.'
@@ -1645,7 +1925,8 @@ $('btn-retry').addEventListener('click', () => {
   else if (lastResult?.game === 'pulse') {
     if (lastResult.daily) startPulseDaily();
     else startPulse();
-  } else if (lastResult?.daily || runMode === 'daily') startDaily();
+  } else if (lastResult?.game === 'jet') startJet();
+  else if (lastResult?.daily || runMode === 'daily') startDaily();
   else startRun();
 });
 $('btn-diff-start').addEventListener('click', () => {
@@ -1709,6 +1990,9 @@ $('btn-quit').addEventListener('click', () => {
   } else if (leaving === 'pulse') {
     refreshPulseMenu();
     showScreen('pulse');
+  } else if (leaving === 'jet') {
+    refreshJetMenu();
+    showScreen('jet');
   } else {
     refreshTitleBest();
     showScreen('title');
@@ -1734,6 +2018,9 @@ $('btn-lb-back').addEventListener('click', () => {
   } else if (lbBackTo === 'pulse') {
     refreshPulseMenu();
     showScreen('pulse');
+  } else if (lbBackTo === 'jet') {
+    refreshJetMenu();
+    showScreen('jet');
   } else {
     refreshTitleBest();
     showScreen('title');
@@ -1782,6 +2069,7 @@ btnPause.addEventListener('click', () => {
   audio.stopMusic();
   live.setPaused(true);
   hud.classList.add('hidden');
+  $('btn-jet-bomb')?.classList.add('hidden');
   showScreen('pause');
 });
 
@@ -1824,10 +2112,12 @@ function onResize() {
   mirror.resize();
   drift.resize();
   pulse.resize();
-  if (game.running || mirror.running || drift.running || pulse.running) return;
+  jet.resize();
+  if (game.running || mirror.running || drift.running || pulse.running || jet.running) return;
   if (activeGame === 'mirror') mirror.draw();
   else if (activeGame === 'drift') drift.draw();
   else if (activeGame === 'pulse') pulse.draw();
+  else if (activeGame === 'jet') jet.draw();
   else {
     if (typeof game.seedStars === 'function') game.seedStars();
     game.draw();
@@ -1837,10 +2127,11 @@ window.addEventListener('resize', onResize);
 window.addEventListener('orientationchange', () => setTimeout(onResize, 120));
 
 function idleDraw() {
-  if (!game.running && !mirror.running && !drift.running && !pulse.running) {
+  if (!game.running && !mirror.running && !drift.running && !pulse.running && !jet.running) {
     if (activeGame === 'mirror') mirror.drawIdle();
     else if (activeGame === 'drift') drift.drawIdle();
     else if (activeGame === 'pulse') pulse.drawIdle();
+    else if (activeGame === 'jet') jet.drawIdle();
     else {
       game.angle += 0.004;
       game.draw();
@@ -1864,6 +2155,7 @@ function openAerger() {
   if (mirror.running) mirror.stop();
   if (drift.running) drift.stop();
   if (pulse.running) pulse.stop();
+  if (jet.running) jet.stop();
   audio.stopMusic();
   audio.stopClip();
   hud.classList.add('hidden');
@@ -1898,6 +2190,11 @@ $('btn-hub-pulse').addEventListener('click', () => {
   audio.resume();
   audio.click();
   openPulseMenu();
+});
+$('btn-hub-jet').addEventListener('click', () => {
+  audio.resume();
+  audio.click();
+  openJetMenu();
 });
 $('btn-title-hub').addEventListener('click', () => {
   audio.click();
@@ -1984,6 +2281,48 @@ $('btn-pulse-diff-back').addEventListener('click', () => {
   refreshPulseMenu();
   showScreen('pulse');
 });
+$('btn-jet-play').addEventListener('click', startJet);
+$('btn-jet-lb').addEventListener('click', () => {
+  audio.click();
+  openLeaderboard('jet', 'jet');
+});
+$('btn-jet-hub').addEventListener('click', () => {
+  audio.click();
+  showHub();
+});
+$('btn-jet-onboard').addEventListener('click', () => {
+  audio.click();
+  markJetOnboard();
+  openJetDifficulty();
+});
+$('btn-jet-onboard-skip').addEventListener('click', () => {
+  audio.click();
+  markJetOnboard();
+  openJetDifficulty();
+});
+document.querySelectorAll('#jet-diff-options .diff-chip').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    audio.click();
+    jetDifficulty = normalizeDifficulty(btn.getAttribute('data-jet-diff'));
+    syncJetDiffChips();
+  });
+});
+$('btn-jet-diff-start').addEventListener('click', () => {
+  saveJetDifficulty(jetDifficulty);
+  beginJet();
+});
+$('btn-jet-diff-back').addEventListener('click', () => {
+  audio.click();
+  refreshJetMenu();
+  showScreen('jet');
+});
+$('btn-jet-bomb').addEventListener('click', (e) => {
+  e.stopPropagation();
+  e.preventDefault();
+  if (activeGame !== 'jet' || !jet.running || jet.paused) return;
+  audio.resume();
+  jet.fireBomb();
+});
 $('btn-over-hub').addEventListener('click', () => {
   audio.click();
   showHub();
@@ -1999,6 +2338,8 @@ drift.setDifficulty(driftDifficulty);
 drift.resize();
 pulse.setDifficulty(pulseDifficulty);
 pulse.resize();
+jet.setDifficulty(jetDifficulty);
+jet.resize();
 preloadPulseManifest().catch(() => {});
 if (typeof game.seedStars === 'function') game.seedStars();
 idleDraw();
@@ -2008,6 +2349,7 @@ window.__ORBIT_RUSH__ = {
   mirror,
   drift,
   pulse,
+  jet,
   computeScore,
   formatFormula,
   NEAR_MISS_POINTS,
@@ -2027,6 +2369,9 @@ window.__ORBIT_RUSH__ = {
   startPulseDaily,
   beginPulse,
   openPulseDifficulty,
+  startJet,
+  beginJet,
+  openJetDifficulty,
   showHub,
   beginRun,
   openDifficultyPicker,
@@ -2059,6 +2404,13 @@ window.__ORBIT_RUSH__ = {
   },
   get driftDifficulty() {
     return driftDifficulty;
+  },
+  setJetDifficulty(id) {
+    saveJetDifficulty(id);
+    syncJetDiffChips();
+  },
+  get jetDifficulty() {
+    return jetDifficulty;
   },
   setSkin(id) {
     if (!skinIsUnlocked(id)) return false;

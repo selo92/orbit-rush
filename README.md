@@ -1,8 +1,8 @@
 # Orbit Rush
 
-Neon-Skill-Spiele plus ein Online-Brett. **v1.4** bleibt die Rush/Mirror-Bestenliste. Dazu kommen **Orbit Ärger**, **Orbit Drift** und **Orbit Pulse**.
+Neon-Skill-Spiele plus ein Online-Brett. **v1.5** bleibt die Rush/Mirror-Bestenliste. Dazu kommen **Orbit Ärger**, **Orbit Drift**, **Orbit Pulse** und **Orbit Jet**.
 
-Die Seite bleibt **Orbit Rush** (gleiche URL, gleicher Pilot). Der erste Screen ist die **Orbit Arcade**: fünf Kacheln, **Orbit Rush**, **Orbit Mirror**, **Orbit Ärger**, **Orbit Drift** und **Orbit Pulse**. Name (`orbit-rush-name`) und `orbit-rush-client-id` gelten für die Skill-Spiele. „Welcome back“ steht auf der Arcade. Ärger nutzt denselben Namen, schreibt aber **nicht** in die Top-50.
+Die Seite bleibt **Orbit Rush** (gleiche URL, gleicher Pilot). Der erste Screen ist die **Orbit Arcade**: sechs Kacheln, **Orbit Rush**, **Orbit Mirror**, **Orbit Ärger**, **Orbit Drift**, **Orbit Pulse** und **Orbit Jet**. Name (`orbit-rush-name`) und `orbit-rush-client-id` gelten für die Skill-Spiele. „Welcome back“ steht auf der Arcade. Ärger nutzt denselben Namen, schreibt aber **nicht** in die Top-50.
 
 | Spiel | Pitch |
 |-------|--------|
@@ -11,6 +11,7 @@ Die Seite bleibt **Orbit Rush** (gleiche URL, gleicher Pilot). Der erste Screen 
 | **Orbit Ärger** | Würfeln. Schmeißen. Zu viert online. |
 | **Orbit Drift** | Halt die Bahn. Der Tunnel driftet. |
 | **Orbit Pulse** | Tippe den Beat. Halt den Flow. |
+| **Orbit Jet** | Flieg den Jet. Auto-Feuer. Besiege den Boss. |
 
 Von jedem Spielmenü führt **ARCADE** zurück zur Auswahl. Orbit Rush selbst ist unverändert: **Einfach · Mittel · Schwer · Baba**, Daily, Achievements, Skins, Auto-Submit.
 
@@ -58,6 +59,29 @@ score = floor(Sekunden) × 10 + Treffer × 100 + comboBonus + Gut × 75
 
 Treffer sind Perfekt und Gut. `nearMisses` sind die Guts. Die Rangliste ist nur `game=pulse` (Top 50), mit Filtern Alle / Einfach / Mittel / Schwer / Baba / Daily. `GET /api/scores?game=pulse&mode=daily&dailyDate=YYYY-MM-DD` ist die Daily-Liste dieses Tages. Lokale Rekorde: `orbit-pulse-best-<grad>` und `orbit-pulse-daily-best-<datum>`.
 
+## Orbit Jet
+
+Vertikaler Kampfjet. Die Welt scrollt auf dich zu. Der Jet schießt immer. **Ziehen** (Finger oder Maus) folgt in der Bahn, mit kurzer Leine nach oben und unten. **Pfeile** oder **WASD** lenken ebenfalls. **Leertaste** oder der Bomben-Knopf zündet eine Räumbombe, wenn du eine hast.
+
+Vor dem Start wählst du **Einfach · Mittel · Schwer · Baba**. Der Grad liegt unter `orbit-jet-difficulty` und ändert Rush, Drift und Pulse nicht. Einfach hat vier Leben und langsameres Feuer, Baba zwei Leben und dichtere Wellen. Ein Lauf geht durch vier Stufen und fängt danach härter wieder von vorn an, bis die Leben leer sind.
+
+| Stufe | Boss |
+|-------|------|
+| **Neon City** | Träger: Drohnen und ein breiter Laser-Sweep |
+| **Desert Dusk** | Sandwyrm: gräbt sich seitlich neu und wirbelt kurz einen Sandsturm auf |
+| **Ice Orbit** | Frostkern: friert eine Bahn ein (Slow-Zone) und schießt einen Splitterring |
+| **Storm Nebula** | Sturmtitan: Blitzsäulen mit Vorwarnung und zielsuchende Orbs |
+
+Waffen-Pickups (`WAFFE`) steigen: Einzel → Doppel → Dreifach → Fächer → Laser. Ein Treffer ohne Schild kostet ein Leben und genau eine Waffenstufe. Dazu gibt es Schild (zwei Treffer), Zeitlupe (Gegner und Schüsse etwa 40 % langsamer), Bombe, Magnet, Boost und eine kurze Drohne.
+
+Dieselbe Formel wie Rush, damit der Server sie prüft. Abschüsse, Pickups und der Boss-Bonus sind die Ziele, Fast-vorbei die Near-Misses:
+
+```text
+score = floor(Sekunden) × 10 + Ziele × 100 + comboBonus + nearMisses × 75
+```
+
+Die Rangliste ist nur `game=jet` (Top 50), gefiltert nach `difficulty`. Keine neue Migration: `scores.game` bleibt die Textspalte aus `0003_game.sql`. Lokale Rekorde: `orbit-jet-best-<grad>`. Pause, Mute, Auto-Submit und YOU-Badge wie bei Drift und Pulse.
+
 ## Orbit Ärger
 
 Mensch ärgere dich nicht für bis zu 4 Spieler im selben Neon-Look. Hochformat. Deutsch ist die Hauptsprache, kurze englische Zeilen stehen daneben.
@@ -77,7 +101,7 @@ Mensch ärgere dich nicht für bis zu 4 Spieler im selben Neon-Look. Hochformat.
 
 ### Polling auf dem Workers-Free-Tarif
 
-Kein Durable Object, kein WebSocket, keine Queue. Ein Raum ist **eine D1-Zeile** (`aerger_rooms`): JSON `state`, `version`, `updated_at`. `migrations/0004_aerger_rooms.sql` legt nur diese Tabelle an. `scores.game` ist `rush`, `mirror`, `drift` oder `pulse`. Drift und Pulse brauchen keine neue Migration: die Spalte aus `0003_game.sql` ist freier Text.
+Kein Durable Object, kein WebSocket, keine Queue. Ein Raum ist **eine D1-Zeile** (`aerger_rooms`): JSON `state`, `version`, `updated_at`. `migrations/0004_aerger_rooms.sql` legt nur diese Tabelle an. `scores.game` ist `rush`, `mirror`, `drift`, `pulse` oder `jet`. Drift, Pulse und Jet brauchen keine neue Migration: die Spalte aus `0003_game.sql` ist freier Text.
 
 | Aufruf | Wirkung |
 |--------|---------|
@@ -108,7 +132,7 @@ Die Skill-Bestenliste bleibt bei 30 Requests/Minute und einem POST alle 2 Sekund
 
 **Orbit Rush** is a mobile-first Canvas 2D reflex game. You auto-orbit a planet and steer the radius with A/D, arrow keys, or a horizontal drag. Collect orbs, dodge debris, chain combos and near-misses. A finished run saves to the top 50 under your pilot name. The first game over asks for that name once; later visits show “Welcome back” and submit on their own.
 
-v1.4 opens on an **Orbit Arcade** hub with five games. **Orbit Mirror**, **Orbit Drift**, and **Orbit Pulse** each post to their own top 50 (`game=mirror`, `game=drift`, `game=pulse`). Pulse is a neon rhythm game: tap or hold circles on the beat, and no chart — stage chain or Daily Beat — asks for more than two fingers at once. A tap beside one hold is fine; a second hold is kept only when nothing else starts during the overlap. Two fingers on adjacent notes each score, even when both land closer to the same lane. A difficulty shuffles its own tracks for the run; clearing a stage starts the next remaining song a little harder, and the run score is submitted once when the run ends. Daily Beat stays a single date-seeded track. Note times come from the playing file's beatmap and are judged against `audio.currentTime`. Drift is a solo neon tunnel: steer with A/D, arrows, or a drag, stay in the lane, and lose one of three hull points on a wall or on debris, barriers, and side spikes. Before each run you pick Einfach, Mittel, Schwer, or Baba; Mittel is faster and tighter than the original single ramp. **Orbit Ärger** is a 2–4 player Mensch-ärgere-dich-nicht room on the same host: one D1 row per room, HTTP polling every ~1.8s (1s while waiting for someone else to roll), no Durable Objects or WebSockets. Your own roll is in the POST response; the die tumbles from the click until that face lands. Ärger wins are not leaderboard rows. `VITE_API_BASE` empty means the page calls `/api` on the same host. Local play uses `data/scores.json` plus `data/aerger-rooms.json`. Production uses Cloudflare D1 on the same host: https://orbit-rush.selimv18.workers.dev
+v1.5 opens on an **Orbit Arcade** hub with six games. **Orbit Mirror**, **Orbit Drift**, **Orbit Pulse**, and **Orbit Jet** each post to their own top 50 (`game=mirror`, `game=drift`, `game=pulse`, `game=jet`). Orbit Jet is a vertical auto-fire jet: drag or keys to fly, weapon pickups from single shot through laser, timed specials, and four boss stages (Neon City, Desert Dusk, Ice Orbit, Storm Nebula). Pulse is a neon rhythm game: tap or hold circles on the beat, and no chart — stage chain or Daily Beat — asks for more than two fingers at once. A tap beside one hold is fine; a second hold is kept only when nothing else starts during the overlap. Two fingers on adjacent notes each score, even when both land closer to the same lane. A difficulty shuffles its own tracks for the run; clearing a stage starts the next remaining song a little harder, and the run score is submitted once when the run ends. Daily Beat stays a single date-seeded track. Note times come from the playing file's beatmap and are judged against `audio.currentTime`. Drift is a solo neon tunnel: steer with A/D, arrows, or a drag, stay in the lane, and lose one of three hull points on a wall or on debris, barriers, and side spikes. Before each run you pick Einfach, Mittel, Schwer, or Baba; Mittel is faster and tighter than the original single ramp. **Orbit Ärger** is a 2–4 player Mensch-ärgere-dich-nicht room on the same host: one D1 row per room, HTTP polling every ~1.8s (1s while waiting for someone else to roll), no Durable Objects or WebSockets. Your own roll is in the POST response; the die tumbles from the click until that face lands. Ärger wins are not leaderboard rows. `VITE_API_BASE` empty means the page calls `/api` on the same host. Local play uses `data/scores.json` plus `data/aerger-rooms.json`. Production uses Cloudflare D1 on the same host: https://orbit-rush.selimv18.workers.dev
 
 ## Spielen
 

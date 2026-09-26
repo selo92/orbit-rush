@@ -224,12 +224,14 @@ const scoresMod = await import(path.join(root, 'shared', 'scores.js'));
 assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
   assert(scoresMod.normalizeGame('Drift') === 'drift', 'normalize drift');
   assert(scoresMod.normalizeGame('Pulse') === 'pulse', 'normalize pulse');
+  assert(scoresMod.normalizeGame('Jet') === 'jet', 'normalize jet');
   assert(scoresMod.normalizeGame('nope') === 'rush', 'unknown game defaults to rush');
 {
   const mixed = [
     { name: 'R', score: 10, ts: 1, difficulty: 'mittel', mode: 'normal' },
     { name: 'M', score: 50, ts: 2, difficulty: 'mittel', mode: 'normal', game: 'mirror' },
     { name: 'D', score: 80, ts: 3, difficulty: 'mittel', mode: 'normal', game: 'drift' },
+    { name: 'J', score: 60, ts: 6, difficulty: 'mittel', mode: 'normal', game: 'jet' },
     { name: 'P', score: 90, ts: 4, difficulty: 'schwer', mode: 'normal', game: 'pulse' },
     {
       name: 'PD',
@@ -245,6 +247,8 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
   assert(onlyM.length === 1 && onlyM[0].name === 'M' && onlyM[0].game === 'mirror', 'mirror board');
   const onlyD = scoresMod.selectBoard(mixed, { game: 'drift' });
   assert(onlyD.length === 1 && onlyD[0].name === 'D' && onlyD[0].game === 'drift', 'drift board');
+  const onlyJ = scoresMod.selectBoard(mixed, { game: 'jet' });
+  assert(onlyJ.length === 1 && onlyJ[0].name === 'J' && onlyJ[0].game === 'jet', 'jet board');
   const onlyR = scoresMod.selectBoard(mixed, {});
   assert(onlyR.length === 1 && onlyR[0].name === 'R' && onlyR[0].game === 'rush', 'default board is rush');
   const badGame = scoresMod.validatePostBody({
@@ -256,7 +260,7 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
     nearMisses: 0,
     game: 'nope',
   });
-  assert(!badGame.ok && badGame.error === 'Invalid game (rush|mirror|drift|pulse)', 'reject bad game');
+  assert(!badGame.ok && badGame.error === 'Invalid game (rush|mirror|drift|pulse|jet)', 'reject bad game');
   const okGame = scoresMod.validatePostBody({
     name: 'A',
     score: 10,
@@ -280,6 +284,17 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
     game: 'drift',
   });
   assert(driftBody.ok && driftBody.value.game === 'drift', 'post drift');
+  const jetBody = scoresMod.validatePostBody({
+    name: 'JetPilot',
+    score: 210,
+    survivalMs: 1000,
+    orbs: 2,
+    comboBonus: 0,
+    nearMisses: 0,
+    game: 'jet',
+    difficulty: 'schwer',
+  });
+  assert(jetBody.ok && jetBody.value.game === 'jet' && jetBody.value.difficulty === 'schwer', 'post jet');
   const onlyP = scoresMod.selectBoard(mixed, { game: 'pulse' });
   assert(onlyP.length === 2 && onlyP.every((row) => row.game === 'pulse'), 'pulse board includes its rows');
   const pulseDaily = scoresMod.selectBoard(mixed, {
@@ -591,6 +606,197 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
   spike.vx = 0;
   spike.update(0.4);
   assert(spike.hull === 0 && spike.alive === false, 'a third spike hit ends the run');
+
+  const { JetGame, JET_STAGES, getJetDifficulty, formatJetFormula } = await import(path.join(root, 'src', 'jet.js'));
+  function makeJet(w, h) {
+    const canvas = {
+      width: w,
+      height: h,
+      style: {},
+      parentElement: {
+        getBoundingClientRect: () => ({ width: w, height: h, left: 0, top: 0 }),
+      },
+      getContext() {
+        return { setTransform() {} };
+      },
+      addEventListener(type, fn) {
+        (listeners[type] ||= []).push(fn);
+      },
+      removeEventListener() {},
+      setPointerCapture() {},
+    };
+    const jet = new JetGame(canvas, { audio, onGameOver() {}, onHud() {} });
+    jet.resize();
+    jet.alive = true;
+    return jet;
+  }
+
+  assert(JET_STAGES.length >= 4, 'jet has four stages');
+  assert(new Set(JET_STAGES.map((s) => s.boss)).size === JET_STAGES.length, 'each jet stage has its own boss');
+  assert(JET_STAGES.map((s) => s.name).join('|') === 'Neon City|Desert Dusk|Ice Orbit|Storm Nebula', 'stage names');
+  assert(getJetDifficulty('einfach').speed < getJetDifficulty('mittel').speed, 'einfach is slower');
+  assert(getJetDifficulty('mittel').speed < getJetDifficulty('schwer').speed, 'schwer is faster than mittel');
+  assert(getJetDifficulty('schwer').speed < getJetDifficulty('baba').speed, 'baba is the fastest jet');
+  assert(getJetDifficulty('einfach').lives === 4 && getJetDifficulty('baba').lives === 2, 'lives follow the grade');
+
+  const armed = makeJet(390, 844);
+  armed.weapon = 4;
+  armed.lives = 3;
+  armed.invuln = 0;
+  armed.hurt();
+  assert(armed.weapon === 3 && armed.lives === 2 && armed.alive, 'a hit drops one weapon tier and one life');
+  armed.invuln = 0;
+  armed.shield = 2;
+  armed.hurt();
+  assert(armed.weapon === 3 && armed.shield === 1 && armed.lives === 2, 'shield absorbs the hit');
+  armed.invuln = 0;
+  armed.shield = 0;
+  armed.weapon = 1;
+  armed.hurt();
+  assert(armed.weapon === 1 && armed.lives === 1, 'weapon tier stays at single');
+
+  const guns = makeJet(390, 844);
+  guns.weapon = 1;
+  guns.grantPickup('weapon');
+  guns.grantPickup('weapon');
+  guns.grantPickup('weapon');
+  guns.grantPickup('weapon');
+  guns.grantPickup('weapon');
+  assert(guns.weapon === 5, 'weapon pickups climb to laser and stop');
+  guns.grantPickup('shield');
+  guns.grantPickup('slow');
+  guns.grantPickup('bomb');
+  guns.grantPickup('magnet');
+  guns.grantPickup('overdrive');
+  guns.grantPickup('drone');
+  assert(guns.shield === 2 && guns.slowT > 0 && guns.bombs === 1, 'special pickups arm shield, slow-mo, and a bomb');
+  assert(guns.magnetT > 0 && guns.overT > 0 && guns.droneT > 0, 'magnet, overdrive, and drone are timed');
+
+  const cleared = makeJet(390, 844);
+  cleared.running = true;
+  cleared.paused = false;
+  const stray = cleared.spawnEBullet(40, 40, 0, 40);
+  cleared.bombs = 1;
+  assert(cleared.fireBomb() === true && stray.alive === false, 'bomb clears enemy bullets');
+
+  const jetGraze = makeJet(390, 844);
+  jetGraze.px = 120;
+  jetGraze.py = 200;
+  jetGraze.invuln = 0;
+  jetGraze.spawnEBullet(120, 226, 0, 0);
+  jetGraze.collide();
+  assert(jetGraze.nearMisses === 1 && jetGraze.lives === getJetDifficulty('mittel').lives, 'a close bullet is a graze');
+
+  const kill = makeJet(390, 844);
+  const scout = kill.spawnEnemy('scout', 180, 300);
+  scout.hp = 1;
+  scout.x = 180;
+  scout.y = 300;
+  kill.spawnPBullet(180, 300, 0, 0, 4, 0);
+  kill.collide();
+  assert(scout.alive === false && kill.orbsCollected >= 1, 'a bullet kill scores a target');
+  assert(
+    kill.score === computeScore(kill.survivalMs, kill.orbsCollected, kill.comboBonus, kill.nearMisses),
+    'jet score matches the shared formula'
+  );
+
+  const follow = makeJet(390, 844);
+  follow.running = true;
+  follow.paused = false;
+  follow.spawnCd = 30;
+  follow.obsCd = 30;
+  follow.pickupCd = 30;
+  follow.bindInput();
+  listeners.pointerdown.at(-1)({ pointerId: 11, clientX: 330, clientY: 700 });
+  const jetBefore = follow.px;
+  follow.update(0.45);
+  assert(follow.px > jetBefore + 60, 'pointer follow moves the jet');
+
+  const steer = makeJet(390, 844);
+  steer.spawnCd = 30;
+  steer.obsCd = 30;
+  steer.pickupCd = 30;
+  steer.aiming = false;
+  steer.keys.left = true;
+  const jetX0 = steer.px;
+  steer.update(0.2);
+  assert(steer.px < jetX0 - 20, 'left key steers the jet');
+
+  const bosses = makeJet(390, 844);
+  bosses.stageIndex = 0;
+  bosses.beginBoss();
+  bosses.boss.attackT = 2.5;
+  bosses.px = 30;
+  bosses.stepBoss(0.08);
+  assert(bosses.boss.kind === 'carrier', 'neon city boss is the carrier');
+  assert(bosses.enemies.some((e) => e.alive && e.kind === 'drone'), 'carrier deploys drones');
+  bosses.boss.attackT = 1.2;
+  bosses.stepBoss(0.05);
+  assert(bosses.boss.laser === 'hot', 'carrier sweeps a laser');
+
+  bosses.stageIndex = 1;
+  bosses.beginBoss();
+  bosses.boss.stormCd = 0.01;
+  bosses.stepBoss(0.05);
+  assert(bosses.sandstorm > 1, 'sand wyrm raises a sandstorm');
+  bosses.boss.state = 'emerge';
+  bosses.boss.stateT = 2.7;
+  bosses.stepBoss(0.05);
+  assert(bosses.boss.state === 'burrow' && bosses.boss.visible === false, 'sand wyrm burrows');
+
+  bosses.stageIndex = 2;
+  bosses.beginBoss();
+  bosses.boss.laneCd = 0.01;
+  bosses.stepBoss(0.05);
+  assert(bosses.boss.kind === 'frost' && bosses.boss.lanes.length >= 1, 'frost core freezes a lane');
+
+  bosses.stageIndex = 3;
+  bosses.beginBoss();
+  bosses.px = bosses.w * 0.5;
+  bosses.boss.pillarCd = 0.01;
+  bosses.stepBoss(0.05);
+  assert(bosses.boss.kind === 'titan' && bosses.boss.pillars.length >= 1, 'storm titan telegraphs pillars');
+  const pillar = bosses.boss.pillars[0];
+  bosses.px = pillar.x;
+  bosses.invuln = 0;
+  bosses.shield = 0;
+  const livesBefore = bosses.lives;
+  pillar.age = pillar.warn;
+  bosses.stepBoss(0.05);
+  assert(bosses.lives === livesBefore - 1, 'a hot lightning pillar costs a life');
+
+  const next = makeJet(390, 844);
+  next.phase = 'banner';
+  next.bannerT = 0.01;
+  next.stageIndex = 0;
+  next.spawnCd = 30;
+  next.update(0.08);
+  assert(next.stageIndex === 1 && next.phase === 'wave', 'clearing a stage opens the next one');
+  next.phase = 'banner';
+  next.bannerT = 0.01;
+  next.stageIndex = 3;
+  next.update(0.08);
+  assert(next.stageIndex === 0 && next.cycle === 1, 'after the titan the run loops harder');
+
+  const posted = makeJet(390, 844);
+  posted.setDifficulty('schwer');
+  posted.awardOrb(6);
+  posted.survivalMs = 4000;
+  posted.syncScore();
+  const result = posted.buildResult();
+  assert(result.game === 'jet' && result.difficulty === 'schwer', 'jet result keeps the board and grade');
+  assert(result.formula === formatJetFormula(result.survivalMs, result.orbs, result.comboBonus, result.nearMisses, result.score), 'formula matches');
+  const accepted = scoresMod.validatePostBody({
+    name: 'JetPilot',
+    score: result.score,
+    survivalMs: result.survivalMs,
+    orbs: result.orbs,
+    comboBonus: result.comboBonus,
+    nearMisses: result.nearMisses,
+    difficulty: result.difficulty,
+    game: result.game,
+  });
+  assert(accepted.ok, `jet run passes the server check ${accepted.error || ''}`);
 }
 
 {
@@ -1327,7 +1533,7 @@ child.stderr.on('data', (d) => {
 try {
   await waitHealth(`http://127.0.0.1:${PORT}/api/health`);
   const health = await fetch(`http://127.0.0.1:${PORT}/api/health`).then((r) => r.json());
-  assert(health.version === '1.4' || health.version === '1.4.0', 'api version 1.4');
+  assert(health.version === '1.5' || health.version === '1.5.0', 'api version 1.5');
 
   const survivalMs = 32000;
   const orbs = 2;
@@ -1621,6 +1827,28 @@ try {
   ).then((r) => r.json());
   assert(pulseDailyGet.game === 'pulse' && pulseDailyGet.scores.some((s) => s.name === 'PulseDaily'), 'GET pulse daily');
   assert(!pulseDailyGet.scores.some((s) => s.name === 'PulsePilot'), 'pulse daily list hides normal runs');
+
+  await new Promise((r) => setTimeout(r, 2100));
+  const jetScore = computeScore(6000, 3, 50, 1);
+  const jetPost = await fetch(`http://127.0.0.1:${PORT}/api/scores`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: 'JetPilot',
+      score: jetScore,
+      survivalMs: 6000,
+      orbs: 3,
+      comboBonus: 50,
+      nearMisses: 1,
+      difficulty: 'schwer',
+      game: 'jet',
+      clientId: 'c1c1c1c1-c1c1-4c1c-8c1c-c1c1c1c1c1c1',
+    }),
+  });
+  const jetApi = await jetPost.json();
+  assert(jetPost.ok, `jet post failed: ${JSON.stringify(jetApi)}`);
+  assert(jetApi.scores.every((s) => s.game === 'jet'), 'express jet board');
+  assert(jetApi.scores.some((s) => s.name === 'JetPilot' && s.difficulty === 'schwer'), 'express jet pilot');
 
   const aergerBase = `http://127.0.0.1:${PORT}`;
   const created = await fetch(`${aergerBase}/api/aerger/create`, {
