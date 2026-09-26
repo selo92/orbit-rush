@@ -1,0 +1,190 @@
+{
+  "version": 1,
+  "note": "User-owned tracks; trimmed from t=0 (slow intro); banded by integrated LUFS",
+  "tracks": {
+    "einfach-1.mp3": {
+      "file": "public/pulse-music/einfach-1.mp3",
+      "sourceId": "c8f19b479542310f0ee956560c7c0bb5bfb5ab392dd1134551654cc130f314f3",
+      "lufs": -16.4,
+      "durationSec": 55,
+      "role": "primary",
+      "bpmEstimate": 92,
+      "bpmSource": "difficulty-default (no onset lib on box); recalibrate in-game if needed"
+    },
+    "einfach-2.mp3": {
+      "file": "public/pulse-music/einfach-2.mp3",
+      "sourceId": "0640521c95868b629e2b9ed31447048a563b8a60fcb8ca158db49c942a3a0818",
+      "lufs": -15.3,
+      "durationSec": 55,
+      "role": "alt",
+      "bpmEstimate": 92,
+      "bpmSource": "difficulty-default (no onset lib on box); recalibrate in-game if needed"
+    },
+    "einfach-3.mp3": {
+      "file": "public/pulse-music/einfach-3.mp3",
+      "sourceId": "b7d9d25357b1b3c77b603364af69a685deccf8c96e17051eaf73c34a64c4940d",
+      "lufs": -15.2,
+      "durationSec": 55,
+      "role": "alt",
+      "bpmEstimate": 92,
+      "bpmSource": "difficulty-default (no onset lib on box); recalibrate in-game if needed"
+    },
+    "einfach-4.mp3": {
+      "file": "public/pulse-music/einfach-4.mp3",
+      "sourceId": "990b6e17d418437a82c83284e1daa724fb7a15679858a0a71bbd9c34bbe28cef",
+      "lufs": -14.9,
+      "durationSec": 55,
+      "role": "alt",
+      "bpmEstimate": 92,
+      "bpmSource": "difficulty-default (no onset lib on box); recalibrate in-game if needed"
+    },
+    "mittel-1.mp3": {
+      "file": "public/pulse-music/mittel-1.mp3",
+      "sourceId": "80a4944f6c6ddb572527d6004cd37a15d13edd4ab9d2ba5d88ffe8f7fcc9a445",
+      "lufs": -14.8,
+      "durationSec": 70,
+      "role": "primary",
+      "bpmEstimate": 110,
+      "bpmSource": "difficulty-default (no onset lib on box); recalibrate in-game if needed"
+    },
+    "mittel-2.mp3": {
+      "file": "public/pulse-music/mittel-2.mp3",
+      "sourceId": "c6957818e14dee0be65e62fd7984074414483e96c98919917011c7c31ffec266",
+      "lufs": -14.6,
+      "durationSec": 70,
+      "role": "alt",
+      "bpmEstimate": 110,
+      "bpmSource": "difficulty-default (no onset lib on box); recalibrate in-game if needed"
+    },
+    "mittel-3.mp3": {
+      "file": "public/pulse-music/mittel-3.mp3",
+      "sourceId": "db96f3b0176fb513fb59d66fd8234a443ee53229b1233a79399d53bc82280ed5",
+      "lufs": -14.5,
+      "durationSec": 70,
+      "role": "alt",
+      "bpmEstimate": 110,
+      "bpmSource": "difficulty-default (no onset lib on box); recalibrate in-game if needed"
+    },
+    "mittel-4.mp3": {
+      "file": "public/pulse-music/mittel-4.mp3",
+      "sourceId": "a7e706983cf5d3797dfec134a999bdb742f45cc13eaea6c8d265842865f1abad",
+      "lufs": -14.1,
+      "durationSec": 70,
+      "role": "alt",
+      "bpmEstimate": 110,
+      "bpmSource": "difficulty-default (no onset lib on box); recalibrate in-game if needed"
+    },
+    "schwer-1.mp3": {
+      "file": "public/pulse-music/schwer-1.mp3",
+      "sourceId": "c4733a120a2015fdf8575a6e91c6a19880a740d135e681c4747dfeccf80c1c8f",
+      "lufs": -14.0,
+      "durationSec": 85,
+      "role": "primary",
+      "bpmEstimate": 128,
+      "bpmSource": "difficulty-default (no onset lib on box); recalibrate in-game if needed"
+    },
+    "schwer-2.mp3": {
+      "file": "public/pulse-music/schwer-2.mp3",
+      "sourceId": "6a37bd7e9e8e4d4d88ffed9dd83e77abb6bd3ac901848b8fd9402d55e2a45a75",
+      "lufs": -13.9,
+      "durationSec": 85,
+      "role": "alt",
+      "bpmEstimate": 128,
+      "bpmSource": "difficulty-default (no onset lib on box); recalibrate in-game if needed"
+    },
+    "schwer-3.mp3": {
+      "file": "public/pulse-music/schwer-3.mp3",
+      "sourceId": "ab54f8ad462598a1a76d6a10a45abcc6645ecbba59a942c929c2ecbd338c74c3",
+      "lufs": -13.8,
+      "durationSec": 85,
+      "role": "alt",
+      "bpmEstimate": 128,
+      "bpmSource": "difficulty-default (no onset lib on box); recalibrate in-game if needed"
+    },
+    "schwer-4.mp3": {
+      "file": "public/pulse-music/schwer-4.mp3",
+      "sourceId": "23cc86f2ae5a7fae10ea48c8566b08db43101a435902117eaf2e84f6bc526fe6",
+      "lufs": -13.7,
+      "durationSec": 85,
+      "role": "alt",
+      "bpmEstimate": 128,
+      "bpmSource": "difficulty-default (no onset lib on box); recalibrate in-game if needed"
+    },
+    "baba-1.mp3": {
+      "file": "public/pulse-music/baba-1.mp3",
+      "sourceId": "8c1573a458c7827c0cdfc328c3f0eedb068f129bff6f3edccd79ff9f180072ef",
+      "lufs": -13.6,
+      "durationSec": 100,
+      "role": "primary",
+      "bpmEstimate": 140,
+      "bpmSource": "difficulty-default (no onset lib on box); recalibrate in-game if needed"
+    },
+    "baba-2.mp3": {
+      "file": "public/pulse-music/baba-2.mp3",
+      "sourceId": "38929889ef1f28f188cd915a9790f064bad24e7ee82e48d15580a8f961af6ce5",
+      "lufs": -13.4,
+      "durationSec": 100,
+      "role": "alt",
+      "bpmEstimate": 140,
+      "bpmSource": "difficulty-default (no onset lib on box); recalibrate in-game if needed"
+    },
+    "baba-3.mp3": {
+      "file": "public/pulse-music/baba-3.mp3",
+      "sourceId": "ef375cef0a4295c06ce762a77f0ccc209a04c498803c7b0964e8d45d4fbe9e91",
+      "lufs": -13.0,
+      "durationSec": 100,
+      "role": "alt",
+      "bpmEstimate": 140,
+      "bpmSource": "difficulty-default (no onset lib on box); recalibrate in-game if needed"
+    },
+    "baba-4.mp3": {
+      "file": "public/pulse-music/baba-4.mp3",
+      "sourceId": "23a95cf9a9a19d6cfa94964fbd7952e93488da8a8cf0c5212f887887946007a0",
+      "lufs": -12.8,
+      "durationSec": 100,
+      "role": "alt",
+      "bpmEstimate": 140,
+      "bpmSource": "difficulty-default (no onset lib on box); recalibrate in-game if needed"
+    }
+  },
+  "byDifficulty": {
+    "einfach": [
+      "einfach-1.mp3",
+      "einfach-2.mp3",
+      "einfach-3.mp3",
+      "einfach-4.mp3"
+    ],
+    "mittel": [
+      "mittel-1.mp3",
+      "mittel-2.mp3",
+      "mittel-3.mp3",
+      "mittel-4.mp3"
+    ],
+    "schwer": [
+      "schwer-1.mp3",
+      "schwer-2.mp3",
+      "schwer-3.mp3",
+      "schwer-4.mp3"
+    ],
+    "baba": [
+      "baba-1.mp3",
+      "baba-2.mp3",
+      "baba-3.mp3",
+      "baba-4.mp3"
+    ]
+  },
+  "dailyPool": [
+    "einfach-2.mp3",
+    "mittel-2.mp3",
+    "schwer-2.mp3",
+    "baba-2.mp3",
+    "schwer-3.mp3",
+    "baba-3.mp3"
+  ],
+  "clipLengths": {
+    "einfach": 55,
+    "mittel": 70,
+    "schwer": 85,
+    "baba": 100
+  }
+}
