@@ -757,7 +757,11 @@ function setOverDiffBadge(result) {
       return;
     }
     const d = normalizeDifficulty(result.difficulty || pulseDifficulty);
-    badge.textContent = getPulseDifficulty(d).label;
+    const label = getPulseDifficulty(d).label;
+    const count = Math.max(1, Math.floor(result.stageCount) || 1);
+    const stage = Math.min(count, Math.max(1, Math.floor(result.stage) || 1));
+    badge.textContent =
+      count > 1 ? `Level ${stage}/${count} · ${result.trackTitle || label}` : label;
     badge.className = `diff-badge ${d}`;
     return;
   }
@@ -873,7 +877,9 @@ function buildShareText(result) {
     const tag = result.daily
       ? `Daily · ${result.dailyDate || utcDateString()}`
       : getPulseDifficulty(result.difficulty || pulseDifficulty).label;
-    return `Orbit Pulse [${tag}] — ${score} Punkte — schlag mich!`;
+    const progress =
+      !result.daily && result.stageCount > 1 ? ` · Level ${result.stage || 1}/${result.stageCount}` : '';
+    return `Orbit Pulse [${tag}${progress}] — ${score} Punkte — schlag mich!`;
   }
   let tag;
   if (result?.daily) {
@@ -959,7 +965,9 @@ function showGameOver(result) {
   }
   $('over-title').textContent = pulseRun
     ? result.cleared
-      ? 'FLOW GEHALTEN'
+      ? !result.daily && result.stageCount > 1
+        ? 'RUN GESCHAFFT'
+        : 'FLOW GEHALTEN'
       : 'AUS DEM TAKT'
     : driftRun
       ? 'BAHN VERLASSEN'
@@ -1132,7 +1140,7 @@ const drift = new DriftGame(canvas, {
 
 const pulse = new PulseGame(canvas, {
   audio,
-  onHud({ score, orbs, time, combo, sync, syncMax, daily, dailyDate: date }) {
+  onHud({ score, orbs, time, combo, sync, syncMax, daily, dailyDate: date, stage, stageCount, trackTitle, celebrating }) {
     hudScore.textContent = String(score);
     hudOrbs.textContent = String(orbs);
     hudTime.textContent = Number(time || 0).toFixed(1);
@@ -1149,8 +1157,13 @@ const pulse = new PulseGame(canvas, {
     pwrSlow.classList.add('hidden');
     pwrMagnet.classList.add('hidden');
     const pct = Math.round((100 * Math.max(0, sync || 0)) / Math.max(1, syncMax || 100));
-    const grade = getPulseDifficulty(pulse.difficultyId).label.toUpperCase();
-    hudMode.textContent = daily ? `Daily · ${date || utcDateString()} · SYNC ${pct}` : `${grade} · SYNC ${pct}`;
+    if (daily) {
+      hudMode.textContent = `Daily · ${date || utcDateString()} · SYNC ${pct}`;
+    } else {
+      const level = `Level ${stage || 1}/${stageCount || 1}`;
+      const name = trackTitle || getPulseDifficulty(pulse.difficultyId).label;
+      hudMode.textContent = celebrating ? `${level}\nWeiter` : `${level}\n${name} · SYNC ${pct}`;
+    }
     hudMode.classList.remove('hidden');
   },
   onGameOver(result) {

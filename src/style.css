@@ -803,6 +803,7 @@ h2 {
 }
 
 .hud-mode{margin:0 auto 4px;padding:4px 10px;border-radius:999px;font-size:11px;letter-spacing:.08em;font-weight:700;color:#ffe566;background:rgba(255,229,102,.12);border:1px solid rgba(255,229,102,.35);}
+#hud.pulse-mode .hud-mode{letter-spacing:.04em;line-height:1.35;text-align:center;white-space:pre-line;max-width:46vw;}
 
 #hud.mirror-mode .stat span:last-child {
   color: var(--magenta);

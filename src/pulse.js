@@ -2,10 +2,11 @@
  * Orbit Pulse — tap and hold neon circles on the beat.
  *
  * Music comes from `public/pulse-music/manifest.json`. Each difficulty has its
- * own files (quieter LUFS → Einfach, louder → Baba). A run plays that
- * difficulty's primary track, or a random alt. Daily Beat picks from
- * `dailyPool` with a UTC-date seed and always charts Schwer. A 0–3% playback
- * rate nudge is optional color; it is not how difficulty changes the song.
+ * own files (quieter LUFS → Einfach, louder → Baba). A normal run plays that
+ * pool in order, easiest first, and a clear starts the next track a little
+ * harder. Daily Beat stays one track from `dailyPool` (UTC-date seed) and
+ * always charts Schwer. A 0–3% playback rate nudge is optional color; it is
+ * not how difficulty changes the song.
  *
  * Charts follow `public/pulse-music/beatmaps/<track>.json` (`beatTimes` from
  * t=0 of that mp3). Judgment reads the playing clip's currentTime. BPM is only
@@ -115,6 +116,14 @@ export const PULSE_DIFFICULTIES = {
 /** Daily Beat is always the Schwer chart. The track still comes from dailyPool. */
 export const PULSE_DAILY_DIFFICULTY = 'schwer';
 
+/** Pause after a cleared stage before the next track starts. */
+export const PULSE_STAGE_GAP_MS = 1100;
+
+/** Pause after the last track of a chained run, before the results screen. */
+export const PULSE_RUN_CLEAR_MS = 1000;
+
+const PULSE_TIER_ORDER = ['einfach', 'mittel', 'schwer', 'baba'];
+
 /**
  * Added to `HTMLMediaElement.currentTime` when judging. A small negative value
  * absorbs tap latency so a hit on the audible kick still lands in the window.
@@ -128,6 +137,117 @@ export const PULSE_STRONG_ONSET = 0.55;
 /** @param {unknown} id */
 export function getPulseDifficulty(id) {
   return PULSE_DIFFICULTIES[normalizeDifficulty(id)];
+}
+
+/**
+ * Lower is easier. Fewer beats per second first, then a quieter LUFS.
+ * Density leads so the next song in a pool is busier, not only louder.
+ * @param {object|null|undefined} meta
+ */
+export function pulseTrackEase(meta) {
+  const lufs = Number(meta?.lufs);
+  const duration = Math.max(1, Number(meta?.durationSec) || 1);
+  const density = (Number(meta?.beatCount) || 0) / duration;
+  const loud = Number.isFinite(lufs) ? lufs : 0;
+  return density * 1000 + loud;
+}
+
+/**
+ * One difficulty's tracks, easiest → harder. Stays inside that pool.
+ * @param {object} manifest
+ * @param {string} difficulty
+ */
+export function orderPulsePool(manifest, difficulty) {
+  const id = normalizeDifficulty(difficulty);
+  const list = Array.isArray(manifest?.byDifficulty?.[id]) ? [...manifest.byDifficulty[id]] : [];
+  list.sort((a, b) => {
+    const delta = pulseTrackEase(manifest?.tracks?.[a]) - pulseTrackEase(manifest?.tracks?.[b]);
+    if (delta !== 0) return delta;
+    return String(a).localeCompare(String(b));
+  });
+  return list;
+}
+
+/**
+ * Display name. Manifest `title` wins; otherwise "Einfach 1" from the file name.
+ * @param {string} file
+ * @param {object|null|undefined} [meta]
+ */
+export function pulseTrackTitle(file, meta) {
+  const custom = typeof meta?.title === 'string' ? meta.title.trim() : '';
+  if (custom) return custom;
+  const base = String(file || '')
+    .split('/')
+    .pop()
+    .replace(/\.mp3$/i, '');
+  const match = /^(einfach|mittel|schwer|baba)-(\d+)$/i.exec(base);
+  if (!match) return base || 'Track';
+  const labels = { einfach: 'Einfach', mittel: 'Mittel', schwer: 'Schwer', baba: 'Baba' };
+  return `${labels[match[1].toLowerCase()]} ${match[2]}`;
+}
+
+/**
+ * Named-tier chart plus a small step per cleared stage.
+ * Stage 0 matches the tier. Later stages stay short of the next tier.
+ * @param {string} difficulty
+ * @param {number} stageIndex 0-based
+ */
+export function pulseStageConfig(difficulty, stageIndex) {
+  const base = getPulseDifficulty(difficulty);
+  const step = Math.max(0, Math.floor(Number(stageIndex) || 0));
+  const cfg = { ...base, stage: step };
+  if (step <= 0) return cfg;
+  const tier = PULSE_TIER_ORDER.indexOf(base.id);
+  const next =
+    tier >= 0 && tier < PULSE_TIER_ORDER.length - 1 ? PULSE_DIFFICULTIES[PULSE_TIER_ORDER[tier + 1]] : null;
+
+  const windowFloor = (value, nextValue, raw) => {
+    if (typeof nextValue !== 'number' || !(nextValue < value)) return raw;
+    return Math.max(nextValue + (value - nextValue) * 0.35, raw);
+  };
+
+  const perfectRaw = next
+    ? base.perfectMs - 6 * step
+    : Math.max(base.perfectMs * 0.75, base.perfectMs - 4 * step);
+  const goodRaw = next ? base.goodMs - 10 * step : Math.max(base.goodMs * 0.75, base.goodMs - 6 * step);
+  const travelRaw = next
+    ? base.travelSec - 0.07 * step
+    : Math.max(base.travelSec * 0.78, base.travelSec - 0.04 * step);
+  cfg.perfectMs = Math.round(windowFloor(base.perfectMs, next?.perfectMs, perfectRaw));
+  cfg.goodMs = Math.round(windowFloor(base.goodMs, next?.goodMs, goodRaw));
+  cfg.travelSec = +windowFloor(base.travelSec, next?.travelSec, travelRaw).toFixed(3);
+
+  let drain = base.missDrain + step;
+  if (next && next.missDrain > base.missDrain) {
+    const gapCap = Math.floor(next.missDrain - (next.missDrain - base.missDrain) * 0.35 + 1e-9);
+    drain = Math.min(drain, gapCap, next.missDrain - 1);
+    if (drain < base.missDrain) drain = base.missDrain;
+  }
+  cfg.missDrain = drain;
+
+  const holdRaw = base.holdChance + 0.025 * step;
+  const holdCap = next
+    ? next.holdChance - (next.holdChance - base.holdChance) * 0.35
+    : Math.min(0.55, base.holdChance + 0.12);
+  cfg.holdChance = +Math.min(holdRaw, holdCap).toFixed(3);
+
+  const jumpRaw = base.laneJump + 0.035 * step;
+  const jumpCap = next
+    ? next.laneJump - (next.laneJump - base.laneJump) * 0.35
+    : Math.min(0.92, base.laneJump + 0.12);
+  cfg.laneJump = +Math.min(jumpRaw, jumpCap).toFixed(3);
+
+  if (step >= 2) {
+    const reduced = Math.max(1, base.perfectHeal - 1);
+    cfg.perfectHeal = next ? Math.max(next.perfectHeal + 1, reduced) : reduced;
+  }
+
+  const burstRaw = base.burstWindow * (1 - 0.04 * step);
+  const burstFloor = next
+    ? next.burstWindow + (base.burstWindow - next.burstWindow) * 0.35
+    : base.burstWindow * 0.78;
+  cfg.burstWindow = +Math.max(burstFloor, burstRaw).toFixed(2);
+  return cfg;
 }
 
 /**
@@ -154,9 +274,10 @@ export function pulseBeatmapUrl(ref) {
 }
 
 /**
- * Primary (roll < 0.5) or a random alt. Daily ignores the roll and uses the date.
+ * Stage track inside one difficulty, easiest first. Daily ignores the chain
+ * and picks one file from `dailyPool` with the UTC date.
  * @param {object} manifest
- * @param {{ difficulty?: string, daily?: boolean, dailyDate?: string, rng?: () => number }} [opts]
+ * @param {{ difficulty?: string, stage?: number, daily?: boolean, dailyDate?: string, rng?: () => number }} [opts]
  */
 export function selectPulseTrack(manifest, opts = {}) {
   const daily = !!opts.daily;
@@ -171,21 +292,23 @@ export function selectPulseTrack(manifest, opts = {}) {
       difficulty: PULSE_DAILY_DIFFICULTY,
       daily: true,
       dailyDate: date,
+      stage: 0,
+      stageCount: 1,
     };
   }
   const id = normalizeDifficulty(opts.difficulty);
-  const list = manifest?.byDifficulty?.[id] || [];
-  const rng = typeof opts.rng === 'function' ? opts.rng : Math.random;
-  let file = list[0] || '';
-  if (list.length > 1 && rng() >= 0.5) {
-    file = list[1 + Math.floor(rng() * (list.length - 1))];
-  }
+  const list = orderPulsePool(manifest, id);
+  const requested = Math.max(0, Math.floor(Number(opts.stage) || 0));
+  const stage = list.length ? Math.min(requested, list.length - 1) : 0;
+  const file = list[stage] || '';
   return {
     file,
     meta: manifest?.tracks?.[file] || null,
     difficulty: id,
     daily: false,
     dailyDate: null,
+    stage,
+    stageCount: list.length,
   };
 }
 
@@ -206,10 +329,14 @@ function medianBeatSec(times) {
  * Einfach keeps every `beatEvery` beat. Schwer/Baba may add strong onsets.
  * Holds start on a chosen hit and end on a later beatTimes entry (~1–2 bars).
  * A missing beatmap yields an empty chart — BPM is never used to invent hits.
- * @param {{ beatTimes?: number[], onsetTimes?: number[], onsetStrengths?: number[], bpm?: number, durationSec?: number, difficulty: string, trackId: string, dailyDate?: string }} spec
+ * Stage 0 is the tier chart. Later stages keep those hits and add more
+ * `beatTimes` from the same map, with slightly more holds and lane changes.
+ * @param {{ beatTimes?: number[], onsetTimes?: number[], onsetStrengths?: number[], bpm?: number, durationSec?: number, difficulty: string, trackId: string, dailyDate?: string, stage?: number }} spec
  */
 export function buildBeatChart(spec) {
-  const cfg = getPulseDifficulty(spec.difficulty);
+  const stage = Math.max(0, Math.floor(Number(spec.stage) || 0));
+  const cfg = pulseStageConfig(spec.difficulty, stage);
+  const base = getPulseDifficulty(spec.difficulty);
   const durationSec = Math.max(0, Number(spec.durationSec) || 0);
   const raw = Array.isArray(spec.beatTimes) ? spec.beatTimes : [];
   /** @type {number[]} */
@@ -228,15 +355,24 @@ export function buildBeatChart(spec) {
   }
 
   const seed = hashSeed(
-    `orbit-pulse-chart:${cfg.id}:${spec.trackId || 'track'}:${spec.dailyDate || 'free'}`
+    `orbit-pulse-chart:${base.id}:${spec.trackId || 'track'}:${spec.dailyDate || 'free'}`
   );
   const rng = mulberry32(seed);
   /** @type {Set<number>} */
   const chosen = new Set();
   for (let i = 0; i < grid.length; i++) {
-    if (i % cfg.beatEvery !== 0) continue;
-    if (rng() < cfg.skip) continue;
+    if (i % base.beatEvery !== 0) continue;
+    if (rng() < base.skip) continue;
     chosen.add(i);
+  }
+  if (stage > 0) {
+    const room = [];
+    for (let i = 0; i < grid.length; i++) if (!chosen.has(i)) room.push(i);
+    const want = Math.min(room.length, Math.max(stage, Math.round(room.length * 0.08 * stage)));
+    for (let k = 0; k < want; k++) {
+      const index = Math.min(room.length - 1, Math.floor(((k + 0.5) * room.length) / want));
+      chosen.add(room[index]);
+    }
   }
 
   /** @type {number[]} */
@@ -319,17 +455,18 @@ export function buildBeatChart(spec) {
   }
 
   notes.sort((a, b) => a.time - b.time || a.lane - b.lane);
-  return { notes, bpm, beatSec, travelSec: cfg.travelSec, lanes: cfg.lanes, durationSec };
+  return { notes, bpm, beatSec, travelSec: cfg.travelSec, lanes: cfg.lanes, durationSec, stage };
 }
 
 /**
  * @param {object} manifest
- * @param {{ difficulty?: string, daily?: boolean, dailyDate?: string, rng?: () => number }} [opts]
+ * @param {{ difficulty?: string, stage?: number, daily?: boolean, dailyDate?: string, rng?: () => number, beatmap?: object }} [opts]
  */
 export function preparePulseRun(manifest, opts = {}) {
   const picked = selectPulseTrack(manifest, opts);
   const meta = picked.meta || {};
   const beatmap = opts.beatmap || null;
+  const stage = picked.daily ? 0 : picked.stage || 0;
   const chart = buildBeatChart({
     beatTimes: beatmap?.beatTimes,
     onsetTimes: beatmap?.onsetTimes,
@@ -339,13 +476,18 @@ export function preparePulseRun(manifest, opts = {}) {
     difficulty: picked.difficulty,
     trackId: picked.file || 'track',
     dailyDate: picked.daily ? picked.dailyDate || '' : '',
+    stage,
   });
   return {
     ...picked,
+    stage,
+    stageCount: picked.daily ? 1 : picked.stageCount || 0,
+    title: pulseTrackTitle(picked.file, picked.meta),
     url: pulseTrackUrl(picked.file),
     beatmapUrl: pulseBeatmapUrl(meta.beatmap),
     playbackRate: pulsePlaybackRate(picked.file || 'track'),
     chart,
+    profile: pulseStageConfig(picked.difficulty, stage),
   };
 }
 
@@ -460,6 +602,13 @@ export function preloadPulseBeatmap(ref) {
   return beatmapPromises.get(url);
 }
 
+/** Test hook: store a beatmap without fetching it. */
+export function primePulseBeatmap(ref, data) {
+  const url = pulseBeatmapUrl(ref);
+  if (!url || !data) return;
+  beatmapCache.set(url, data);
+}
+
 export function preloadPulseManifest() {
   if (cachedManifest) return Promise.resolve(cachedManifest);
   if (!manifestPromise) {
@@ -539,11 +688,22 @@ export class PulseGame {
     this.daily = false;
     this.dailyDate = null;
     this.trackFile = '';
+    this.trackTitle = '';
     this.trackUrl = '';
     this.playbackRate = 1;
     this.durationSec = 55;
     this.travelSec = cfg.travelSec;
     this.beatSec = 60 / 110;
+    this.stageIndex = 0;
+    this.stageCount = 1;
+    this.stageFiles = [];
+    this.bankedSurvivalMs = 0;
+    this._stageBanked = false;
+    this.celebrating = false;
+    this.celebration = null;
+    this.manifestRef = null;
+    this.runSilent = false;
+    this._openingBeatmap = null;
     this._fallbackTime = 0;
     this.shake = 0;
     this.flash = 0;
@@ -622,7 +782,7 @@ export class PulseGame {
   }
 
   /**
-   * @param {{ difficulty?: string, daily?: boolean, dailyDate?: string, manifest?: object, rng?: () => number, silent?: boolean }} [opts]
+   * @param {{ difficulty?: string, daily?: boolean, dailyDate?: string, manifest?: object, beatmap?: object, rng?: () => number, silent?: boolean }} [opts]
    */
   start(opts = {}) {
     const diff = opts.daily ? PULSE_DAILY_DIFFICULTY : opts.difficulty || this.difficultyId;
@@ -632,6 +792,8 @@ export class PulseGame {
     this.resize();
     this.daily = !!opts.daily;
     this.dailyDate = opts.daily ? opts.dailyDate || null : null;
+    this.runSilent = !!opts.silent;
+    this._openingBeatmap = opts.beatmap || null;
     this.bindInput();
     this.running = true;
     this.paused = false;
@@ -640,65 +802,26 @@ export class PulseGame {
     this._fallbackTime = 0;
     this._runToken = (this._runToken || 0) + 1;
     const token = this._runToken;
-    const arm = (manifest) => {
+    const boot = (manifest) => {
       if (!this.running || this._runToken !== token) return;
-      const picked = selectPulseTrack(manifest, {
-        difficulty: this.difficultyId,
-        daily: this.daily,
-        dailyDate: this.dailyDate || '',
-        rng: opts.rng,
-      });
-      this.trackFile = picked.file;
-      this.trackUrl = pulseTrackUrl(picked.file);
-      this.playbackRate = pulsePlaybackRate(picked.file || 'track');
-      const meta = picked.meta || {};
-      this.durationSec = Number(meta.durationSec) || this.durationSec;
-      if (!opts.silent) {
-        this.audio?.stopMusic?.();
-        this.audio?.playClip?.(this.trackUrl, { playbackRate: this.playbackRate });
-      }
-      const applyChart = (beatmap) => {
-        if (!this.running || this._runToken !== token) return;
-        if (this.trackFile !== picked.file) return;
-        const chart = buildBeatChart({
-          beatTimes: beatmap?.beatTimes,
-          onsetTimes: beatmap?.onsetTimes,
-          onsetStrengths: beatmap?.onsetStrengths,
-          bpm: Number(beatmap?.bpm) || Number(meta.bpmEstimate) || 0,
-          durationSec: Number(beatmap?.durationSec) || Number(meta.durationSec) || 0,
-          difficulty: picked.difficulty,
-          trackId: picked.file || 'track',
-          dailyDate: picked.daily ? picked.dailyDate || '' : '',
+      this.manifestRef = manifest;
+      if (this.daily) {
+        const picked = selectPulseTrack(manifest, {
+          daily: true,
+          dailyDate: this.dailyDate || '',
         });
-        this.durationSec = chart.durationSec || this.durationSec;
-        this.travelSec = chart.travelSec;
-        this.beatSec = chart.beatSec;
-        this.notes = chart.notes.map((n) => ({
-          ...n,
-          resolved: false,
-          holding: false,
-          judgment: null,
-          flash: 0,
-        }));
-        this.syncScore();
-        this.emitHud();
-      };
-      const cached = beatmapCache.get(pulseBeatmapUrl(meta.beatmap));
-      if (opts.beatmap) applyChart(opts.beatmap);
-      else if (cached) applyChart(cached);
-      else {
-        preloadPulseBeatmap(meta.beatmap)
-          .then((beatmap) => applyChart(beatmap))
-          .catch(() => applyChart(null));
+        this.stageFiles = picked.file ? [picked.file] : [];
+      } else {
+        this.stageFiles = orderPulsePool(manifest, this.difficultyId);
       }
-      this.syncScore();
-      this.emitHud();
+      this.stageCount = Math.max(1, this.stageFiles.length);
+      this.beginStage(0, token);
     };
-    if (opts.manifest) arm(opts.manifest);
-    else if (cachedManifest) arm(cachedManifest);
+    if (opts.manifest) boot(opts.manifest);
+    else if (cachedManifest) boot(cachedManifest);
     else {
       preloadPulseManifest()
-        .then((manifest) => arm(manifest))
+        .then((manifest) => boot(manifest))
         .catch(() => {
           /* No chart until a beatmap exists. The fallback clock is only for tests. */
         });
@@ -709,6 +832,122 @@ export class PulseGame {
     if (typeof requestAnimationFrame === 'function') {
       this.raf = requestAnimationFrame((t) => this.loop(t));
     }
+  }
+
+  /**
+   * Load one stage without wiping the run score.
+   * @param {number} index
+   * @param {number} token
+   */
+  beginStage(index, token) {
+    const file = this.stageFiles[index] || '';
+    const meta = this.manifestRef?.tracks?.[file] || null;
+    const stageForChart = this.daily ? 0 : index;
+    this.stageIndex = index;
+    this.cfg = pulseStageConfig(this.daily ? PULSE_DAILY_DIFFICULTY : this.difficultyId, stageForChart);
+    this.sync = this.cfg.syncMax;
+    this.combo = 0;
+    this.missTimes = [];
+    this.notes = [];
+    this.held = [false, false, false, false];
+    this.keys = [false, false, false, false];
+    this.pointers.clear();
+    this._fallbackTime = 0;
+    this._forcedTime = null;
+    this._stageBanked = false;
+    this.alive = true;
+    this.cleared = false;
+    this.celebrating = false;
+    this.celebration = null;
+    this.trackFile = file;
+    this.trackTitle = pulseTrackTitle(file, meta);
+    this.trackUrl = pulseTrackUrl(file);
+    this.playbackRate = pulsePlaybackRate(file || 'track');
+    this.durationSec = Number(meta?.durationSec) || this.durationSec;
+    this.travelSec = this.cfg.travelSec;
+    this.survivalMs = this.bankedSurvivalMs;
+    if (!this.runSilent && file) {
+      this.audio?.stopMusic?.();
+      this.audio?.playClip?.(this.trackUrl, { playbackRate: this.playbackRate });
+    }
+    const applyChart = (beatmap) => {
+      if (!this.running || this._runToken !== token) return;
+      if (this.stageIndex !== index || this.trackFile !== file) return;
+      const chart = buildBeatChart({
+        beatTimes: beatmap?.beatTimes,
+        onsetTimes: beatmap?.onsetTimes,
+        onsetStrengths: beatmap?.onsetStrengths,
+        bpm: Number(beatmap?.bpm) || Number(meta?.bpmEstimate) || 0,
+        durationSec: Number(beatmap?.durationSec) || Number(meta?.durationSec) || 0,
+        difficulty: this.daily ? PULSE_DAILY_DIFFICULTY : this.difficultyId,
+        trackId: file || 'track',
+        dailyDate: this.daily ? this.dailyDate || '' : '',
+        stage: stageForChart,
+      });
+      this.durationSec = chart.durationSec || this.durationSec;
+      this.travelSec = chart.travelSec;
+      this.beatSec = chart.beatSec;
+      this.notes = chart.notes.map((n) => ({
+        ...n,
+        resolved: false,
+        holding: false,
+        judgment: null,
+        flash: 0,
+      }));
+      this.syncScore();
+      this.emitHud();
+    };
+    const cached = beatmapCache.get(pulseBeatmapUrl(meta?.beatmap));
+    if (index === 0 && this._openingBeatmap) applyChart(this._openingBeatmap);
+    else if (cached) applyChart(cached);
+    else if (meta?.beatmap) {
+      preloadPulseBeatmap(meta.beatmap)
+        .then((beatmap) => applyChart(beatmap))
+        .catch(() => applyChart(null));
+    } else applyChart(null);
+    this.syncScore();
+    this.emitHud();
+  }
+
+  totalSurvivalMs(now) {
+    return this.bankedSurvivalMs + Math.max(0, Math.floor(Number(now) * 1000) || 0);
+  }
+
+  /** Fold this stage's clock into the run once, without shrinking the score. */
+  bankStageTime() {
+    if (this._stageBanked) return;
+    this._stageBanked = true;
+    const live = Math.max(0, this.songTime());
+    const capped = this.durationSec > 0 ? Math.min(live, this.durationSec) : live;
+    const ms = Math.max(0, Math.floor(capped * 1000));
+    const already = Math.max(0, this.survivalMs - this.bankedSurvivalMs);
+    this.bankedSurvivalMs += Math.max(ms, already);
+  }
+
+  /**
+   * @param {number} ms
+   * @param {() => void} fn
+   */
+  scheduleAfter(ms, fn) {
+    clearTimeout(this._overTimer);
+    const token = this._runToken;
+    const fire = () => {
+      if (!this.running || this._runToken !== token) return;
+      if (this.paused) {
+        this._overTimer = setTimeout(fire, 200);
+        return;
+      }
+      fn();
+    };
+    this._overTimer = setTimeout(fire, ms);
+  }
+
+  advanceStage() {
+    if (!this.running || this.daily) return;
+    if (this.stageIndex + 1 >= this.stageCount) return;
+    this.bankStageTime();
+    const token = this._runToken;
+    this.beginStage(this.stageIndex + 1, token);
   }
 
   stop() {
@@ -752,7 +991,7 @@ export class PulseGame {
     const mediaClock = this._forcedTime == null && !!this.audio?.hasClip?.();
     if (!mediaClock && this._forcedTime == null) this._fallbackTime += dt;
     const now = this.songTime();
-    this.survivalMs = Math.max(0, Math.floor(now * 1000));
+    this.survivalMs = this.totalSurvivalMs(now);
     this.resolveNotes(now);
     this.syncScore();
     if (this.alive && pulseShouldFail({ sync: this.sync, missTimes: this.missTimes }, now, this.cfg)) {
@@ -858,7 +1097,7 @@ export class PulseGame {
         comboBonus: this.comboBonus,
         nearMisses: this.nearMisses,
         sync: this.sync,
-        survivalMs: Math.floor(now * 1000),
+        survivalMs: this.totalSurvivalMs(now),
         comboPeak: this.comboPeak,
         perfects: this.perfects,
         goods: this.goods,
@@ -901,6 +1140,11 @@ export class PulseGame {
       daily: this.daily,
       dailyDate: this.dailyDate,
       cleared: this.cleared,
+      stage: this.stageIndex + 1,
+      stageCount: this.stageCount,
+      trackTitle: this.trackTitle,
+      trackFile: this.trackFile,
+      celebrating: this.celebrating,
     });
   }
 
@@ -910,18 +1154,48 @@ export class PulseGame {
     this.cleared = reason === 'clear';
     this.syncScore();
     this.audio?.pauseClip?.();
+    const chained = !this.daily && this.stageCount > 1;
+    const advancing = this.cleared && chained && this.stageIndex + 1 < this.stageCount;
     if (this.cleared) this.audio?.powerup?.('shield');
     else {
       this.shake = 1;
       this.flash = 0.55;
     }
+    if (advancing) {
+      this.celebrating = true;
+      this.celebration = {
+        kind: 'advance',
+        title: 'LEVEL GESCHAFFT',
+        sub: `Weiter · Level ${this.stageIndex + 2}`,
+      };
+    } else if (this.cleared && chained) {
+      this.celebrating = true;
+      this.celebration = {
+        kind: 'done',
+        title: 'RUN GESCHAFFT',
+        sub: `Level ${this.stageCount}/${this.stageCount}`,
+      };
+    } else {
+      this.celebrating = false;
+      this.celebration = null;
+    }
     this.emitHud();
-    clearTimeout(this._overTimer);
-    this._overTimer = setTimeout(() => {
+    const gap = Number.isFinite(this.stageGapMs)
+      ? this.stageGapMs
+      : advancing
+        ? PULSE_STAGE_GAP_MS
+        : this.cleared && chained
+          ? PULSE_RUN_CLEAR_MS
+          : 650;
+    this.scheduleAfter(gap, () => {
+      if (advancing) {
+        this.advanceStage();
+        return;
+      }
       const result = this.buildResult();
       this.stop();
       this.onGameOver?.(result);
-    }, 650);
+    });
   }
 
   buildResult() {
@@ -943,6 +1217,10 @@ export class PulseGame {
       misses: this.misses,
       cleared: this.cleared,
       trackFile: this.trackFile,
+      trackTitle: this.trackTitle,
+      stage: this.stageIndex + 1,
+      stageCount: this.stageCount,
+      stagesCleared: this.cleared ? this.stageIndex + 1 : this.stageIndex,
       formula: formatPulseFormula(
         survivalMs,
         this.orbsCollected,
@@ -1243,6 +1521,17 @@ export class PulseGame {
     if (this.flash > 0) {
       ctx.fillStyle = `rgba(255, 77, 109, ${this.flash * 0.35})`;
       ctx.fillRect(-20, -20, w + 40, h + 40);
+    }
+    if (this.celebration) {
+      ctx.fillStyle = 'rgba(5, 5, 16, 0.62)';
+      ctx.fillRect(-20, -20, w + 40, h + 40);
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#7dffa8';
+      ctx.font = '700 28px Segoe UI, sans-serif';
+      ctx.fillText(this.celebration.title, w / 2, h * 0.42);
+      ctx.fillStyle = '#ffe566';
+      ctx.font = '600 16px Segoe UI, sans-serif';
+      ctx.fillText(this.celebration.sub, w / 2, h * 0.42 + 36);
     }
     ctx.restore();
   }

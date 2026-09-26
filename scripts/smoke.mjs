@@ -619,6 +619,9 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
     PulseGame,
     PULSE_AUDIO_OFFSET_SEC,
     PULSE_STRONG_ONSET,
+    orderPulsePool,
+    pulseStageConfig,
+    primePulseBeatmap,
   } = await import(path.join(root, 'src', 'pulse.js'));
 
   for (const meta of Object.values(manifest.tracks)) {
@@ -651,8 +654,10 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
   assert(new Set(primaries).size === 4, 'each difficulty plays a different track file');
   const einfachRun = preparePulseRun(manifest, { difficulty: 'einfach', rng: () => 0 });
   const babaRun = preparePulseRun(manifest, { difficulty: 'baba', rng: () => 0 });
-  assert(einfachRun.url === '/pulse-music/einfach-1.mp3', 'einfach url is the primary file');
-  assert(babaRun.url === '/pulse-music/baba-1.mp3', 'baba url is the primary file');
+  assert(einfachRun.file === orderPulsePool(manifest, 'einfach')[0], 'einfach starts on the easiest track');
+  assert(babaRun.file === orderPulsePool(manifest, 'baba')[0], 'baba starts on the easiest track');
+  assert(einfachRun.file === 'einfach-4.mp3', 'einfach level 1 is the sparsest clip');
+  assert(babaRun.file === 'baba-3.mp3', 'baba level 1 is the sparsest clip');
   assert(einfachRun.url !== babaRun.url, 'difficulty changes the file, not only the speed');
   assert(
     einfachRun.playbackRate >= 1 &&
@@ -661,9 +666,31 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
       babaRun.playbackRate <= 1.03,
     'playback rate nudge stays within 3%'
   );
-  const schwerAlt = preparePulseRun(manifest, { difficulty: 'schwer', rng: () => 0.95 });
-  assert(schwerAlt.file !== manifest.byDifficulty.schwer[0], 'roll can pick an alt track');
-  assert(schwerAlt.file.startsWith('schwer-'), 'alt stays on the difficulty');
+  const schwerPool = orderPulsePool(manifest, 'schwer');
+  const schwerNext = preparePulseRun(manifest, { difficulty: 'schwer', stage: 1 });
+  assert(schwerNext.file === schwerPool[1], 'stage 2 is the next schwer track');
+  assert(schwerNext.file !== manifest.byDifficulty.schwer[0], 'stage 2 leaves the first track');
+  assert(schwerNext.file.startsWith('schwer-'), 'the next stage stays on the difficulty');
+  for (const id of ['einfach', 'mittel', 'schwer', 'baba']) {
+    const pool = orderPulsePool(manifest, id);
+    assert(pool.length === manifest.byDifficulty[id].length, `${id} stage pool keeps every track`);
+    assert(pool.every((file) => file.startsWith(`${id}-`)), `${id} stages do not pull another tier`);
+    let prev = pulseStageConfig(id, 0);
+    const nextTier = { einfach: 'mittel', mittel: 'schwer', schwer: 'baba' }[id];
+    const nextTierCfg = nextTier ? getPulseDifficulty(nextTier) : null;
+    for (let stage = 1; stage <= 3; stage++) {
+      const cfg = pulseStageConfig(id, stage);
+      assert(cfg.perfectMs < prev.perfectMs, `${id} stage ${stage + 1} windows are tighter`);
+      assert(cfg.travelSec < prev.travelSec, `${id} stage ${stage + 1} scroll is faster`);
+      assert(cfg.missDrain > prev.missDrain, `${id} stage ${stage + 1} miss drain is stricter`);
+      if (nextTierCfg) {
+        assert(cfg.perfectMs > nextTierCfg.perfectMs, `${id} stage ${stage + 1} stays wider than ${nextTier}`);
+        assert(cfg.travelSec > nextTierCfg.travelSec, `${id} stage ${stage + 1} scrolls slower than ${nextTier}`);
+        assert(cfg.missDrain < nextTierCfg.missDrain, `${id} stage ${stage + 1} drains less than ${nextTier}`);
+      }
+      prev = cfg;
+    }
+  }
 
   const dailyMap = loadBeatmap(
     preparePulseRun(manifest, { daily: true, dailyDate: '2026-09-26' }).file
@@ -674,6 +701,7 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
   assert(dailyA.difficulty === 'schwer', 'daily beat charts Schwer');
   assert(manifest.dailyPool.includes(dailyA.file), 'daily track comes from dailyPool');
   assert(dailyA.beatmapUrl.endsWith(`/${dailyA.file.replace(/\.mp3$/, '.json')}`), 'daily run uses that track beatmap');
+  assert(dailyA.stageCount === 1 && dailyA.stage === 0, 'daily beat stays a single stage');
   assert(dailyA.chart.notes.length > 0, 'daily chart is built from the beatmap');
   assert(
     JSON.stringify(dailyA.chart.notes) === JSON.stringify(dailyB.chart.notes),
@@ -725,6 +753,45 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
       if (note.hold) assert(onBeat(note.endTime, fixture.beatTimes) && note.endTime > note.time, 'hold ends on a later beat');
     }
   }
+  const stagedEasy = [0, 1, 2, 3].map((stage) =>
+    buildBeatChart({
+      beatTimes: fixture.beatTimes,
+      onsetTimes: fixture.onsetTimes,
+      onsetStrengths: fixture.onsetStrengths,
+      bpm: fixture.bpm,
+      durationSec: fixture.durationSec,
+      difficulty: 'einfach',
+      trackId: 'einfach-1.mp3',
+      dailyDate: 'fixed',
+      stage,
+    })
+  );
+  assert(
+    JSON.stringify(stagedEasy[0].notes) === JSON.stringify(easyChart.notes),
+    'stage 1 chart matches the tier chart'
+  );
+  for (let stage = 1; stage < stagedEasy.length; stage++) {
+    assert(
+      stagedEasy[stage].notes.length > stagedEasy[stage - 1].notes.length,
+      `einfach stage ${stage + 1} places more beatmap notes`
+    );
+    for (const note of stagedEasy[stage].notes) {
+      assert(onBeat(note.time, fixture.beatTimes), 'later stages still hit analyzed beats');
+      if (note.hold) assert(onBeat(note.endTime, fixture.beatTimes), 'later-stage holds still end on a beat');
+    }
+    assert(stagedEasy[stage].travelSec < stagedEasy[stage - 1].travelSec, 'later stages scroll faster');
+  }
+  const einfachChain = orderPulsePool(manifest, 'einfach');
+  const chainRun = preparePulseRun(manifest, {
+    difficulty: 'einfach',
+    stage: 1,
+    beatmap: loadBeatmap(einfachChain[1]),
+  });
+  assert(chainRun.file === einfachChain[1], 'preparePulseRun stage 2 uses the next file');
+  assert(chainRun.title === 'Einfach 2', 'stage title comes from the file');
+  assert(chainRun.profile.perfectMs < getPulseDifficulty('einfach').perfectMs, 'stage 2 profile is stricter');
+  assert(chainRun.chart.notes.length > 0, 'stage 2 chart is built from that track beatmap');
+
   const invented = buildBeatChart({
     bpm: 120,
     durationSec: 40,
@@ -733,7 +800,22 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
     dailyDate: 'fixed',
   });
   assert(invented.notes.length === 0, 'bpm alone does not invent a hit grid');
-  assert(einfachRun.beatmapUrl === '/pulse-music/beatmaps/einfach-1.json', 'einfach run points at its beatmap');
+  assert(
+    einfachRun.beatmapUrl.endsWith(`/${einfachRun.file.replace(/\.mp3$/, '.json')}`),
+    'einfach run points at its beatmap'
+  );
+  const einfachStages = orderPulsePool(manifest, 'einfach');
+  const einfachStageCharts = einfachStages.map((file, stage) =>
+    preparePulseRun(manifest, { difficulty: 'einfach', stage, beatmap: loadBeatmap(file) })
+  );
+  for (let stage = 1; stage < einfachStageCharts.length; stage++) {
+    const prev = einfachStageCharts[stage - 1];
+    const next = einfachStageCharts[stage];
+    assert(next.file !== prev.file, 'each einfach stage is a different song');
+    assert(next.chart.notes.length > prev.chart.notes.length, `einfach level ${stage + 1} charts more notes`);
+    assert(next.profile.perfectMs < prev.profile.perfectMs, `einfach level ${stage + 1} windows are tighter`);
+    assert(next.profile.travelSec < prev.profile.travelSec, `einfach level ${stage + 1} scrolls faster`);
+  }
   assert(getPulseDifficulty('einfach').perfectMs > getPulseDifficulty('baba').perfectMs, 'baba windows are tighter');
   assert(judgeHit(90, 'einfach') === 'perfect', 'einfach treats 90ms as perfect');
   assert(judgeHit(90, 'baba') === 'miss', 'baba treats 90ms as a miss');
@@ -837,6 +919,115 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
     'judgment follows audio.currentTime plus the latency offset'
   );
   assert(synced._fallbackTime === 99, 'the rAF clock does not advance while a clip is loaded');
+
+  for (const file of einfachChain) primePulseBeatmap(manifest.tracks[file].beatmap, loadBeatmap(file));
+  const hadRaf = globalThis.requestAnimationFrame;
+  const hadCancel = globalThis.cancelAnimationFrame;
+  globalThis.requestAnimationFrame = undefined;
+  globalThis.cancelAnimationFrame = undefined;
+  let chainOver = null;
+  const chain = new PulseGame(canvas, {
+    audio,
+    onGameOver(result) {
+      chainOver = result;
+    },
+    onHud() {},
+  });
+  chain.stageGapMs = 40;
+  chain.resize();
+  chain.start({
+    difficulty: 'einfach',
+    manifest,
+    silent: true,
+    beatmap: loadBeatmap(einfachChain[0]),
+  });
+  assert(chain.stageIndex === 0 && chain.stageCount === 4, 'einfach opens on level 1 of 4');
+  assert(chain.trackFile === einfachChain[0], 'level 1 is the easiest track');
+  assert(chain.trackTitle === 'Einfach 4', 'level 1 shows the easiest track');
+  chain.orbsCollected = 4;
+  chain.comboBonus = 10;
+  for (const note of chain.notes) note.resolved = true;
+  chain._forcedTime = chain.durationSec;
+  chain.alive = true;
+  chain.update(0.016);
+  assert(chain.celebrating && chain.celebration?.kind === 'advance', 'a clear celebrates before the next level');
+  assert(chainOver == null, 'a mid-run clear does not submit');
+  await new Promise((r) => setTimeout(r, 80));
+  assert(chain.alive && chain.stageIndex === 1, 'the clear loads the next stage');
+  assert(chain.trackFile === einfachChain[1], 'stage 2 plays the next song');
+  assert(chain.orbsCollected === 4 && chain.comboBonus === 10, 'hits carry into the next stage');
+  assert(chain.bankedSurvivalMs >= 50000, 'stage time banks into the run');
+  assert(
+    chain.cfg.perfectMs < getPulseDifficulty('einfach').perfectMs &&
+      chain.cfg.missDrain > getPulseDifficulty('einfach').missDrain &&
+      chain.travelSec < getPulseDifficulty('einfach').travelSec,
+    'stage 2 is measurably harder'
+  );
+  assert(chain.notes.length > 0, 'stage 2 chart comes from the next beatmap');
+  assert(
+    chain.score === computeScore(chain.survivalMs, chain.orbsCollected, chain.comboBonus, chain.nearMisses),
+    'the running total stays on the shared formula'
+  );
+  chain.sync = 0;
+  chain.update(0.016);
+  assert(!chain.alive && !chain.cleared, 'empty sync fails the run');
+  await new Promise((r) => setTimeout(r, 80));
+  assert(chainOver && chainOver.game === 'pulse' && chainOver.cleared === false, 'a fail ends the run');
+  assert(chainOver.stage === 2 && chainOver.stageCount === 4, 'the fail reports how far the run got');
+  assert(chainOver.trackTitle === 'Einfach 2', 'the fail names the track');
+  assert(chainOver.orbs === 4, 'the submitted run keeps earlier hits');
+  assert(
+    chainOver.score ===
+      computeScore(chainOver.survivalMs, chainOver.orbs, chainOver.comboBonus, chainOver.nearMisses),
+    'the finished run score matches the formula'
+  );
+  const postedChain = scoresMod.validatePostBody({
+    name: 'Chain',
+    score: chainOver.score,
+    survivalMs: chainOver.survivalMs,
+    orbs: chainOver.orbs,
+    comboBonus: chainOver.comboBonus,
+    nearMisses: chainOver.nearMisses,
+    game: 'pulse',
+    difficulty: 'einfach',
+  });
+  assert(postedChain.ok, `a chained pulse run still posts (${postedChain.error || ''})`);
+
+  chainOver = null;
+  const finale = new PulseGame(canvas, {
+    audio,
+    onGameOver(result) {
+      chainOver = result;
+    },
+    onHud() {},
+  });
+  finale.stageGapMs = 40;
+  finale.resize();
+  finale.start({ difficulty: 'einfach', manifest, silent: true, beatmap: loadBeatmap(einfachChain[0]) });
+  finale.stageIndex = finale.stageCount - 1;
+  finale.trackFile = einfachChain[3];
+  finale.trackTitle = 'Einfach 1';
+  for (const note of finale.notes) note.resolved = true;
+  finale._forcedTime = finale.durationSec;
+  finale.alive = true;
+  finale.update(0.016);
+  assert(finale.celebration?.kind === 'done', 'the last clear celebrates the run');
+  await new Promise((r) => setTimeout(r, 80));
+  assert(chainOver?.cleared === true && chainOver.stage === 4 && chainOver.stageCount === 4, 'the last track completes the run');
+
+  const dailyLive = new PulseGame(canvas, { audio, onGameOver() {}, onHud() {} });
+  dailyLive.resize();
+  dailyLive.start({ daily: true, dailyDate: '2026-09-26', manifest, silent: true, beatmap: dailyMap });
+  assert(dailyLive.daily && dailyLive.stageCount === 1, 'daily beat does not chain stages');
+  for (const note of dailyLive.notes) note.resolved = true;
+  dailyLive._forcedTime = dailyLive.durationSec;
+  dailyLive.alive = true;
+  dailyLive.update(0.016);
+  assert(dailyLive.celebration == null, 'daily clear keeps the single-track result path');
+  dailyLive.stop();
+
+  if (hadRaf) globalThis.requestAnimationFrame = hadRaf;
+  if (hadCancel) globalThis.cancelAnimationFrame = hadCancel;
 }
 
 const env = { ...process.env, PORT: String(PORT), AERGER_FILE: path.join(root, 'data', `aerger-smoke-${PORT}.json`) };
