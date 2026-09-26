@@ -1,6 +1,6 @@
 {
-  "version": 3,
-  "note": "User-owned tracks; trimmed from t=0; LUFS-banded; excluded ua13+ua20; added mittel-5, mittel-6, baba-5",
+  "version": 4,
+  "note": "User-owned tracks; trimmed from t=0; LUFS and beat density; excluded ua13+ua20; added mittel-5, mittel-6, baba-5, baba-6",
   "tracks": {
     "einfach-1.mp3": {
       "file": "public/pulse-music/einfach-1.mp3",
@@ -229,6 +229,18 @@
       "beatmap": "public/pulse-music/beatmaps/baba-5.json",
       "beatCount": 219,
       "onsetCount": 467
+    },
+    "baba-6.mp3": {
+      "file": "public/pulse-music/baba-6.mp3",
+      "sourceId": "2be7b2a15dd962e304e7579988a73fdc1142a426d171e18bfca518ff6f554d1f",
+      "lufs": -13.7,
+      "durationSec": 70,
+      "role": "alt",
+      "bpmEstimate": 129.2,
+      "bpmSource": "librosa.beat_track on trimmed clip",
+      "beatmap": "public/pulse-music/beatmaps/baba-6.json",
+      "beatCount": 151,
+      "onsetCount": 235
     }
   },
   "byDifficulty": {
@@ -257,7 +269,8 @@
       "baba-2.mp3",
       "baba-3.mp3",
       "baba-4.mp3",
-      "baba-5.mp3"
+      "baba-5.mp3",
+      "baba-6.mp3"
     ]
   },
   "dailyPool": [
