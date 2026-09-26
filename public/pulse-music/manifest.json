@@ -1,6 +1,6 @@
 {
-  "version": 1,
-  "note": "User-owned tracks; trimmed from t=0 (slow intro); banded by integrated LUFS",
+  "version": 2,
+  "note": "User-owned tracks; trimmed from t=0; LUFS-banded; excluded ua13+ua20",
   "tracks": {
     "einfach-1.mp3": {
       "file": "public/pulse-music/einfach-1.mp3",
@@ -40,39 +40,39 @@
     },
     "einfach-4.mp3": {
       "file": "public/pulse-music/einfach-4.mp3",
-      "sourceId": "990b6e17d418437a82c83284e1daa724fb7a15679858a0a71bbd9c34bbe28cef",
-      "lufs": -14.9,
+      "sourceId": "80a4944f6c6ddb572527d6004cd37a15d13edd4ab9d2ba5d88ffe8f7fcc9a445",
+      "lufs": -14.8,
       "durationSec": 55,
       "role": "alt",
-      "bpmEstimate": 136.0,
+      "bpmEstimate": 73.83,
       "bpmSource": "librosa.beat_track on trimmed clip",
       "beatmap": "public/pulse-music/beatmaps/einfach-4.json",
-      "beatCount": 112,
-      "onsetCount": 208
+      "beatCount": 51,
+      "onsetCount": 218
     },
     "mittel-1.mp3": {
       "file": "public/pulse-music/mittel-1.mp3",
-      "sourceId": "80a4944f6c6ddb572527d6004cd37a15d13edd4ab9d2ba5d88ffe8f7fcc9a445",
-      "lufs": -14.8,
+      "sourceId": "f804aed9af01626fcc94c1cb993ab0f0181ea4b029509df4c474da0c0d91b0a0",
+      "lufs": -14.7,
       "durationSec": 70,
       "role": "primary",
-      "bpmEstimate": 73.83,
+      "bpmEstimate": 143.55,
       "bpmSource": "librosa.beat_track on trimmed clip",
       "beatmap": "public/pulse-music/beatmaps/mittel-1.json",
-      "beatCount": 70,
+      "beatCount": 135,
       "onsetCount": 283
     },
     "mittel-2.mp3": {
       "file": "public/pulse-music/mittel-2.mp3",
-      "sourceId": "c6957818e14dee0be65e62fd7984074414483e96c98919917011c7c31ffec266",
-      "lufs": -14.6,
+      "sourceId": "40804984f6a13336a80f74a068c361dcf7966d6344c8e8412a9069bec29df70d",
+      "lufs": -14.5,
       "durationSec": 70,
       "role": "alt",
-      "bpmEstimate": 136.0,
+      "bpmEstimate": 172.27,
       "bpmSource": "librosa.beat_track on trimmed clip",
       "beatmap": "public/pulse-music/beatmaps/mittel-2.json",
-      "beatCount": 130,
-      "onsetCount": 240
+      "beatCount": 169,
+      "onsetCount": 289
     },
     "mittel-3.mp3": {
       "file": "public/pulse-music/mittel-3.mp3",
@@ -235,5 +235,5 @@
     "schwer": 85,
     "baba": 100
   },
-  "analysis": "librosa beat_track + onset_detect on each clip; charts in beatmaps/"
+  "analysis": "librosa beat_track + onset_detect"
 }

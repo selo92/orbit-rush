@@ -625,6 +625,9 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
     assert(typeof meta.beatmap === 'string' && meta.beatmap.endsWith('.json'), `${meta.file} names a beatmap`);
     const rel = meta.beatmap.replace(/^public\/pulse-music\//, '');
     assert(fs.existsSync(path.join(musicDir, rel)), `${rel} is in the music pack`);
+    const beatmap = JSON.parse(fs.readFileSync(path.join(musicDir, rel), 'utf8'));
+    assert(beatmap.sourceId === meta.sourceId, `${meta.file} beatmap matches the manifest source`);
+    assert(beatmap.track === meta.file.split('/').pop(), `${meta.file} beatmap names its clip`);
   }
 
   const loadBeatmap = (file) => {
