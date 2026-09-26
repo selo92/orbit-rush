@@ -176,6 +176,11 @@ export class AudioBus {
     this._clip = null;
   }
 
+  /** True once a Pulse clip element exists, including while currentTime is still 0. */
+  hasClip() {
+    return !!this._clip;
+  }
+
   clipTime() {
     const t = this._clip?.currentTime;
     return typeof t === 'number' && Number.isFinite(t) ? t : 0;
