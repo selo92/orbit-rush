@@ -320,7 +320,7 @@ export async function handleApi(request, db) {
   }
 
   if (request.method === 'GET' && url.pathname === '/api/health') {
-    return json({ ok: true, service: 'orbit-rush-api', version: '1.4', storage: 'd1' }, 200, request);
+    return json({ ok: true, service: 'orbit-rush-api', version: '1.5', storage: 'd1' }, 200, request);
   }
 
   if (request.method === 'GET' && url.pathname === '/api/scores') {

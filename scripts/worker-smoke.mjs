@@ -133,7 +133,7 @@ async function api(pathname, { method = 'GET', body, ip = '203.0.113.10', header
 try {
   const health = await api('/api/health');
   assert(health.status === 200, 'health status');
-  assert(health.data.version === '1.4', 'health version');
+  assert(health.data.version === '1.5', 'health version');
   assert(health.data.storage === 'd1', 'health storage');
 
   const survivalMs = 32000;
@@ -455,7 +455,7 @@ try {
     ip: '203.0.113.92',
     body: { name: 'BadGame', score: computeScore(1000, 0, 0, 0), survivalMs: 1000, orbs: 0, game: 'puzzle' },
   });
-  assert(badGamePost.status === 400 && badGamePost.data.error === 'Invalid game (rush|mirror|drift|pulse)', 'invalid game post');
+  assert(badGamePost.status === 400 && badGamePost.data.error === 'Invalid game (rush|mirror|drift|pulse|jet)', 'invalid game post');
 
   const driftScore = computeScore(8000, 3, 100, 2);
   const driftPost = await api('/api/scores', {
@@ -549,6 +549,30 @@ try {
   assert(pulseDailyGet.status === 200 && pulseDailyGet.data.game === 'pulse', 'GET pulse daily names the board');
   assert(pulseDailyGet.data.scores.some((s) => s.name === 'PulseDaily'), 'GET pulse daily lists the run');
   assert(!pulseDailyGet.data.scores.some((s) => s.name === 'PulsePilot'), 'pulse daily list hides normal runs');
+
+  const jetScore = computeScore(6000, 3, 50, 1);
+  const jetPost = await api('/api/scores', {
+    method: 'POST',
+    ip: '203.0.113.114',
+    body: {
+      name: 'JetPilot',
+      score: jetScore,
+      survivalMs: 6000,
+      orbs: 3,
+      comboBonus: 50,
+      nearMisses: 1,
+      difficulty: 'schwer',
+      game: 'jet',
+    },
+  });
+  assert(jetPost.status === 200, `jet post ${JSON.stringify(jetPost.data)}`);
+  assert(jetPost.data.scores.every((s) => s.game === 'jet'), 'jet response is the jet board');
+  assert(jetPost.data.scores.some((s) => s.name === 'JetPilot'), 'jet pilot listed');
+  const jetBoard = await api('/api/scores?game=jet&difficulty=schwer', { ip: '203.0.113.115' });
+  assert(jetBoard.status === 200 && jetBoard.data.game === 'jet', 'jet filter names the board');
+  assert(jetBoard.data.scores.some((s) => s.name === 'JetPilot'), 'jet difficulty filter includes schwer');
+  const rushAfterJet = await api('/api/scores?game=rush', { ip: '203.0.113.115' });
+  assert(!rushAfterJet.data.scores.some((s) => s.name === 'JetPilot'), 'jet score stays off rush');
 
   const notAScore = await api('/api/scores', {
     method: 'POST',

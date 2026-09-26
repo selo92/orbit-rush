@@ -1,8 +1,8 @@
 {
   "name": "orbit-rush",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "private": true,
-  "description": "Orbit Rush arcade — Orbit Rush, Orbit Mirror, Orbit Ärger, Orbit Drift, and Orbit Pulse",
+  "description": "Orbit Rush arcade — Orbit Rush, Orbit Mirror, Orbit Ärger, Orbit Drift, Orbit Pulse, and Orbit Jet",
   "type": "module",
   "scripts": {
     "dev": "vite",

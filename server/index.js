@@ -119,7 +119,7 @@ function writeScores(scores) {
 }
 
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, service: 'orbit-rush-api', version: '1.4' });
+  res.json({ ok: true, service: 'orbit-rush-api', version: '1.5' });
 });
 
 app.get('/api/scores', (req, res) => {
