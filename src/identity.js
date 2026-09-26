@@ -1,6 +1,6 @@
 /**
  * Stable local player: display name + opaque client id.
- * Shared by Orbit Rush, Orbit Mirror, and Orbit Drift.
+ * Shared by Orbit Rush, Orbit Mirror, Orbit Drift, and Orbit Pulse.
  * Name key stays `orbit-rush-name` so existing pilots are recognized.
  */
 import { sanitizeName } from '../shared/scores.js';

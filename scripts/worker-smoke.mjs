@@ -455,7 +455,7 @@ try {
     ip: '203.0.113.92',
     body: { name: 'BadGame', score: computeScore(1000, 0, 0, 0), survivalMs: 1000, orbs: 0, game: 'puzzle' },
   });
-  assert(badGamePost.status === 400 && badGamePost.data.error === 'Invalid game (rush|mirror|drift)', 'invalid game post');
+  assert(badGamePost.status === 400 && badGamePost.data.error === 'Invalid game (rush|mirror|drift|pulse)', 'invalid game post');
 
   const driftScore = computeScore(8000, 3, 100, 2);
   const driftPost = await api('/api/scores', {
@@ -492,6 +492,63 @@ try {
   assert(!driftSchwer.data.scores.some((s) => s.name === 'DriftPilot'), 'drift difficulty filter excludes other grades');
   const rushMittel = await api('/api/scores?difficulty=mittel', { ip: '203.0.113.97' });
   assert(!rushMittel.data.scores.some((s) => s.name === 'DriftPilot'), 'drift difficulty filter does not leak onto rush');
+
+  const pulseScore = computeScore(9000, 4, 100, 1);
+  const pulsePost = await api('/api/scores', {
+    method: 'POST',
+    ip: '203.0.113.110',
+    body: {
+      name: 'PulsePilot',
+      score: pulseScore,
+      survivalMs: 9000,
+      orbs: 4,
+      comboBonus: 100,
+      nearMisses: 1,
+      difficulty: 'baba',
+      game: 'pulse',
+      clientId: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
+    },
+  });
+  assert(pulsePost.status === 200, `pulse post ${JSON.stringify(pulsePost.data)}`);
+  assert(pulsePost.data.scores.every((s) => s.game === 'pulse'), 'pulse response is the pulse board');
+  assert(pulsePost.data.scores.some((s) => s.name === 'PulsePilot'), 'pulse pilot listed');
+  const pulseBoard = await api('/api/scores?game=pulse&difficulty=baba', { ip: '203.0.113.111' });
+  assert(pulseBoard.status === 200 && pulseBoard.data.game === 'pulse', 'pulse filter names the board');
+  assert(pulseBoard.data.scores.some((s) => s.name === 'PulsePilot'), 'pulse difficulty filter includes baba');
+  const pulseEasy = await api('/api/scores?game=pulse&difficulty=einfach', { ip: '203.0.113.111' });
+  assert(!pulseEasy.data.scores.some((s) => s.name === 'PulsePilot'), 'pulse difficulty filter excludes other grades');
+  const rushAfterPulse = await api('/api/scores?game=rush', { ip: '203.0.113.111' });
+  assert(!rushAfterPulse.data.scores.some((s) => s.name === 'PulsePilot'), 'pulse score stays off rush');
+
+  const pulseDailyDate = '2026-09-26';
+  const pulseDailyScore = computeScore(5000, 2, 0, 1);
+  const pulseDailyPost = await api('/api/scores', {
+    method: 'POST',
+    ip: '203.0.113.112',
+    body: {
+      name: 'PulseDaily',
+      score: pulseDailyScore,
+      survivalMs: 5000,
+      orbs: 2,
+      comboBonus: 0,
+      nearMisses: 1,
+      game: 'pulse',
+      mode: 'daily',
+      dailyDate: pulseDailyDate,
+    },
+  });
+  assert(pulseDailyPost.status === 200, `pulse daily post ${JSON.stringify(pulseDailyPost.data)}`);
+  assert(
+    pulseDailyPost.data.scores.some((s) => s.name === 'PulseDaily' && s.mode === 'daily'),
+    'worker pulse daily board'
+  );
+  const pulseDailyGet = await api(
+    `/api/scores?game=pulse&mode=daily&dailyDate=${pulseDailyDate}`,
+    { ip: '203.0.113.113' }
+  );
+  assert(pulseDailyGet.status === 200 && pulseDailyGet.data.game === 'pulse', 'GET pulse daily names the board');
+  assert(pulseDailyGet.data.scores.some((s) => s.name === 'PulseDaily'), 'GET pulse daily lists the run');
+  assert(!pulseDailyGet.data.scores.some((s) => s.name === 'PulsePilot'), 'pulse daily list hides normal runs');
 
   const notAScore = await api('/api/scores', {
     method: 'POST',

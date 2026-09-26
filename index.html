@@ -7,7 +7,7 @@
       content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
     />
     <meta name="theme-color" content="#050510" />
-    <meta name="description" content="Orbit Arcade — Orbit Rush, Orbit Mirror, Orbit Ärger, and Orbit Drift. Skill runs plus a four-player board game." />
+    <meta name="description" content="Orbit Arcade — Orbit Rush, Orbit Mirror, Orbit Ärger, Orbit Drift, and Orbit Pulse. Skill runs plus a four-player board game." />
     <title>Orbit Rush</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='10' fill='%2300f0ff'/%3E%3Ccircle cx='32' cy='32' r='22' fill='none' stroke='%23ff2bd6' stroke-width='3'/%3E%3C/svg%3E" />
     <link rel="stylesheet" href="/src/style.css" />
@@ -65,7 +65,7 @@
         <div class="panel hub-panel">
           <p class="eyebrow">ORBIT RUSH</p>
           <h1 class="logo">ORBIT<span>ARCADE</span></h1>
-          <p class="tagline">Vier Spiele. Ein Pilot.</p>
+          <p class="tagline">Fünf Spiele. Ein Pilot.</p>
           <p id="hub-identity" class="identity-line hidden">Welcome back, <strong id="hub-identity-name"></strong></p>
           <div class="hub-tiles">
             <button type="button" id="btn-hub-rush" class="hub-tile rush">
@@ -83,6 +83,10 @@
             <button type="button" id="btn-hub-drift" class="hub-tile drift">
               <strong>ORBIT DRIFT</strong>
               <span>Halt die Bahn. Der Tunnel driftet.</span>
+            </button>
+            <button type="button" id="btn-hub-pulse" class="hub-tile pulse">
+              <strong>ORBIT PULSE</strong>
+              <span>Tippe den Beat. Halt den Flow.</span>
             </button>
           </div>
         </div>
@@ -264,6 +268,68 @@
           <p id="drift-diff-best" class="best-line muted">Rekord auf Mittel: <strong id="drift-diff-best-val">—</strong></p>
           <button type="button" id="btn-drift-diff-start" class="btn primary pulse">START</button>
           <button type="button" id="btn-drift-diff-back" class="btn ghost">ZURÜCK</button>
+        </div>
+      </section>
+
+      <!-- Orbit Pulse menu -->
+      <section id="screen-pulse" class="screen hidden">
+        <div class="panel pulse-panel">
+          <p class="eyebrow">RHYTHMUS</p>
+          <h1 class="logo">ORBIT<span>PULSE</span></h1>
+          <p class="tagline">Tippe den Beat. Halt den Flow.</p>
+          <p class="tagline">Kreise auf den Takt. Manche hältst du bis zur Marke.</p>
+          <p id="pulse-best" class="best-line">
+            Rekord (Mittel): <strong id="pulse-best-val">—</strong>
+          </p>
+          <p id="pulse-daily" class="daily-line">Daily Beat · <span id="pulse-daily-date">—</span></p>
+          <div class="title-actions">
+            <button type="button" id="btn-pulse-play" class="btn primary pulse">SPIELEN</button>
+            <button type="button" id="btn-pulse-daily" class="btn daily">DAILY BEAT</button>
+          </div>
+          <button type="button" id="btn-pulse-lb" class="btn ghost">BESTENLISTE</button>
+          <button type="button" id="btn-pulse-hub" class="btn ghost">ARCADE</button>
+        </div>
+      </section>
+
+      <section id="screen-pulse-onboard" class="screen hidden">
+        <div class="panel onboard-panel">
+          <p class="eyebrow">AUF DEN TAKT</p>
+          <h2>Tippe den Ring</h2>
+          <p class="tagline">
+            Tippe, wenn der Kreis den Ring trifft. Manche Kreise hältst du bis zur weißen Marke.
+            A S D F, die Bahn antippen, oder Leertaste auf der leuchtenden Bahn.
+          </p>
+          <button type="button" id="btn-pulse-onboard" class="btn primary">VERSTANDEN</button>
+          <button type="button" id="btn-pulse-onboard-skip" class="btn ghost">SPÄTER</button>
+        </div>
+      </section>
+
+      <section id="screen-pulse-diff" class="screen hidden">
+        <div class="panel diff-panel pulse-diff-panel">
+          <p class="eyebrow">SCHWIERIGKEIT</p>
+          <h2>WIE HART?</h2>
+          <p class="tagline diff-hint">Dichte, Fenster und der Track wechseln mit.</p>
+          <div id="pulse-diff-options" class="diff-options" role="radiogroup" aria-label="Schwierigkeit">
+            <button type="button" class="diff-chip" data-pulse-diff="einfach" aria-pressed="false">
+              <span class="diff-label">Einfach</span>
+              <span class="diff-blurb">Weite Fenster · ruhiger Beat · wenige Holds</span>
+            </button>
+            <button type="button" class="diff-chip" data-pulse-diff="mittel" aria-pressed="true">
+              <span class="diff-label">Mittel</span>
+              <span class="diff-blurb">Dichter · erste Holds · normaler Takt</span>
+            </button>
+            <button type="button" class="diff-chip" data-pulse-diff="schwer" aria-pressed="false">
+              <span class="diff-label">Schwer</span>
+              <span class="diff-blurb">Enger Takt · mehr Holds · Bahnwechsel</span>
+            </button>
+            <button type="button" class="diff-chip baba" data-pulse-diff="baba" aria-pressed="false">
+              <span class="diff-label">Baba</span>
+              <span class="diff-blurb">⚠ Extrem · enge Fenster · viele Holds</span>
+            </button>
+          </div>
+          <p id="pulse-diff-best" class="best-line muted">Rekord auf Mittel: <strong id="pulse-diff-best-val">—</strong></p>
+          <button type="button" id="btn-pulse-diff-start" class="btn primary pulse">START</button>
+          <button type="button" id="btn-pulse-diff-back" class="btn ghost">ZURÜCK</button>
         </div>
       </section>
 

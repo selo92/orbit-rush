@@ -10,6 +10,9 @@ export class AudioBus {
     this._musicNodes = [];
     this._musicPlaying = false;
     this._musicTimer = null;
+    this._clip = null;
+    this._wantClip = false;
+    this._clipHold = false;
     try {
       const v = localStorage.getItem('orbit-rush-mute');
       this.muted = v === '1';
@@ -44,8 +47,10 @@ export class AudioBus {
       /* ignore */
     }
     if (this._master) this._master.gain.value = this.muted ? 0 : 0.22;
+    if (this._clip) this._clip.muted = this.muted;
     if (this.muted) this.stopMusic();
-    else if (this._wantMusic) this.startMusic();
+    else if (this._wantClip && !this._clipHold) this.resumeClip();
+    else if (!this._wantClip && this._wantMusic) this.startMusic();
   }
 
   toggleMute() {
@@ -123,9 +128,71 @@ export class AudioBus {
     this.tone(320, 0.05, 'triangle', 0.12);
   }
 
+  /**
+   * File bed for Orbit Pulse. The chart follows `currentTime`, so mute keeps
+   * the element running and only silences it. Pause holds the playhead.
+   * @param {string} url
+   * @param {{ playbackRate?: number }} [opts]
+   */
+  playClip(url, opts = {}) {
+    this.stopClip();
+    this.stopMusic();
+    this._wantMusic = false;
+    this._wantClip = true;
+    this._clipHold = false;
+    const el = new Audio();
+    el.preload = 'auto';
+    el.loop = false;
+    const rate = Number(opts.playbackRate);
+    el.playbackRate = Number.isFinite(rate) && rate > 0 ? rate : 1;
+    el.muted = this.muted;
+    el.src = url;
+    this._clip = el;
+    const pending = el.play();
+    if (pending && typeof pending.catch === 'function') pending.catch(() => {});
+  }
+
+  pauseClip() {
+    this._clipHold = true;
+    this._clip?.pause();
+  }
+
+  resumeClip() {
+    this._clipHold = false;
+    if (!this._clip) return;
+    this._clip.muted = this.muted;
+    if (!this._clip.paused) return;
+    const pending = this._clip.play();
+    if (pending && typeof pending.catch === 'function') pending.catch(() => {});
+  }
+
+  stopClip() {
+    this._wantClip = false;
+    this._clipHold = false;
+    if (!this._clip) return;
+    this._clip.pause();
+    this._clip.removeAttribute('src');
+    this._clip.load?.();
+    this._clip = null;
+  }
+
+  clipTime() {
+    const t = this._clip?.currentTime;
+    return typeof t === 'number' && Number.isFinite(t) ? t : 0;
+  }
+
+  clipActive() {
+    return !!this._clip && !this._clip.paused && !this._clip.ended;
+  }
+
+  clipEnded() {
+    return !!this._clip?.ended;
+  }
+
   /** Soft procedural arpeggio bed — lightweight, loops via setInterval */
   startMusic() {
     this._wantMusic = true;
+    if (this._wantClip) return;
     this.ensure();
     if (this.muted || !this.ctx || this._musicPlaying) return;
     this._musicPlaying = true;

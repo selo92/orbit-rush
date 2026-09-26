@@ -222,13 +222,24 @@ assert((skinMod.DEFAULT_SKIN || skinMod.DEFAULT_SKIN) === 'cyan', 'default cyan 
 
 const scoresMod = await import(path.join(root, 'shared', 'scores.js'));
 assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
-assert(scoresMod.normalizeGame('Drift') === 'drift', 'normalize drift');
-assert(scoresMod.normalizeGame('nope') === 'rush', 'unknown game defaults to rush');
+  assert(scoresMod.normalizeGame('Drift') === 'drift', 'normalize drift');
+  assert(scoresMod.normalizeGame('Pulse') === 'pulse', 'normalize pulse');
+  assert(scoresMod.normalizeGame('nope') === 'rush', 'unknown game defaults to rush');
 {
   const mixed = [
     { name: 'R', score: 10, ts: 1, difficulty: 'mittel', mode: 'normal' },
     { name: 'M', score: 50, ts: 2, difficulty: 'mittel', mode: 'normal', game: 'mirror' },
     { name: 'D', score: 80, ts: 3, difficulty: 'mittel', mode: 'normal', game: 'drift' },
+    { name: 'P', score: 90, ts: 4, difficulty: 'schwer', mode: 'normal', game: 'pulse' },
+    {
+      name: 'PD',
+      score: 70,
+      ts: 5,
+      difficulty: 'schwer',
+      mode: 'daily',
+      dailyDate: '2026-09-26',
+      game: 'pulse',
+    },
   ];
   const onlyM = scoresMod.selectBoard(mixed, { game: 'mirror' });
   assert(onlyM.length === 1 && onlyM[0].name === 'M' && onlyM[0].game === 'mirror', 'mirror board');
@@ -245,7 +256,7 @@ assert(scoresMod.normalizeGame('nope') === 'rush', 'unknown game defaults to rus
     nearMisses: 0,
     game: 'nope',
   });
-  assert(!badGame.ok && badGame.error === 'Invalid game (rush|mirror|drift)', 'reject bad game');
+  assert(!badGame.ok && badGame.error === 'Invalid game (rush|mirror|drift|pulse)', 'reject bad game');
   const okGame = scoresMod.validatePostBody({
     name: 'A',
     score: 10,
@@ -269,6 +280,31 @@ assert(scoresMod.normalizeGame('nope') === 'rush', 'unknown game defaults to rus
     game: 'drift',
   });
   assert(driftBody.ok && driftBody.value.game === 'drift', 'post drift');
+  const onlyP = scoresMod.selectBoard(mixed, { game: 'pulse' });
+  assert(onlyP.length === 2 && onlyP.every((row) => row.game === 'pulse'), 'pulse board includes its rows');
+  const pulseDaily = scoresMod.selectBoard(mixed, {
+    game: 'pulse',
+    mode: 'daily',
+    dailyDate: '2026-09-26',
+  });
+  assert(pulseDaily.length === 1 && pulseDaily[0].name === 'PD', 'pulse daily board');
+  const pulseSchwer = scoresMod.selectBoard(mixed, { game: 'pulse', difficulty: 'schwer' });
+  assert(pulseSchwer.length === 1 && pulseSchwer[0].name === 'P', 'pulse difficulty board skips daily');
+  const qPulse = scoresMod.validateScoresQuery(
+    new URLSearchParams('game=pulse&mode=daily&dailyDate=2026-09-26')
+  );
+  assert(qPulse.ok && qPulse.game === 'pulse' && qPulse.mode === 'daily', 'query pulse daily');
+  const pulseBody = scoresMod.validatePostBody({
+    name: 'A',
+    score: computeScore(3000, 2, 50, 1),
+    survivalMs: 3000,
+    orbs: 2,
+    comboBonus: 50,
+    nearMisses: 1,
+    game: 'pulse',
+    difficulty: 'baba',
+  });
+  assert(pulseBody.ok && pulseBody.value.game === 'pulse' && pulseBody.value.difficulty === 'baba', 'post pulse');
   const qBad = scoresMod.validateScoresQuery(new URLSearchParams('game=both'));
   assert(!qBad.ok, 'query bad game');
 }
@@ -557,6 +593,166 @@ assert(scoresMod.normalizeGame('nope') === 'rush', 'unknown game defaults to rus
   assert(spike.hull === 0 && spike.alive === false, 'a third spike hit ends the run');
 }
 
+{
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, 'public', 'pulse-music', 'manifest.json'), 'utf8'));
+  const musicDir = path.join(root, 'public', 'pulse-music');
+  for (const id of ['einfach', 'mittel', 'schwer', 'baba']) {
+    const files = manifest.byDifficulty[id];
+    assert(Array.isArray(files) && files.length >= 2, `${id} has a primary and alts`);
+    assert(manifest.tracks[files[0]].role === 'primary', `${id} primary is first`);
+    for (const file of files) {
+      assert(fs.existsSync(path.join(musicDir, file)), `${file} is in the music pack`);
+      assert(file.startsWith(`${id}-`), `${file} belongs to ${id}`);
+    }
+  }
+  for (const file of manifest.dailyPool) {
+    assert(fs.existsSync(path.join(musicDir, file)), `daily pool file ${file}`);
+  }
+
+  const {
+    preparePulseRun,
+    buildBeatChart,
+    judgeHit,
+    getPulseDifficulty,
+    applyPulseHit,
+    pulseShouldFail,
+    PulseGame,
+  } = await import(path.join(root, 'src', 'pulse.js'));
+
+  const primaries = ['einfach', 'mittel', 'schwer', 'baba'].map(
+    (id) => preparePulseRun(manifest, { difficulty: id, rng: () => 0 }).file
+  );
+  assert(new Set(primaries).size === 4, 'each difficulty plays a different track file');
+  const einfachRun = preparePulseRun(manifest, { difficulty: 'einfach', rng: () => 0 });
+  const babaRun = preparePulseRun(manifest, { difficulty: 'baba', rng: () => 0 });
+  assert(einfachRun.url === '/pulse-music/einfach-1.mp3', 'einfach url is the primary file');
+  assert(babaRun.url === '/pulse-music/baba-1.mp3', 'baba url is the primary file');
+  assert(einfachRun.url !== babaRun.url, 'difficulty changes the file, not only the speed');
+  assert(
+    einfachRun.playbackRate >= 1 &&
+      einfachRun.playbackRate <= 1.03 &&
+      babaRun.playbackRate >= 1 &&
+      babaRun.playbackRate <= 1.03,
+    'playback rate nudge stays within 3%'
+  );
+  const schwerAlt = preparePulseRun(manifest, { difficulty: 'schwer', rng: () => 0.95 });
+  assert(schwerAlt.file !== manifest.byDifficulty.schwer[0], 'roll can pick an alt track');
+  assert(schwerAlt.file.startsWith('schwer-'), 'alt stays on the difficulty');
+
+  const dailyA = preparePulseRun(manifest, { daily: true, dailyDate: '2026-09-26' });
+  const dailyB = preparePulseRun(manifest, { daily: true, dailyDate: '2026-09-26' });
+  assert(dailyA.file === dailyB.file, 'daily track is stable for a UTC date');
+  assert(dailyA.difficulty === 'schwer', 'daily beat charts Schwer');
+  assert(manifest.dailyPool.includes(dailyA.file), 'daily track comes from dailyPool');
+  assert(
+    JSON.stringify(dailyA.chart.notes) === JSON.stringify(dailyB.chart.notes),
+    'daily chart is seeded'
+  );
+
+  const easyChart = buildBeatChart({
+    bpm: 120,
+    durationSec: 40,
+    difficulty: 'einfach',
+    trackId: 'density',
+    dailyDate: 'fixed',
+  });
+  const midChart = buildBeatChart({
+    bpm: 120,
+    durationSec: 40,
+    difficulty: 'mittel',
+    trackId: 'density',
+    dailyDate: 'fixed',
+  });
+  const babaChart = buildBeatChart({
+    bpm: 120,
+    durationSec: 40,
+    difficulty: 'baba',
+    trackId: 'density',
+    dailyDate: 'fixed',
+  });
+  assert(easyChart.notes.length < midChart.notes.length, 'einfach is less dense than mittel');
+  assert(midChart.notes.length < babaChart.notes.length, 'baba is denser than mittel');
+  assert(easyChart.lanes === 3 && babaChart.lanes === 4, 'lane count follows difficulty');
+  const easyHolds = easyChart.notes.filter((n) => n.hold).length;
+  const babaHolds = babaChart.notes.filter((n) => n.hold).length;
+  assert(babaHolds > easyHolds, 'baba charts more holds');
+  assert(getPulseDifficulty('einfach').perfectMs > getPulseDifficulty('baba').perfectMs, 'baba windows are tighter');
+  assert(judgeHit(90, 'einfach') === 'perfect', 'einfach treats 90ms as perfect');
+  assert(judgeHit(90, 'baba') === 'miss', 'baba treats 90ms as a miss');
+  assert(judgeHit(160, 'einfach') === 'good', 'einfach still accepts a wider good window');
+
+  const cfg = getPulseDifficulty('mittel');
+  let stats = {
+    orbs: 0,
+    combo: 0,
+    comboBonus: 0,
+    nearMisses: 0,
+    sync: cfg.syncMax,
+    survivalMs: 8000,
+    comboPeak: 1,
+    perfects: 0,
+    goods: 0,
+    misses: 0,
+  };
+  for (let i = 0; i < 12; i++) stats = applyPulseHit(stats, i % 4 === 0 ? 'good' : 'perfect', cfg);
+  stats = applyPulseHit(stats, 'miss', cfg);
+  assert(stats.combo === 0, 'a miss breaks the combo');
+  const posted = scoresMod.validatePostBody({
+    name: 'Pulse',
+    score: stats.score,
+    survivalMs: stats.survivalMs,
+    orbs: stats.orbs,
+    comboBonus: stats.comboBonus,
+    nearMisses: stats.nearMisses,
+    game: 'pulse',
+    difficulty: 'mittel',
+  });
+  assert(posted.ok, `pulse hit mapping passes the formula (${posted.error || ''})`);
+
+  const harsh = getPulseDifficulty('baba');
+  const missTimes = [1, 1.4, 2];
+  assert(
+    pulseShouldFail({ sync: harsh.syncMax, missTimes }, 2, harsh),
+    'baba fails a short miss burst'
+  );
+  assert(
+    !pulseShouldFail({ sync: getPulseDifficulty('einfach').syncMax, missTimes }, 2, getPulseDifficulty('einfach')),
+    'einfach survives the same burst'
+  );
+
+  const canvas = {
+    width: 390,
+    height: 844,
+    style: {},
+    parentElement: { getBoundingClientRect: () => ({ width: 390, height: 844, left: 0, top: 0 }) },
+    getContext() {
+      return { setTransform() {} };
+    },
+    addEventListener() {},
+    removeEventListener() {},
+    setPointerCapture() {},
+  };
+  const audio = new Proxy({}, { get: () => () => {} });
+  const live = new PulseGame(canvas, { audio, onGameOver() {}, onHud() {} });
+  live.resize();
+  live.setDifficulty('mittel');
+  live.cfg = getPulseDifficulty('mittel');
+  live.notes = midChart.notes.map((n) => ({ ...n, resolved: false, holding: false, judgment: null }));
+  const tap = live.notes.find((n) => !n.hold) || live.notes[0];
+  live._forcedTime = tap.time;
+  live.alive = true;
+  live.tryHit(tap.lane);
+  if (tap.hold) {
+    live._forcedTime = tap.endTime;
+    live.tryRelease(tap.lane);
+  }
+  assert(tap.resolved && live.orbsCollected === 1, 'an on-time tap scores a hit');
+  assert(
+    live.score === computeScore(live.survivalMs, live.orbsCollected, live.comboBonus, live.nearMisses),
+    'live pulse score stays on the shared formula'
+  );
+}
+
 const env = { ...process.env, PORT: String(PORT), AERGER_FILE: path.join(root, 'data', `aerger-smoke-${PORT}.json`) };
 const scoresPath = path.join(root, 'data', 'scores.json');
 const backup = fs.existsSync(scoresPath) ? fs.readFileSync(scoresPath, 'utf8') : '[]';
@@ -814,6 +1010,64 @@ try {
   assert(!driftSchwer.scores.some((s) => s.name === 'DriftPilot'), 'drift difficulty filter excludes other grades');
   const rushStill = await fetch(`http://127.0.0.1:${PORT}/api/scores?difficulty=mittel`).then((r) => r.json());
   assert(!rushStill.scores.some((s) => s.name === 'DriftPilot'), 'drift difficulty filter does not leak onto rush');
+
+  await new Promise((r) => setTimeout(r, 2100));
+  const pulseScore = computeScore(9000, 4, 100, 1);
+  const pulsePost = await fetch(`http://127.0.0.1:${PORT}/api/scores`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: 'PulsePilot',
+      score: pulseScore,
+      survivalMs: 9000,
+      orbs: 4,
+      comboBonus: 100,
+      nearMisses: 1,
+      difficulty: 'baba',
+      game: 'pulse',
+      clientId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    }),
+  });
+  const pulseApi = await pulsePost.json();
+  assert(pulsePost.ok, `pulse post failed: ${JSON.stringify(pulseApi)}`);
+  assert(pulseApi.scores.every((s) => s.game === 'pulse'), 'express pulse board');
+  assert(pulseApi.scores.some((s) => s.name === 'PulsePilot' && s.difficulty === 'baba'), 'express pulse pilot');
+  assert(!pulseApi.scores.some((s) => s.game !== 'pulse'), 'express pulse board stays separate');
+
+  await new Promise((r) => setTimeout(r, 2100));
+  const pulseDailyDate = '2026-09-26';
+  const pulseDailyScore = computeScore(5000, 2, 0, 1);
+  const pulseDailyPost = await fetch(`http://127.0.0.1:${PORT}/api/scores`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: 'PulseDaily',
+      score: pulseDailyScore,
+      survivalMs: 5000,
+      orbs: 2,
+      comboBonus: 0,
+      nearMisses: 1,
+      game: 'pulse',
+      mode: 'daily',
+      dailyDate: pulseDailyDate,
+      difficulty: 'einfach',
+    }),
+  });
+  const pulseDailyApi = await pulseDailyPost.json();
+  assert(pulseDailyPost.ok, `pulse daily post failed: ${JSON.stringify(pulseDailyApi)}`);
+  assert(
+    pulseDailyApi.scores.some((s) => s.name === 'PulseDaily' && s.mode === 'daily' && s.dailyDate === pulseDailyDate),
+    'express pulse daily board'
+  );
+  assert(
+    pulseDailyApi.scores.every((s) => s.game === 'pulse' && s.mode === 'daily'),
+    'pulse daily response stays on the daily board'
+  );
+  const pulseDailyGet = await fetch(
+    `http://127.0.0.1:${PORT}/api/scores?game=pulse&mode=daily&dailyDate=${pulseDailyDate}`
+  ).then((r) => r.json());
+  assert(pulseDailyGet.game === 'pulse' && pulseDailyGet.scores.some((s) => s.name === 'PulseDaily'), 'GET pulse daily');
+  assert(!pulseDailyGet.scores.some((s) => s.name === 'PulsePilot'), 'pulse daily list hides normal runs');
 
   const aergerBase = `http://127.0.0.1:${PORT}`;
   const created = await fetch(`${aergerBase}/api/aerger/create`, {
