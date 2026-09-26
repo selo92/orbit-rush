@@ -2,11 +2,11 @@
  * Orbit Pulse — tap and hold neon circles on the beat.
  *
  * Music comes from `public/pulse-music/manifest.json`. Each difficulty has its
- * own files (quieter LUFS → Einfach, louder → Baba). A normal run plays that
- * pool in order, easiest first, and a clear starts the next track a little
- * harder. Daily Beat stays one track from `dailyPool` (UTC-date seed) and
- * always charts Schwer. A 0–3% playback rate nudge is optional color; it is
- * not how difficulty changes the song.
+ * own files (quieter LUFS → Einfach, louder → Baba). A normal run shuffles that
+ * pool once, so the same grade plays a different order next time, and a clear
+ * starts the next remaining track a little harder. Daily Beat stays one track
+ * from `dailyPool` (UTC-date seed) and always charts Schwer. A 0–3% playback
+ * rate nudge is optional color; it is not how difficulty changes the song.
  *
  * Charts follow `public/pulse-music/beatmaps/<track>.json` (`beatTimes` from
  * t=0 of that mp3). Judgment reads the playing clip's currentTime. BPM is only
@@ -14,7 +14,9 @@
  *
  * A phone has two thumbs. A hold occupies a finger until it ends, so the chart
  * never asks for a third finger: one hold plus a tap is fine, and a second
- * hold is kept only when no other note starts during that overlap.
+ * hold is kept only when no other note starts during that overlap. Two
+ * fingers on adjacent notes each keep their own hit: a touch whose nearest
+ * note was just taken falls through to the next note in reach.
  *
  * Hits map onto the shared Rush formula so `game=pulse` passes the server check:
  * survivalMs ≈ run length, orbs ≈ perfect + good, comboBonus from perfect
@@ -157,19 +159,81 @@ export function pulseTrackEase(meta) {
 }
 
 /**
- * One difficulty's tracks, easiest → harder. Stays inside that pool.
+ * One difficulty's tracks, easiest → harder. Catalog order only — a run
+ * shuffles this pool instead of playing it front to back.
  * @param {object} manifest
  * @param {string} difficulty
  */
 export function orderPulsePool(manifest, difficulty) {
-  const id = normalizeDifficulty(difficulty);
-  const list = Array.isArray(manifest?.byDifficulty?.[id]) ? [...manifest.byDifficulty[id]] : [];
+  const list = pulsePoolFiles(manifest, difficulty);
   list.sort((a, b) => {
     const delta = pulseTrackEase(manifest?.tracks?.[a]) - pulseTrackEase(manifest?.tracks?.[b]);
     if (delta !== 0) return delta;
     return String(a).localeCompare(String(b));
   });
   return list;
+}
+
+/**
+ * Files for one grade. Does not pull tracks from another tier.
+ * @param {object} manifest
+ * @param {string} difficulty
+ */
+export function pulsePoolFiles(manifest, difficulty) {
+  const id = normalizeDifficulty(difficulty);
+  return Array.isArray(manifest?.byDifficulty?.[id]) ? [...manifest.byDifficulty[id]] : [];
+}
+
+/**
+ * Break up identical neighbors when another track can sit between them.
+ * Unique pools are unchanged.
+ * @param {string[]} list
+ */
+function avoidAdjacentRepeats(list) {
+  const source = [...list];
+  for (let pass = 0; pass < source.length; pass++) {
+    let fixed = false;
+    for (let i = 1; i < source.length; i++) {
+      if (source[i] !== source[i - 1]) continue;
+      let swapped = false;
+      for (const slot of [i, i - 1]) {
+        for (let k = 0; k < source.length; k++) {
+          if (k === slot || source[k] === source[slot]) continue;
+          const next = source.slice();
+          const tmp = next[slot];
+          next[slot] = next[k];
+          next[k] = tmp;
+          if (next.some((file, idx) => idx > 0 && file === next[idx - 1])) continue;
+          source.splice(0, source.length, ...next);
+          swapped = true;
+          fixed = true;
+          break;
+        }
+        if (swapped) break;
+      }
+    }
+    if (!fixed) break;
+  }
+  return source;
+}
+
+/**
+ * Play order for one run: a shuffle of that grade's pool, with no immediate
+ * repeat while another track can separate it. Stays inside the pool.
+ * @param {object} manifest
+ * @param {string} difficulty
+ * @param {() => number} [rng]
+ */
+export function shufflePulsePool(manifest, difficulty, rng = Math.random) {
+  const source = pulsePoolFiles(manifest, difficulty);
+  const roll = typeof rng === 'function' ? rng : Math.random;
+  for (let i = source.length - 1; i > 0; i--) {
+    const j = Math.min(i, Math.floor(roll() * (i + 1)));
+    const tmp = source[i];
+    source[i] = source[j];
+    source[j] = tmp;
+  }
+  return avoidAdjacentRepeats(source);
 }
 
 /**
@@ -278,10 +342,11 @@ export function pulseBeatmapUrl(ref) {
 }
 
 /**
- * Stage track inside one difficulty, easiest first. Daily ignores the chain
- * and picks one file from `dailyPool` with the UTC date.
+ * Stage track inside one difficulty. A run passes its shuffled `order` (or an
+ * `rng` used to shuffle the pool once). Daily ignores the chain and picks one
+ * file from `dailyPool` with the UTC date.
  * @param {object} manifest
- * @param {{ difficulty?: string, stage?: number, daily?: boolean, dailyDate?: string, rng?: () => number }} [opts]
+ * @param {{ difficulty?: string, stage?: number, daily?: boolean, dailyDate?: string, rng?: () => number, order?: string[] }} [opts]
  */
 export function selectPulseTrack(manifest, opts = {}) {
   const daily = !!opts.daily;
@@ -301,7 +366,14 @@ export function selectPulseTrack(manifest, opts = {}) {
     };
   }
   const id = normalizeDifficulty(opts.difficulty);
-  const list = orderPulsePool(manifest, id);
+  const allowed = new Set(pulsePoolFiles(manifest, id));
+  let list;
+  if (Array.isArray(opts.order) && opts.order.length) {
+    list = opts.order.filter((file) => allowed.has(file));
+  } else {
+    const rng = typeof opts.rng === 'function' ? opts.rng : Math.random;
+    list = shufflePulsePool(manifest, id, rng);
+  }
   const requested = Math.max(0, Math.floor(Number(opts.stage) || 0));
   const stage = list.length ? Math.min(requested, list.length - 1) : 0;
   const file = list[stage] || '';
@@ -582,7 +654,7 @@ export function buildBeatChart(spec) {
 
 /**
  * @param {object} manifest
- * @param {{ difficulty?: string, stage?: number, daily?: boolean, dailyDate?: string, rng?: () => number, beatmap?: object }} [opts]
+ * @param {{ difficulty?: string, stage?: number, daily?: boolean, dailyDate?: string, rng?: () => number, order?: string[], beatmap?: object }} [opts]
  */
 export function preparePulseRun(manifest, opts = {}) {
   const picked = selectPulseTrack(manifest, opts);
@@ -691,6 +763,112 @@ export function formatPulseFormula(survivalMs, orbs, comboBonus, nearMisses, sco
   if (cb > 0) parts.push(`Combo +${cb}`);
   if (nm > 0) parts.push(`${nm} Gut × ${NEAR_MISS_POINTS}`);
   return `${parts.join(' + ')} = ${score ?? computeScore(survivalMs, orbs, cb, nm)}`;
+}
+
+/**
+ * How far past the lane midpoint a finger still counts as aimed at that note.
+ * @param {number} laneSpacing
+ */
+function pulsePrimaryReach(laneSpacing) {
+  const spacing = Math.max(1, Number(laneSpacing) || 1);
+  return spacing * 0.5 + Math.max(14, spacing * 0.22);
+}
+
+/**
+ * How far a second finger may reach after its nearest note was taken.
+ * Covers the rest of the adjacent lane, not the lane beyond that.
+ * @param {number} laneSpacing
+ */
+function pulseAdjacentReach(laneSpacing) {
+  const spacing = Math.max(1, Number(laneSpacing) || 1);
+  return spacing * 1.45;
+}
+
+/**
+ * Give each active touch its own in-window note.
+ * The closest finger keeps a shared nearest note. The other finger then takes
+ * its next note within adjacent reach, so two presses on neighboring lanes
+ * both score even when both land in one lane's half of the screen.
+ * A lone finger still only hits a note inside its own lane.
+ * @param {{ id: *, x: number }[]} touches
+ * @param {{ time: number, lane: number, resolved?: boolean, holding?: boolean }[]} notes
+ * @param {{ now: number, goodSec: number, laneX: (lane: number) => number, laneSpacing: number, occupied?: object[], primaryReach?: number, adjacentReach?: number }} opts
+ * @returns {Map<*, object>}
+ */
+export function assignPulseTouches(touches, notes, opts = {}) {
+  const now = Number(opts.now) || 0;
+  const goodSec = Math.max(0, Number(opts.goodSec) || 0);
+  const laneX = typeof opts.laneX === 'function' ? opts.laneX : () => 0;
+  const spacing = Math.max(1, Number(opts.laneSpacing) || 1);
+  const primaryReach = Number.isFinite(opts.primaryReach) ? opts.primaryReach : pulsePrimaryReach(spacing);
+  const adjacentReach = Number.isFinite(opts.adjacentReach) ? opts.adjacentReach : pulseAdjacentReach(spacing);
+  const occupied = new Set(opts.occupied || []);
+  const inWindow = (note) => {
+    const delta = now - Number(note.time);
+    return delta >= -goodSec && delta <= goodSec;
+  };
+
+  /** @type {object[]} */
+  const eligible = [];
+  /** @type {object[]} */
+  const blockers = [];
+  for (const note of notes || []) {
+    if (!note || !Number.isFinite(Number(note.time))) continue;
+    const blocked = occupied.has(note) || !!note.holding || (!!note.resolved && inWindow(note));
+    if (blocked) {
+      blockers.push(note);
+      continue;
+    }
+    if (note.resolved || note.holding) continue;
+    if (!inWindow(note)) continue;
+    eligible.push(note);
+  }
+  const blockerSet = new Set(blockers);
+
+  const rankFor = (touch) =>
+    [...eligible, ...blockers]
+      .map((note) => ({
+        note,
+        dist: Math.abs(Number(touch.x) - laneX(note.lane)),
+        time: Math.abs(now - Number(note.time)),
+        blocked: blockerSet.has(note),
+      }))
+      .sort((a, b) => a.dist - b.dist || a.time - b.time);
+
+  const rankedTouches = (touches || [])
+    .filter((touch) => touch && touch.id != null && Number.isFinite(Number(touch.x)))
+    .map((touch) => ({ touch, ranked: rankFor(touch) }));
+
+  /** @type {Map<*, object>} */
+  const assigned = new Map();
+  const used = new Set();
+
+  /** @type {{ id: *, note: object, dist: number, time: number }[]} */
+  const claims = [];
+  for (const entry of rankedTouches) {
+    const primary = entry.ranked.find((row) => !row.blocked && row.dist <= primaryReach);
+    if (primary) claims.push({ id: entry.touch.id, note: primary.note, dist: primary.dist, time: primary.time });
+  }
+  claims.sort((a, b) => a.dist - b.dist || a.time - b.time);
+  for (const claim of claims) {
+    if (assigned.has(claim.id) || used.has(claim.note)) continue;
+    assigned.set(claim.id, claim.note);
+    used.add(claim.note);
+  }
+
+  for (const entry of rankedTouches) {
+    if (assigned.has(entry.touch.id)) continue;
+    const nearest = entry.ranked[0];
+    if (!nearest) continue;
+    const nearestFree = !nearest.blocked && !used.has(nearest.note);
+    if (nearestFree || nearest.dist > primaryReach) continue;
+    const next = entry.ranked.find((row) => !row.blocked && !used.has(row.note) && row.dist <= adjacentReach);
+    if (!next) continue;
+    assigned.set(entry.touch.id, next.note);
+    used.add(next.note);
+  }
+
+  return assigned;
 }
 
 let manifestPromise = null;
@@ -833,6 +1011,7 @@ export class PulseGame {
     this.held = [false, false, false, false];
     this.keys = [false, false, false, false];
     this.pointers = new Map();
+    this._sawTouch = 0;
     this.hitY = 0;
   }
 
@@ -877,9 +1056,25 @@ export class PulseGame {
     return pad + (span * index) / (n - 1);
   }
 
-  laneAt(clientX) {
-    const rect = this.canvas.getBoundingClientRect?.() || { left: 0, width: this.w || 1 };
+  canvasPoint(clientX, clientY) {
+    const rect = this.canvas.getBoundingClientRect?.() || {
+      left: 0,
+      top: 0,
+      width: this.w || 1,
+      height: this.h || 1,
+    };
     const x = ((clientX - rect.left) / Math.max(1, rect.width)) * this.w;
+    const y = ((clientY - (rect.top || 0)) / Math.max(1, rect.height || this.h || 1)) * this.h;
+    return { x, y };
+  }
+
+  laneSpacing() {
+    const n = this.laneCount();
+    if (n < 2) return Math.max(48, this.w * 0.25);
+    return Math.abs(this.laneX(1) - this.laneX(0)) || 1;
+  }
+
+  laneAtX(x) {
     let best = 0;
     let bestD = Infinity;
     const n = this.laneCount();
@@ -891,6 +1086,10 @@ export class PulseGame {
       }
     }
     return best;
+  }
+
+  laneAt(clientX) {
+    return this.laneAtX(this.canvasPoint(clientX, 0).x);
   }
 
   songTime() {
@@ -934,7 +1133,8 @@ export class PulseGame {
         });
         this.stageFiles = picked.file ? [picked.file] : [];
       } else {
-        this.stageFiles = orderPulsePool(manifest, this.difficultyId);
+        const rng = typeof opts.rng === 'function' ? opts.rng : Math.random;
+        this.stageFiles = shufflePulsePool(manifest, this.difficultyId, rng);
       }
       this.stageCount = Math.max(1, this.stageFiles.length);
       this.beginStage(0, token);
@@ -1020,7 +1220,9 @@ export class PulseGame {
       this.emitHud();
     };
     const cached = beatmapCache.get(pulseBeatmapUrl(meta?.beatmap));
-    if (index === 0 && this._openingBeatmap) applyChart(this._openingBeatmap);
+    const opening = index === 0 ? this._openingBeatmap : null;
+    const openingOk = opening && (!opening.track || opening.track === file);
+    if (openingOk) applyChart(opening);
     else if (cached) applyChart(cached);
     else if (meta?.beatmap) {
       preloadPulseBeatmap(meta.beatmap)
@@ -1163,16 +1365,26 @@ export class PulseGame {
         bestAbs = ad;
       }
     }
-    if (!best) return;
-    const judgment = judgeHit((now - best.time) * 1000, this.cfg);
+    if (best) this.tryHitNote(best);
+  }
+
+  /** Score one note already chosen for this finger. */
+  tryHitNote(note) {
+    if (!this.alive || this.paused || !note || note.resolved || note.holding) return;
+    const now = this.songTime();
+    const goodSec = this.cfg.goodMs / 1000;
+    const delta = now - note.time;
+    if (delta < -goodSec || delta > goodSec) return;
+    const judgment = judgeHit(delta * 1000, this.cfg);
     if (judgment === 'miss') return;
-    if (best.hold) {
-      best.holding = true;
-      best.judgment = judgment;
-      best.flash = 0.25;
+    this.focusLane = note.lane;
+    if (note.hold) {
+      note.holding = true;
+      note.judgment = judgment;
+      note.flash = 0.25;
       return;
     }
-    this.commit(best, judgment, now);
+    this.commit(note, judgment, now);
   }
 
   tryRelease(lane) {
@@ -1429,7 +1641,7 @@ export class PulseGame {
       const lane = laneFromCode(e.code);
       if (lane != null) {
         this.keys[lane] = false;
-        if (![...this.pointers.values()].includes(lane)) {
+        if (![...this.pointers.values()].some((pointer) => pointer.lane === lane)) {
           this.held[lane] = false;
           this.tryRelease(lane);
         }
@@ -1438,7 +1650,7 @@ export class PulseGame {
       if (e.code === 'Space') {
         const focus = Math.min(this.focusLane, this.laneCount() - 1);
         this.keys[focus] = false;
-        if (![...this.pointers.values()].includes(focus)) {
+        if (![...this.pointers.values()].some((pointer) => pointer.lane === focus)) {
           this.held[focus] = false;
           this.tryRelease(focus);
         }
@@ -1446,31 +1658,57 @@ export class PulseGame {
     };
     this._onPointerDown = (e) => {
       if (!this.running || this.paused) return;
-      const lane = this.laneAt(e.clientX);
-      this.pointers.set(e.pointerId, lane);
-      this.held[lane] = true;
-      this.focusLane = lane;
-      try {
-        this.canvas.setPointerCapture(e.pointerId);
-      } catch {
-        /* ignore */
+      if (e.pointerType === 'mouse' && e.button != null && e.button !== 0) return;
+      const nowMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
+      if (e.pointerType === 'mouse' && this._sawTouch && nowMs - this._sawTouch < 800) {
+        if (e.cancelable !== false) e.preventDefault?.();
+        return;
       }
-      this.tryHit(lane);
+      if (e.cancelable !== false) e.preventDefault?.();
+      if (this.pointers.has(e.pointerId)) return;
+      const point = this.canvasPoint(e.clientX, e.clientY ?? 0);
+      const occupied = [];
+      for (const pointer of this.pointers.values()) {
+        if (pointer.note) occupied.push(pointer.note);
+      }
+      const id = e.pointerId;
+      const assigned = assignPulseTouches([{ id, x: point.x }], this.notes, {
+        now: this.songTime(),
+        goodSec: (this.cfg?.goodMs || 0) / 1000,
+        laneX: (lane) => this.laneX(lane),
+        laneSpacing: this.laneSpacing(),
+        occupied,
+      });
+      const note = assigned.get(id) || null;
+      const lane = note ? note.lane : this.laneAtX(point.x);
+      this.pointers.set(id, {
+        x: point.x,
+        y: point.y,
+        lane,
+        note,
+        pointerType: e.pointerType || '',
+      });
+      if (e.pointerType === 'touch' || e.pointerType === 'pen') this._sawTouch = nowMs;
+      if (lane >= 0 && lane < this.held.length) this.held[lane] = true;
+      this.focusLane = lane;
+      if (note) this.tryHitNote(note);
     };
     this._onPointerUp = (e) => {
-      const lane = this.pointers.get(e.pointerId);
+      const pointer = this.pointers.get(e.pointerId);
       this.pointers.delete(e.pointerId);
-      if (lane == null) return;
-      if (!this.keys[lane] && ![...this.pointers.values()].includes(lane)) {
-        this.held[lane] = false;
+      if (!pointer || pointer.lane == null) return;
+      const lane = pointer.lane;
+      if (!this.keys[lane] && ![...this.pointers.values()].some((other) => other.lane === lane)) {
+        if (lane >= 0 && lane < this.held.length) this.held[lane] = false;
         this.tryRelease(lane);
       }
     };
     window.addEventListener('keydown', this._onKeyDown, { passive: false });
     window.addEventListener('keyup', this._onKeyUp);
-    this.canvas.addEventListener('pointerdown', this._onPointerDown);
-    this.canvas.addEventListener('pointerup', this._onPointerUp);
-    this.canvas.addEventListener('pointercancel', this._onPointerUp);
+    this.canvas.addEventListener('pointerdown', this._onPointerDown, { passive: false });
+    window.addEventListener('pointerup', this._onPointerUp);
+    window.addEventListener('pointercancel', this._onPointerUp);
+    if (this.canvas?.style) this.canvas.style.touchAction = 'none';
     this._bound = true;
   }
 
@@ -1479,8 +1717,8 @@ export class PulseGame {
     window.removeEventListener('keydown', this._onKeyDown);
     window.removeEventListener('keyup', this._onKeyUp);
     this.canvas.removeEventListener('pointerdown', this._onPointerDown);
-    this.canvas.removeEventListener('pointerup', this._onPointerUp);
-    this.canvas.removeEventListener('pointercancel', this._onPointerUp);
+    window.removeEventListener('pointerup', this._onPointerUp);
+    window.removeEventListener('pointercancel', this._onPointerUp);
     this.held = [false, false, false, false];
     this.keys = [false, false, false, false];
     this.pointers.clear();

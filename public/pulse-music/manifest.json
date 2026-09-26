@@ -1,6 +1,6 @@
 {
-  "version": 2,
-  "note": "User-owned tracks; trimmed from t=0; LUFS-banded; excluded ua13+ua20",
+  "version": 4,
+  "note": "User-owned tracks; trimmed from t=0; LUFS and beat density; excluded ua13+ua20; added mittel-5, mittel-6, baba-5, baba-6",
   "tracks": {
     "einfach-1.mp3": {
       "file": "public/pulse-music/einfach-1.mp3",
@@ -193,6 +193,54 @@
       "beatmap": "public/pulse-music/beatmaps/baba-4.json",
       "beatCount": 223,
       "onsetCount": 359
+    },
+    "mittel-5.mp3": {
+      "file": "public/pulse-music/mittel-5.mp3",
+      "sourceId": "ee2204751346418e4c65eb1b2e2f1033f628ea56c9e511421bad25a5570186b3",
+      "lufs": -15.5,
+      "durationSec": 70,
+      "role": "alt",
+      "bpmEstimate": 143.55,
+      "bpmSource": "librosa.beat_track on trimmed clip",
+      "beatmap": "public/pulse-music/beatmaps/mittel-5.json",
+      "beatCount": 139,
+      "onsetCount": 271
+    },
+    "mittel-6.mp3": {
+      "file": "public/pulse-music/mittel-6.mp3",
+      "sourceId": "dcb2b8bb749650e025992e0f25f7bb65917b2d09ba88bf81a8900d2b7ef6f04d",
+      "lufs": -15.5,
+      "durationSec": 70,
+      "role": "alt",
+      "bpmEstimate": 143.55,
+      "bpmSource": "librosa.beat_track on trimmed clip",
+      "beatmap": "public/pulse-music/beatmaps/mittel-6.json",
+      "beatCount": 150,
+      "onsetCount": 249
+    },
+    "baba-5.mp3": {
+      "file": "public/pulse-music/baba-5.mp3",
+      "sourceId": "86026eb4168d4a4bd204f04a7fd823c8ad018526cf9d9d6b6a23c55ace5d40c5",
+      "lufs": -14.0,
+      "durationSec": 100,
+      "role": "alt",
+      "bpmEstimate": 143.55,
+      "bpmSource": "librosa.beat_track on trimmed clip",
+      "beatmap": "public/pulse-music/beatmaps/baba-5.json",
+      "beatCount": 219,
+      "onsetCount": 467
+    },
+    "baba-6.mp3": {
+      "file": "public/pulse-music/baba-6.mp3",
+      "sourceId": "2be7b2a15dd962e304e7579988a73fdc1142a426d171e18bfca518ff6f554d1f",
+      "lufs": -13.7,
+      "durationSec": 70,
+      "role": "alt",
+      "bpmEstimate": 129.2,
+      "bpmSource": "librosa.beat_track on trimmed clip",
+      "beatmap": "public/pulse-music/beatmaps/baba-6.json",
+      "beatCount": 151,
+      "onsetCount": 235
     }
   },
   "byDifficulty": {
@@ -206,7 +254,9 @@
       "mittel-1.mp3",
       "mittel-2.mp3",
       "mittel-3.mp3",
-      "mittel-4.mp3"
+      "mittel-4.mp3",
+      "mittel-5.mp3",
+      "mittel-6.mp3"
     ],
     "schwer": [
       "schwer-1.mp3",
@@ -218,7 +268,9 @@
       "baba-1.mp3",
       "baba-2.mp3",
       "baba-3.mp3",
-      "baba-4.mp3"
+      "baba-4.mp3",
+      "baba-5.mp3",
+      "baba-6.mp3"
     ]
   },
   "dailyPool": [
