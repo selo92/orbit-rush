@@ -624,9 +624,13 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
     PULSE_AUDIO_OFFSET_SEC,
     PULSE_STRONG_ONSET,
     orderPulsePool,
+    shufflePulsePool,
+    assignPulseTouches,
     pulseStageConfig,
     primePulseBeatmap,
+    pulseTrackTitle,
   } = await import(path.join(root, 'src', 'pulse.js'));
+  const { mulberry32 } = await import(path.join(root, 'src', 'rng.js'));
 
   for (const meta of Object.values(manifest.tracks)) {
     assert(typeof meta.beatmap === 'string' && meta.beatmap.endsWith('.json'), `${meta.file} names a beatmap`);
@@ -652,16 +656,42 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
     return false;
   };
 
-  const primaries = ['einfach', 'mittel', 'schwer', 'baba'].map(
-    (id) => preparePulseRun(manifest, { difficulty: id, rng: () => 0 }).file
+  const fixedRng = () => 0;
+  const einfachOrder = shufflePulsePool(manifest, 'einfach', fixedRng);
+  const babaOrder = shufflePulsePool(manifest, 'baba', fixedRng);
+  assert(
+    einfachOrder.join('|') === shufflePulsePool(manifest, 'einfach', fixedRng).join('|'),
+    'the same rng replays the same song order'
   );
-  assert(new Set(primaries).size === 4, 'each difficulty plays a different track file');
-  const einfachRun = preparePulseRun(manifest, { difficulty: 'einfach', rng: () => 0 });
-  const babaRun = preparePulseRun(manifest, { difficulty: 'baba', rng: () => 0 });
-  assert(einfachRun.file === orderPulsePool(manifest, 'einfach')[0], 'einfach starts on the easiest track');
-  assert(babaRun.file === orderPulsePool(manifest, 'baba')[0], 'baba starts on the easiest track');
-  assert(einfachRun.file === 'einfach-4.mp3', 'einfach level 1 is the sparsest clip');
-  assert(babaRun.file === 'baba-3.mp3', 'baba level 1 is the sparsest clip');
+  assert(
+    einfachOrder.length === manifest.byDifficulty.einfach.length &&
+      new Set(einfachOrder).size === einfachOrder.length &&
+      manifest.byDifficulty.einfach.every((file) => einfachOrder.includes(file)),
+    'a shuffle is a permutation of that difficulty pool'
+  );
+  assert(einfachOrder.every((file) => file.startsWith('einfach-')), 'einfach shuffle stays in the einfach pack');
+  for (let i = 1; i < einfachOrder.length; i++) {
+    assert(einfachOrder[i] !== einfachOrder[i - 1], 'a run does not repeat the same song back to back');
+  }
+  const einfachEase = orderPulsePool(manifest, 'einfach');
+  assert(einfachEase[0] === 'einfach-4.mp3', 'ease order still lists the sparsest einfach clip first');
+  assert(orderPulsePool(manifest, 'baba')[0] === 'baba-3.mp3', 'ease order still lists the sparsest baba clip first');
+  const seenOrders = new Set();
+  for (let seed = 1; seed <= 16; seed++) {
+    seenOrders.add(shufflePulsePool(manifest, 'einfach', mulberry32(seed)).join('|'));
+  }
+  assert(seenOrders.size >= 2, 'starting the same difficulty twice can play a different song order');
+  const duped = shufflePulsePool(
+    { byDifficulty: { einfach: ['a.mp3', 'a.mp3', 'b.mp3'] } },
+    'einfach',
+    mulberry32(4)
+  );
+  assert(duped.length === 3, 'duplicate pool entries stay in the shuffle');
+  assert(duped[0] !== duped[1] && duped[1] !== duped[2], 'adjacent repeats are split when another track exists');
+  const einfachRun = preparePulseRun(manifest, { difficulty: 'einfach', order: einfachOrder, stage: 0 });
+  const babaRun = preparePulseRun(manifest, { difficulty: 'baba', order: babaOrder, stage: 0 });
+  assert(einfachRun.file === einfachOrder[0], 'stage 1 plays the first shuffled track');
+  assert(babaRun.file === babaOrder[0] && babaRun.file.startsWith('baba-'), 'baba stage 1 stays in the baba pack');
   assert(einfachRun.url !== babaRun.url, 'difficulty changes the file, not only the speed');
   assert(
     einfachRun.playbackRate >= 1 &&
@@ -670,13 +700,13 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
       babaRun.playbackRate <= 1.03,
     'playback rate nudge stays within 3%'
   );
-  const schwerPool = orderPulsePool(manifest, 'schwer');
-  const schwerNext = preparePulseRun(manifest, { difficulty: 'schwer', stage: 1 });
-  assert(schwerNext.file === schwerPool[1], 'stage 2 is the next schwer track');
-  assert(schwerNext.file !== manifest.byDifficulty.schwer[0], 'stage 2 leaves the first track');
+  const schwerOrder = shufflePulsePool(manifest, 'schwer', fixedRng);
+  const schwerNext = preparePulseRun(manifest, { difficulty: 'schwer', stage: 1, order: schwerOrder });
+  assert(schwerNext.file === schwerOrder[1], 'stage 2 is the next shuffled schwer track');
+  assert(schwerNext.file !== schwerOrder[0], 'stage 2 leaves the first track');
   assert(schwerNext.file.startsWith('schwer-'), 'the next stage stays on the difficulty');
   for (const id of ['einfach', 'mittel', 'schwer', 'baba']) {
-    const pool = orderPulsePool(manifest, id);
+    const pool = shufflePulsePool(manifest, id, fixedRng);
     assert(pool.length === manifest.byDifficulty[id].length, `${id} stage pool keeps every track`);
     assert(pool.every((file) => file.startsWith(`${id}-`)), `${id} stages do not pull another tier`);
     let prev = pulseStageConfig(id, 0);
@@ -710,6 +740,29 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
   assert(
     JSON.stringify(dailyA.chart.notes) === JSON.stringify(dailyB.chart.notes),
     'daily chart is seeded'
+  );
+  let otherDaily = null;
+  for (let day = 1; day <= 28; day++) {
+    const date = `2026-08-${String(day).padStart(2, '0')}`;
+    const picked = preparePulseRun(manifest, { daily: true, dailyDate: date });
+    if (picked.file && picked.file !== dailyA.file) {
+      otherDaily = picked;
+      break;
+    }
+  }
+  assert(otherDaily, 'daily beat rotates across dates');
+  const otherDailyMap = loadBeatmap(otherDaily.file);
+  const otherDailyRun = preparePulseRun(manifest, {
+    daily: true,
+    dailyDate: otherDaily.dailyDate,
+    beatmap: otherDailyMap,
+  });
+  assert(otherDailyRun.file === otherDaily.file, 'a later day keeps that date seed');
+  assert(
+    otherDailyRun.chart.notes.every(
+      (n) => onBeat(n.time, otherDailyMap.beatTimes) || onStrongOnset(n.time, otherDailyMap)
+    ),
+    'that day charts its own beatmap'
   );
   assert(
     dailyA.chart.notes.every(
@@ -799,23 +852,33 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
     assert(pulsePeakFingers(stagedEasy[stage].notes) <= PULSE_MAX_FINGERS, 'later stages stay within two fingers');
   }
   for (const id of ['einfach', 'mittel', 'schwer', 'baba']) {
-    const files = orderPulsePool(manifest, id);
+    const files = shufflePulsePool(manifest, id, fixedRng);
+    let holds = 0;
+    let beside = 0;
     for (let stage = 0; stage < files.length; stage++) {
+      const beatmap = loadBeatmap(files[stage]);
       const run = preparePulseRun(manifest, {
         difficulty: id,
         stage,
-        beatmap: loadBeatmap(files[stage]),
+        order: files,
+        beatmap,
       });
+      assert(run.file === files[stage], `${id} level ${stage + 1} plays the shuffled song`);
       assert(
         pulsePeakFingers(run.chart.notes) <= PULSE_MAX_FINGERS,
         `${id} level ${stage + 1} never needs a third finger`
       );
-      assert(run.chart.notes.some((n) => n.hold), `${id} level ${stage + 1} still has a hold`);
-      assert(
-        tapBesideHold(run.chart.notes),
-        `${id} level ${stage + 1} still places a tap beside a hold`
-      );
+      if (run.chart.notes.some((n) => n.hold)) holds += 1;
+      if (tapBesideHold(run.chart.notes)) beside += 1;
+      for (const note of run.chart.notes) {
+        const onThisMap =
+          onBeat(note.time, beatmap.beatTimes) ||
+          (id === 'schwer' || id === 'baba' ? onStrongOnset(note.time, beatmap) : false);
+        assert(onThisMap, `${id} level ${stage + 1} notes follow ${files[stage]}`);
+      }
     }
+    assert(holds > 0, `${id} shuffle still charts a hold`);
+    assert(beside > 0, `${id} shuffle still places a tap beside a hold`);
   }
   assert(
     pulsePeakFingers(dailyA.chart.notes) <= PULSE_MAX_FINGERS,
@@ -854,16 +917,22 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
   assert(pulsePeakFingers(chord) <= 2, 'a three-note chord stays within two fingers');
   const again = limitPulseFingers(overlapFixed);
   assert(JSON.stringify(again) === JSON.stringify(overlapFixed), 'the finger cap is stable');
-  const einfachChain = orderPulsePool(manifest, 'einfach');
+  const einfachChain = einfachOrder;
+  const chainMap = loadBeatmap(einfachChain[1]);
   const chainRun = preparePulseRun(manifest, {
     difficulty: 'einfach',
     stage: 1,
-    beatmap: loadBeatmap(einfachChain[1]),
+    order: einfachChain,
+    beatmap: chainMap,
   });
-  assert(chainRun.file === einfachChain[1], 'preparePulseRun stage 2 uses the next file');
-  assert(chainRun.title === 'Einfach 2', 'stage title comes from the file');
+  assert(chainRun.file === einfachChain[1], 'preparePulseRun stage 2 uses the next shuffled file');
+  assert(chainRun.title === pulseTrackTitle(einfachChain[1], manifest.tracks[einfachChain[1]]), 'stage title comes from the file');
   assert(chainRun.profile.perfectMs < getPulseDifficulty('einfach').perfectMs, 'stage 2 profile is stricter');
   assert(chainRun.chart.notes.length > 0, 'stage 2 chart is built from that track beatmap');
+  assert(
+    chainRun.chart.notes.every((note) => onBeat(note.time, chainMap.beatTimes)),
+    'stage 2 notes sit on the playing song, not another track'
+  );
 
   const invented = buildBeatChart({
     bpm: 120,
@@ -877,15 +946,33 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
     einfachRun.beatmapUrl.endsWith(`/${einfachRun.file.replace(/\.mp3$/, '.json')}`),
     'einfach run points at its beatmap'
   );
-  const einfachStages = orderPulsePool(manifest, 'einfach');
-  const einfachStageCharts = einfachStages.map((file, stage) =>
-    preparePulseRun(manifest, { difficulty: 'einfach', stage, beatmap: loadBeatmap(file) })
+  const einfachStageCharts = einfachChain.map((file, stage) =>
+    preparePulseRun(manifest, {
+      difficulty: 'einfach',
+      stage,
+      order: einfachChain,
+      beatmap: loadBeatmap(file),
+    })
   );
   for (let stage = 1; stage < einfachStageCharts.length; stage++) {
     const prev = einfachStageCharts[stage - 1];
     const next = einfachStageCharts[stage];
+    const prevMap = loadBeatmap(prev.file);
+    const nextMap = loadBeatmap(next.file);
     assert(next.file !== prev.file, 'each einfach stage is a different song');
-    assert(next.chart.notes.length > prev.chart.notes.length, `einfach level ${stage + 1} charts more notes`);
+    assert(
+      next.chart.notes.every((note) => onBeat(note.time, nextMap.beatTimes)),
+      `einfach level ${stage + 1} uses its own beatmap`
+    );
+    assert(
+      prev.chart.notes.map((note) => note.time).join(',') !== next.chart.notes.map((note) => note.time).join(','),
+      'two songs do not share one fake grid'
+    );
+    assert(
+      next.chart.notes.some((note) => !onBeat(note.time, prevMap.beatTimes)) ||
+        prev.chart.notes.some((note) => !onBeat(note.time, nextMap.beatTimes)),
+      'the chart changes when the song changes'
+    );
     assert(next.profile.perfectMs < prev.profile.perfectMs, `einfach level ${stage + 1} windows are tighter`);
     assert(next.profile.travelSec < prev.profile.travelSec, `einfach level ${stage + 1} scrolls faster`);
   }
@@ -965,6 +1052,100 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
     'live pulse score stays on the shared formula'
   );
 
+  const laneX = (lane) => 100 + lane * 80;
+  const chordNotes = [
+    { time: 1, lane: 0, hold: false, endTime: 1 },
+    { time: 1, lane: 1, hold: false, endTime: 1 },
+  ];
+  const bothInLeftLane = assignPulseTouches(
+    [
+      { id: 'left', x: 108 },
+      { id: 'right', x: 132 },
+    ],
+    chordNotes,
+    { now: 1, goodSec: 0.18, laneX, laneSpacing: 80 }
+  );
+  assert(bothInLeftLane.size === 2, 'two nearby touches assign two notes');
+  assert(bothInLeftLane.get('left') !== bothInLeftLane.get('right'), 'one note does not take both fingers');
+  assert(bothInLeftLane.get('left') === chordNotes[0], 'the closer finger keeps the left note');
+  assert(bothInLeftLane.get('right') === chordNotes[1], 'the other finger reaches the adjacent note');
+  const lone = assignPulseTouches([{ id: 'only', x: 108 }], chordNotes, {
+    now: 1,
+    goodSec: 0.18,
+    laneX,
+    laneSpacing: 80,
+  });
+  assert(lone.size === 1 && lone.get('only') === chordNotes[0], 'one finger still hits only its own note');
+  const farLane = assignPulseTouches([{ id: 'only', x: 100 }], [chordNotes[1]], {
+    now: 1,
+    goodSec: 0.18,
+    laneX,
+    laneSpacing: 80,
+  });
+  assert(farLane.size === 0, 'a lone finger does not reach across into the next lane');
+
+  const fingers = new PulseGame(canvas, { audio, onGameOver() {}, onHud() {} });
+  fingers.resize();
+  fingers.setDifficulty('mittel');
+  fingers.cfg = getPulseDifficulty('mittel');
+  fingers.running = true;
+  fingers.alive = true;
+  fingers.paused = false;
+  fingers.bindInput();
+  fingers.notes = [
+    { time: 2, lane: 0, hold: false, endTime: 2, resolved: false, holding: false, judgment: null },
+    { time: 2, lane: 1, hold: false, endTime: 2, resolved: false, holding: false, judgment: null },
+  ];
+  fingers._forcedTime = 2;
+  const leftX = fingers.laneX(0);
+  const rightX = fingers.laneX(1);
+  const midX = (leftX + rightX) / 2;
+  const press = (pointerId, clientX) =>
+    fingers._onPointerDown({
+      pointerId,
+      pointerType: 'touch',
+      clientX,
+      clientY: fingers.hitY,
+      button: 0,
+      cancelable: true,
+      preventDefault() {},
+    });
+  press(11, leftX + 4);
+  press(12, midX - 8);
+  assert(
+    fingers.notes[0].resolved && fingers.notes[1].resolved && fingers.orbsCollected === 2,
+    'two fingers on adjacent lanes both score'
+  );
+  const holdPair = new PulseGame(canvas, { audio, onGameOver() {}, onHud() {} });
+  holdPair.resize();
+  holdPair.setDifficulty('mittel');
+  holdPair.cfg = getPulseDifficulty('mittel');
+  holdPair.running = true;
+  holdPair.alive = true;
+  holdPair.paused = false;
+  holdPair.bindInput();
+  holdPair.notes = [
+    { time: 3, lane: 0, hold: true, endTime: 4, resolved: false, holding: false, judgment: null },
+    { time: 3, lane: 1, hold: false, endTime: 3, resolved: false, holding: false, judgment: null },
+  ];
+  holdPair._forcedTime = 3;
+  const holdLeft = holdPair.laneX(0);
+  const holdMid = (holdLeft + holdPair.laneX(1)) / 2;
+  const holdPress = (pointerId, clientX) =>
+    holdPair._onPointerDown({
+      pointerId,
+      pointerType: 'touch',
+      clientX,
+      clientY: holdPair.hitY,
+      button: 0,
+      cancelable: true,
+      preventDefault() {},
+    });
+  holdPress(21, holdLeft + 2);
+  holdPress(22, holdMid - 6);
+  assert(holdPair.notes[0].holding && holdPair.notes[1].resolved, 'a hold and a side-by-side tap both register');
+  assert(holdPair.orbsCollected === 1, 'the tap scores while the hold is still down');
+
   const clock = {
     t: 6.8034,
     hasClip() {
@@ -1012,11 +1193,20 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
     difficulty: 'einfach',
     manifest,
     silent: true,
+    rng: fixedRng,
     beatmap: loadBeatmap(einfachChain[0]),
   });
   assert(chain.stageIndex === 0 && chain.stageCount === 4, 'einfach opens on level 1 of 4');
-  assert(chain.trackFile === einfachChain[0], 'level 1 is the easiest track');
-  assert(chain.trackTitle === 'Einfach 4', 'level 1 shows the easiest track');
+  assert(chain.stageFiles.join('|') === einfachChain.join('|'), 'the run keeps its shuffled order');
+  assert(chain.trackFile === einfachChain[0], 'level 1 is the first shuffled track');
+  assert(
+    chain.trackTitle === pulseTrackTitle(einfachChain[0], manifest.tracks[einfachChain[0]]),
+    'level 1 shows that track'
+  );
+  assert(
+    chain.notes.every((note) => onBeat(note.time, loadBeatmap(einfachChain[0]).beatTimes)),
+    'level 1 notes follow the first song beatmap'
+  );
   chain.orbsCollected = 4;
   chain.comboBonus = 10;
   for (const note of chain.notes) note.resolved = true;
@@ -1027,7 +1217,11 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
   assert(chainOver == null, 'a mid-run clear does not submit');
   await new Promise((r) => setTimeout(r, 80));
   assert(chain.alive && chain.stageIndex === 1, 'the clear loads the next stage');
-  assert(chain.trackFile === einfachChain[1], 'stage 2 plays the next song');
+  assert(chain.trackFile === einfachChain[1], 'stage 2 plays the next shuffled song');
+  assert(
+    chain.notes.every((note) => onBeat(note.time, loadBeatmap(einfachChain[1]).beatTimes)),
+    'stage 2 notes follow the new song beatmap'
+  );
   assert(chain.orbsCollected === 4 && chain.comboBonus === 10, 'hits carry into the next stage');
   assert(chain.bankedSurvivalMs >= 50000, 'stage time banks into the run');
   assert(
@@ -1047,7 +1241,10 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
   await new Promise((r) => setTimeout(r, 80));
   assert(chainOver && chainOver.game === 'pulse' && chainOver.cleared === false, 'a fail ends the run');
   assert(chainOver.stage === 2 && chainOver.stageCount === 4, 'the fail reports how far the run got');
-  assert(chainOver.trackTitle === 'Einfach 2', 'the fail names the track');
+  assert(
+    chainOver.trackTitle === pulseTrackTitle(einfachChain[1], manifest.tracks[einfachChain[1]]),
+    'the fail names the track'
+  );
   assert(chainOver.orbs === 4, 'the submitted run keeps earlier hits');
   assert(
     chainOver.score ===
@@ -1076,10 +1273,16 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
   });
   finale.stageGapMs = 40;
   finale.resize();
-  finale.start({ difficulty: 'einfach', manifest, silent: true, beatmap: loadBeatmap(einfachChain[0]) });
+  finale.start({
+    difficulty: 'einfach',
+    manifest,
+    silent: true,
+    rng: fixedRng,
+    beatmap: loadBeatmap(einfachChain[0]),
+  });
   finale.stageIndex = finale.stageCount - 1;
   finale.trackFile = einfachChain[3];
-  finale.trackTitle = 'Einfach 1';
+  finale.trackTitle = pulseTrackTitle(einfachChain[3], manifest.tracks[einfachChain[3]]);
   for (const note of finale.notes) note.resolved = true;
   finale._forcedTime = finale.durationSec;
   finale.alive = true;
