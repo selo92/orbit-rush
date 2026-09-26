@@ -6,3 +6,4 @@ Place files under `public/pulse-music/` and load via `manifest.json`.
 
 Per difficulty: first file is primary; others are random alts on replay.
 Daily Beat: pick from `dailyPool` using UTC date hash (same idea as Rush Daily seed).
+Each clip has `beatmaps/<name>.json` (`beatTimes` from t=0). Charts follow those stamps, not a BPM grid.

@@ -617,7 +617,30 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
     applyPulseHit,
     pulseShouldFail,
     PulseGame,
+    PULSE_AUDIO_OFFSET_SEC,
+    PULSE_STRONG_ONSET,
   } = await import(path.join(root, 'src', 'pulse.js'));
+
+  for (const meta of Object.values(manifest.tracks)) {
+    assert(typeof meta.beatmap === 'string' && meta.beatmap.endsWith('.json'), `${meta.file} names a beatmap`);
+    const rel = meta.beatmap.replace(/^public\/pulse-music\//, '');
+    assert(fs.existsSync(path.join(musicDir, rel)), `${rel} is in the music pack`);
+  }
+
+  const loadBeatmap = (file) => {
+    const rel = manifest.tracks[file].beatmap.replace(/^public\/pulse-music\//, '');
+    return JSON.parse(fs.readFileSync(path.join(musicDir, rel), 'utf8'));
+  };
+  const EPS = 1e-3;
+  const onBeat = (time, beatTimes) => beatTimes.some((b) => Math.abs(b - time) <= EPS);
+  const onStrongOnset = (time, map) => {
+    const times = map.onsetTimes || [];
+    const strengths = map.onsetStrengths || [];
+    for (let i = 0; i < Math.min(times.length, strengths.length); i++) {
+      if (strengths[i] >= PULSE_STRONG_ONSET && Math.abs(times[i] - time) <= EPS) return true;
+    }
+    return false;
+  };
 
   const primaries = ['einfach', 'mittel', 'schwer', 'baba'].map(
     (id) => preparePulseRun(manifest, { difficulty: id, rng: () => 0 }).file
@@ -639,43 +662,75 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
   assert(schwerAlt.file !== manifest.byDifficulty.schwer[0], 'roll can pick an alt track');
   assert(schwerAlt.file.startsWith('schwer-'), 'alt stays on the difficulty');
 
-  const dailyA = preparePulseRun(manifest, { daily: true, dailyDate: '2026-09-26' });
-  const dailyB = preparePulseRun(manifest, { daily: true, dailyDate: '2026-09-26' });
+  const dailyMap = loadBeatmap(
+    preparePulseRun(manifest, { daily: true, dailyDate: '2026-09-26' }).file
+  );
+  const dailyA = preparePulseRun(manifest, { daily: true, dailyDate: '2026-09-26', beatmap: dailyMap });
+  const dailyB = preparePulseRun(manifest, { daily: true, dailyDate: '2026-09-26', beatmap: dailyMap });
   assert(dailyA.file === dailyB.file, 'daily track is stable for a UTC date');
   assert(dailyA.difficulty === 'schwer', 'daily beat charts Schwer');
   assert(manifest.dailyPool.includes(dailyA.file), 'daily track comes from dailyPool');
+  assert(dailyA.beatmapUrl.endsWith(`/${dailyA.file.replace(/\.mp3$/, '.json')}`), 'daily run uses that track beatmap');
+  assert(dailyA.chart.notes.length > 0, 'daily chart is built from the beatmap');
   assert(
     JSON.stringify(dailyA.chart.notes) === JSON.stringify(dailyB.chart.notes),
     'daily chart is seeded'
   );
+  assert(
+    dailyA.chart.notes.every(
+      (n) => n.time + EPS >= dailyMap.beatTimes[0] && (onBeat(n.time, dailyMap.beatTimes) || onStrongOnset(n.time, dailyMap))
+    ),
+    'daily notes land on that track beatmap'
+  );
 
-  const easyChart = buildBeatChart({
-    bpm: 120,
-    durationSec: 40,
-    difficulty: 'einfach',
-    trackId: 'density',
-    dailyDate: 'fixed',
-  });
-  const midChart = buildBeatChart({
-    bpm: 120,
-    durationSec: 40,
-    difficulty: 'mittel',
-    trackId: 'density',
-    dailyDate: 'fixed',
-  });
-  const babaChart = buildBeatChart({
-    bpm: 120,
-    durationSec: 40,
-    difficulty: 'baba',
-    trackId: 'density',
-    dailyDate: 'fixed',
-  });
+  const fixture = loadBeatmap('einfach-1.mp3');
+  const chartFor = (difficulty) =>
+    buildBeatChart({
+      beatTimes: fixture.beatTimes,
+      onsetTimes: fixture.onsetTimes,
+      onsetStrengths: fixture.onsetStrengths,
+      bpm: fixture.bpm,
+      durationSec: fixture.durationSec,
+      difficulty,
+      trackId: 'einfach-1.mp3',
+      dailyDate: 'fixed',
+    });
+  const easyChart = chartFor('einfach');
+  const midChart = chartFor('mittel');
+  const schwerChart = chartFor('schwer');
+  const babaChart = chartFor('baba');
   assert(easyChart.notes.length < midChart.notes.length, 'einfach is less dense than mittel');
   assert(midChart.notes.length < babaChart.notes.length, 'baba is denser than mittel');
   assert(easyChart.lanes === 3 && babaChart.lanes === 4, 'lane count follows difficulty');
   const easyHolds = easyChart.notes.filter((n) => n.hold).length;
   const babaHolds = babaChart.notes.filter((n) => n.hold).length;
   assert(babaHolds > easyHolds, 'baba charts more holds');
+  for (const chart of [easyChart, midChart]) {
+    for (const note of chart.notes) {
+      assert(note.time + EPS >= fixture.beatTimes[0], 'no note before the first analyzed beat');
+      assert(onBeat(note.time, fixture.beatTimes), 'einfach/mittel hits are beatTimes, not a BPM grid');
+      if (note.hold) assert(onBeat(note.endTime, fixture.beatTimes) && note.endTime > note.time, 'hold ends on a later beat');
+    }
+  }
+  for (const chart of [schwerChart, babaChart]) {
+    for (const note of chart.notes) {
+      assert(note.time + EPS >= fixture.beatTimes[0], 'no note before the first analyzed beat');
+      assert(
+        onBeat(note.time, fixture.beatTimes) || onStrongOnset(note.time, fixture),
+        'schwer/baba hits are beats or strong onsets'
+      );
+      if (note.hold) assert(onBeat(note.endTime, fixture.beatTimes) && note.endTime > note.time, 'hold ends on a later beat');
+    }
+  }
+  const invented = buildBeatChart({
+    bpm: 120,
+    durationSec: 40,
+    difficulty: 'baba',
+    trackId: 'density',
+    dailyDate: 'fixed',
+  });
+  assert(invented.notes.length === 0, 'bpm alone does not invent a hit grid');
+  assert(einfachRun.beatmapUrl === '/pulse-music/beatmaps/einfach-1.json', 'einfach run points at its beatmap');
   assert(getPulseDifficulty('einfach').perfectMs > getPulseDifficulty('baba').perfectMs, 'baba windows are tighter');
   assert(judgeHit(90, 'einfach') === 'perfect', 'einfach treats 90ms as perfect');
   assert(judgeHit(90, 'baba') === 'miss', 'baba treats 90ms as a miss');
@@ -751,6 +806,34 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
     live.score === computeScore(live.survivalMs, live.orbsCollected, live.comboBonus, live.nearMisses),
     'live pulse score stays on the shared formula'
   );
+
+  const clock = {
+    t: 6.8034,
+    hasClip() {
+      return true;
+    },
+    clipTime() {
+      return this.t;
+    },
+    clipEnded() {
+      return false;
+    },
+  };
+  const synced = new PulseGame(canvas, { audio: clock, onGameOver() {}, onHud() {} });
+  synced.resize();
+  synced.setDifficulty('einfach');
+  synced.alive = true;
+  synced.running = true;
+  synced.durationSec = 55;
+  synced.notes = [];
+  synced._forcedTime = null;
+  synced._fallbackTime = 99;
+  synced.update(0.5);
+  assert(
+    Math.abs(synced.songTime() - (6.8034 + PULSE_AUDIO_OFFSET_SEC)) < 1e-9,
+    'judgment follows audio.currentTime plus the latency offset'
+  );
+  assert(synced._fallbackTime === 99, 'the rAF clock does not advance while a clip is loaded');
 }
 
 const env = { ...process.env, PORT: String(PORT), AERGER_FILE: path.join(root, 'data', `aerger-smoke-${PORT}.json`) };

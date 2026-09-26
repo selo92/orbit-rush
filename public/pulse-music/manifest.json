@@ -8,8 +8,11 @@
       "lufs": -16.4,
       "durationSec": 55,
       "role": "primary",
-      "bpmEstimate": 92,
-      "bpmSource": "difficulty-default (no onset lib on box); recalibrate in-game if needed"
+      "bpmEstimate": 184.57,
+      "bpmSource": "librosa.beat_track on trimmed clip",
+      "beatmap": "public/pulse-music/beatmaps/einfach-1.json",
+      "beatCount": 144,
+      "onsetCount": 172
     },
     "einfach-2.mp3": {
       "file": "public/pulse-music/einfach-2.mp3",
@@ -17,8 +20,11 @@
       "lufs": -15.3,
       "durationSec": 55,
       "role": "alt",
-      "bpmEstimate": 92,
-      "bpmSource": "difficulty-default (no onset lib on box); recalibrate in-game if needed"
+      "bpmEstimate": 103.36,
+      "bpmSource": "librosa.beat_track on trimmed clip",
+      "beatmap": "public/pulse-music/beatmaps/einfach-2.json",
+      "beatCount": 86,
+      "onsetCount": 197
     },
     "einfach-3.mp3": {
       "file": "public/pulse-music/einfach-3.mp3",
@@ -26,8 +32,11 @@
       "lufs": -15.2,
       "durationSec": 55,
       "role": "alt",
-      "bpmEstimate": 92,
-      "bpmSource": "difficulty-default (no onset lib on box); recalibrate in-game if needed"
+      "bpmEstimate": 143.55,
+      "bpmSource": "librosa.beat_track on trimmed clip",
+      "beatmap": "public/pulse-music/beatmaps/einfach-3.json",
+      "beatCount": 102,
+      "onsetCount": 200
     },
     "einfach-4.mp3": {
       "file": "public/pulse-music/einfach-4.mp3",
@@ -35,8 +44,11 @@
       "lufs": -14.9,
       "durationSec": 55,
       "role": "alt",
-      "bpmEstimate": 92,
-      "bpmSource": "difficulty-default (no onset lib on box); recalibrate in-game if needed"
+      "bpmEstimate": 136.0,
+      "bpmSource": "librosa.beat_track on trimmed clip",
+      "beatmap": "public/pulse-music/beatmaps/einfach-4.json",
+      "beatCount": 112,
+      "onsetCount": 208
     },
     "mittel-1.mp3": {
       "file": "public/pulse-music/mittel-1.mp3",
@@ -44,8 +56,11 @@
       "lufs": -14.8,
       "durationSec": 70,
       "role": "primary",
-      "bpmEstimate": 110,
-      "bpmSource": "difficulty-default (no onset lib on box); recalibrate in-game if needed"
+      "bpmEstimate": 73.83,
+      "bpmSource": "librosa.beat_track on trimmed clip",
+      "beatmap": "public/pulse-music/beatmaps/mittel-1.json",
+      "beatCount": 70,
+      "onsetCount": 283
     },
     "mittel-2.mp3": {
       "file": "public/pulse-music/mittel-2.mp3",
@@ -53,8 +68,11 @@
       "lufs": -14.6,
       "durationSec": 70,
       "role": "alt",
-      "bpmEstimate": 110,
-      "bpmSource": "difficulty-default (no onset lib on box); recalibrate in-game if needed"
+      "bpmEstimate": 136.0,
+      "bpmSource": "librosa.beat_track on trimmed clip",
+      "beatmap": "public/pulse-music/beatmaps/mittel-2.json",
+      "beatCount": 130,
+      "onsetCount": 240
     },
     "mittel-3.mp3": {
       "file": "public/pulse-music/mittel-3.mp3",
@@ -62,8 +80,11 @@
       "lufs": -14.5,
       "durationSec": 70,
       "role": "alt",
-      "bpmEstimate": 110,
-      "bpmSource": "difficulty-default (no onset lib on box); recalibrate in-game if needed"
+      "bpmEstimate": 123.05,
+      "bpmSource": "librosa.beat_track on trimmed clip",
+      "beatmap": "public/pulse-music/beatmaps/mittel-3.json",
+      "beatCount": 142,
+      "onsetCount": 254
     },
     "mittel-4.mp3": {
       "file": "public/pulse-music/mittel-4.mp3",
@@ -71,8 +92,11 @@
       "lufs": -14.1,
       "durationSec": 70,
       "role": "alt",
-      "bpmEstimate": 110,
-      "bpmSource": "difficulty-default (no onset lib on box); recalibrate in-game if needed"
+      "bpmEstimate": 99.38,
+      "bpmSource": "librosa.beat_track on trimmed clip",
+      "beatmap": "public/pulse-music/beatmaps/mittel-4.json",
+      "beatCount": 96,
+      "onsetCount": 305
     },
     "schwer-1.mp3": {
       "file": "public/pulse-music/schwer-1.mp3",
@@ -80,8 +104,11 @@
       "lufs": -14.0,
       "durationSec": 85,
       "role": "primary",
-      "bpmEstimate": 128,
-      "bpmSource": "difficulty-default (no onset lib on box); recalibrate in-game if needed"
+      "bpmEstimate": 112.35,
+      "bpmSource": "librosa.beat_track on trimmed clip",
+      "beatmap": "public/pulse-music/beatmaps/schwer-1.json",
+      "beatCount": 136,
+      "onsetCount": 330
     },
     "schwer-2.mp3": {
       "file": "public/pulse-music/schwer-2.mp3",
@@ -89,8 +116,11 @@
       "lufs": -13.9,
       "durationSec": 85,
       "role": "alt",
-      "bpmEstimate": 128,
-      "bpmSource": "difficulty-default (no onset lib on box); recalibrate in-game if needed"
+      "bpmEstimate": 103.36,
+      "bpmSource": "librosa.beat_track on trimmed clip",
+      "beatmap": "public/pulse-music/beatmaps/schwer-2.json",
+      "beatCount": 145,
+      "onsetCount": 392
     },
     "schwer-3.mp3": {
       "file": "public/pulse-music/schwer-3.mp3",
@@ -98,8 +128,11 @@
       "lufs": -13.8,
       "durationSec": 85,
       "role": "alt",
-      "bpmEstimate": 128,
-      "bpmSource": "difficulty-default (no onset lib on box); recalibrate in-game if needed"
+      "bpmEstimate": 117.45,
+      "bpmSource": "librosa.beat_track on trimmed clip",
+      "beatmap": "public/pulse-music/beatmaps/schwer-3.json",
+      "beatCount": 149,
+      "onsetCount": 273
     },
     "schwer-4.mp3": {
       "file": "public/pulse-music/schwer-4.mp3",
@@ -107,8 +140,11 @@
       "lufs": -13.7,
       "durationSec": 85,
       "role": "alt",
-      "bpmEstimate": 128,
-      "bpmSource": "difficulty-default (no onset lib on box); recalibrate in-game if needed"
+      "bpmEstimate": 117.45,
+      "bpmSource": "librosa.beat_track on trimmed clip",
+      "beatmap": "public/pulse-music/beatmaps/schwer-4.json",
+      "beatCount": 162,
+      "onsetCount": 359
     },
     "baba-1.mp3": {
       "file": "public/pulse-music/baba-1.mp3",
@@ -116,8 +152,11 @@
       "lufs": -13.6,
       "durationSec": 100,
       "role": "primary",
-      "bpmEstimate": 140,
-      "bpmSource": "difficulty-default (no onset lib on box); recalibrate in-game if needed"
+      "bpmEstimate": 143.55,
+      "bpmSource": "librosa.beat_track on trimmed clip",
+      "beatmap": "public/pulse-music/beatmaps/baba-1.json",
+      "beatCount": 224,
+      "onsetCount": 356
     },
     "baba-2.mp3": {
       "file": "public/pulse-music/baba-2.mp3",
@@ -125,8 +164,11 @@
       "lufs": -13.4,
       "durationSec": 100,
       "role": "alt",
-      "bpmEstimate": 140,
-      "bpmSource": "difficulty-default (no onset lib on box); recalibrate in-game if needed"
+      "bpmEstimate": 136.0,
+      "bpmSource": "librosa.beat_track on trimmed clip",
+      "beatmap": "public/pulse-music/beatmaps/baba-2.json",
+      "beatCount": 226,
+      "onsetCount": 361
     },
     "baba-3.mp3": {
       "file": "public/pulse-music/baba-3.mp3",
@@ -134,8 +176,11 @@
       "lufs": -13.0,
       "durationSec": 100,
       "role": "alt",
-      "bpmEstimate": 140,
-      "bpmSource": "difficulty-default (no onset lib on box); recalibrate in-game if needed"
+      "bpmEstimate": 89.1,
+      "bpmSource": "librosa.beat_track on trimmed clip",
+      "beatmap": "public/pulse-music/beatmaps/baba-3.json",
+      "beatCount": 143,
+      "onsetCount": 333
     },
     "baba-4.mp3": {
       "file": "public/pulse-music/baba-4.mp3",
@@ -143,8 +188,11 @@
       "lufs": -12.8,
       "durationSec": 100,
       "role": "alt",
-      "bpmEstimate": 140,
-      "bpmSource": "difficulty-default (no onset lib on box); recalibrate in-game if needed"
+      "bpmEstimate": 136.0,
+      "bpmSource": "librosa.beat_track on trimmed clip",
+      "beatmap": "public/pulse-music/beatmaps/baba-4.json",
+      "beatCount": 223,
+      "onsetCount": 359
     }
   },
   "byDifficulty": {
@@ -186,5 +234,6 @@
     "mittel": 70,
     "schwer": 85,
     "baba": 100
-  }
+  },
+  "analysis": "librosa beat_track + onset_detect on each clip; charts in beatmaps/"
 }

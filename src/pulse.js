@@ -7,6 +7,10 @@
  * `dailyPool` with a UTC-date seed and always charts Schwer. A 0–3% playback
  * rate nudge is optional color; it is not how difficulty changes the song.
  *
+ * Charts follow `public/pulse-music/beatmaps/<track>.json` (`beatTimes` from
+ * t=0 of that mp3). Judgment reads the playing clip's currentTime. BPM is only
+ * a label — the grid is never rebuilt from it.
+ *
  * Hits map onto the shared Rush formula so `game=pulse` passes the server check:
  * survivalMs ≈ run length, orbs ≈ perfect + good, comboBonus from perfect
  * streaks, nearMisses ≈ Good.
@@ -111,6 +115,16 @@ export const PULSE_DIFFICULTIES = {
 /** Daily Beat is always the Schwer chart. The track still comes from dailyPool. */
 export const PULSE_DAILY_DIFFICULTY = 'schwer';
 
+/**
+ * Added to `HTMLMediaElement.currentTime` when judging. A small negative value
+ * absorbs tap latency so a hit on the audible kick still lands in the window.
+ * @type {number} seconds
+ */
+export const PULSE_AUDIO_OFFSET_SEC = -0.02;
+
+/** Onsets at least this strong may add accents. Off-grid ones only on Schwer/Baba. */
+export const PULSE_STRONG_ONSET = 0.55;
+
 /** @param {unknown} id */
 export function getPulseDifficulty(id) {
   return PULSE_DIFFICULTIES[normalizeDifficulty(id)];
@@ -127,6 +141,16 @@ export function pulsePlaybackRate(file) {
 
 export function pulseTrackUrl(file) {
   return `/pulse-music/${file}`;
+}
+
+/** Manifest stores `public/pulse-music/beatmaps/<name>.json`. The page loads the URL. */
+export function pulseBeatmapUrl(ref) {
+  const name = String(ref || '')
+    .split('/')
+    .filter(Boolean)
+    .pop();
+  if (!name || !name.endsWith('.json')) return '';
+  return `/pulse-music/beatmaps/${name}`;
 }
 
 /**
@@ -166,68 +190,136 @@ export function selectPulseTrack(manifest, opts = {}) {
 }
 
 /**
- * Beat grid from BPM + duration. Seed is difficulty + track id + optional daily date.
- * Notes before the travel window are skipped so the first circle can approach.
- * @param {{ bpm: number, durationSec: number, difficulty: string, trackId: string, dailyDate?: string }} spec
+ * Median gap of an analyzed beat grid, used only as a display/travel hint.
+ * @param {number[]} times
+ */
+function medianBeatSec(times) {
+  if (!times || times.length < 2) return 0.5;
+  const gaps = [];
+  for (let i = 1; i < times.length; i++) gaps.push(times[i] - times[i - 1]);
+  gaps.sort((a, b) => a - b);
+  return gaps[Math.floor(gaps.length / 2)] || 0.5;
+}
+
+/**
+ * Tap/hold chart locked to analyzed `beatTimes` (seconds from audio t=0).
+ * Einfach keeps every `beatEvery` beat. Schwer/Baba may add strong onsets.
+ * Holds start on a chosen hit and end on a later beatTimes entry (~1–2 bars).
+ * A missing beatmap yields an empty chart — BPM is never used to invent hits.
+ * @param {{ beatTimes?: number[], onsetTimes?: number[], onsetStrengths?: number[], bpm?: number, durationSec?: number, difficulty: string, trackId: string, dailyDate?: string }} spec
  */
 export function buildBeatChart(spec) {
   const cfg = getPulseDifficulty(spec.difficulty);
-  const bpm = Math.max(40, Number(spec.bpm) || 110);
-  const durationSec = Math.max(4, Number(spec.durationSec) || 30);
-  const beat = 60 / bpm;
+  const durationSec = Math.max(0, Number(spec.durationSec) || 0);
+  const raw = Array.isArray(spec.beatTimes) ? spec.beatTimes : [];
+  /** @type {number[]} */
+  const grid = [];
+  for (const value of raw) {
+    const t = Number(value);
+    if (!Number.isFinite(t) || t < 0) continue;
+    if (durationSec > 0 && t > durationSec + 0.02) continue;
+    if (grid.length && t - grid[grid.length - 1] < 0.04) continue;
+    grid.push(t);
+  }
+  const beatSec = medianBeatSec(grid);
+  const bpm = Number(spec.bpm) || 0;
+  if (grid.length === 0) {
+    return { notes: [], bpm, beatSec, travelSec: cfg.travelSec, lanes: cfg.lanes, durationSec };
+  }
+
   const seed = hashSeed(
     `orbit-pulse-chart:${cfg.id}:${spec.trackId || 'track'}:${spec.dailyDate || 'free'}`
   );
   const rng = mulberry32(seed);
-  const minTime = cfg.travelSec * 0.92;
-  const end = Math.max(minTime + beat, durationSec - 0.85);
+  /** @type {Set<number>} */
+  const chosen = new Set();
+  for (let i = 0; i < grid.length; i++) {
+    if (i % cfg.beatEvery !== 0) continue;
+    if (rng() < cfg.skip) continue;
+    chosen.add(i);
+  }
+
+  /** @type {number[]} */
+  const extras = [];
+  const allowOffbeat = cfg.id === 'schwer' || cfg.id === 'baba';
+  const onsetTimes = Array.isArray(spec.onsetTimes) ? spec.onsetTimes : [];
+  const onsetStrengths = Array.isArray(spec.onsetStrengths) ? spec.onsetStrengths : [];
+  if (allowOffbeat) {
+    const count = Math.min(onsetTimes.length, onsetStrengths.length);
+    for (let k = 0; k < count; k++) {
+      const t = Number(onsetTimes[k]);
+      const strength = Number(onsetStrengths[k]);
+      if (!(strength >= PULSE_STRONG_ONSET) || !Number.isFinite(t) || t < grid[0]) continue;
+      if (durationSec > 0 && t > durationSec) continue;
+      let nearest = 0;
+      let nearestD = Infinity;
+      for (let i = 0; i < grid.length; i++) {
+        const d = Math.abs(grid[i] - t);
+        if (d < nearestD) {
+          nearestD = d;
+          nearest = i;
+        }
+      }
+      if (nearestD <= 0.08) {
+        chosen.add(nearest);
+        continue;
+      }
+      if (rng() < cfg.offbeat) extras.push(t);
+    }
+  }
+
+  /** @type {{ time: number, beatIndex: number }[]} */
+  const events = [];
+  for (const index of chosen) events.push({ time: grid[index], beatIndex: index });
+  for (const time of extras) events.push({ time, beatIndex: -1 });
+  events.sort((a, b) => a.time - b.time || a.beatIndex - b.beatIndex);
+
   /** @type {{ time: number, lane: number, hold: boolean, endTime: number }[]} */
   const notes = [];
   let lane = Math.floor(rng() * cfg.lanes);
-
   const overlaps = (laneIndex, time, endTime) =>
     notes.some(
-      (n) => n.lane === laneIndex && time < n.endTime + 0.16 && endTime > n.time - 0.16
+      (n) => n.lane === laneIndex && time < n.endTime + 0.12 && endTime > n.time - 0.12
     );
 
-  const place = (time) => {
-    if (time < minTime || time > end) return;
+  const holdEnd = (ev, steps) => {
+    let endIndex = -1;
+    if (ev.beatIndex >= 0) endIndex = Math.min(grid.length - 1, ev.beatIndex + steps);
+    else {
+      const after = grid.findIndex((b) => b > ev.time + 0.05);
+      if (after >= 0) endIndex = Math.min(grid.length - 1, after + steps - 1);
+    }
+    if (endIndex < 0) return ev.time;
+    const end = grid[endIndex];
+    return end > ev.time + 0.15 ? end : ev.time;
+  };
+
+  for (const ev of events) {
     let next = lane;
     if (rng() < cfg.laneJump && cfg.lanes > 1) {
       const jump = 1 + Math.floor(rng() * (cfg.lanes - 1));
       next = (lane + jump) % cfg.lanes;
     }
     const wantHold = rng() < cfg.holdChance;
-    let holdBeats = wantHold ? (rng() < 0.35 ? 2 : 1) : 0;
-    let endTime = time + holdBeats * beat;
-    if (holdBeats > 0 && endTime > end) {
-      holdBeats = 0;
-      endTime = time;
+    const steps = wantHold ? (rng() < 0.35 ? 8 : 4) : 0;
+    const endTime = wantHold ? holdEnd(ev, steps) : ev.time;
+    const tryPlace = (laneIndex, end) => {
+      const hold = end > ev.time + 0.05;
+      const resolvedEnd = hold ? end : ev.time;
+      if (overlaps(laneIndex, ev.time, resolvedEnd)) return false;
+      notes.push({ time: ev.time, lane: laneIndex, hold, endTime: resolvedEnd });
+      lane = laneIndex;
+      return true;
+    };
+    if (tryPlace(next, endTime)) continue;
+    if (endTime !== ev.time && tryPlace(next, ev.time)) continue;
+    for (let l = 0; l < cfg.lanes; l++) {
+      if (tryPlace(l, ev.time)) break;
     }
-    if (overlaps(next, time, endTime)) {
-      if (overlaps(lane, time, time)) return;
-      next = lane;
-      holdBeats = 0;
-      endTime = time;
-    }
-    notes.push({
-      time,
-      lane: next,
-      hold: holdBeats > 0,
-      endTime: holdBeats > 0 ? endTime : time,
-    });
-    lane = next;
-  };
-
-  let index = 0;
-  for (let t = 0; t <= end; t += beat, index++) {
-    const onGrid = index % cfg.beatEvery === 0;
-    if (onGrid && rng() >= cfg.skip) place(t);
-    if (cfg.offbeat > 0 && rng() < cfg.offbeat) place(t + beat * 0.5);
   }
 
   notes.sort((a, b) => a.time - b.time || a.lane - b.lane);
-  return { notes, bpm, beatSec: beat, travelSec: cfg.travelSec, lanes: cfg.lanes, durationSec };
+  return { notes, bpm, beatSec, travelSec: cfg.travelSec, lanes: cfg.lanes, durationSec };
 }
 
 /**
@@ -237,9 +329,13 @@ export function buildBeatChart(spec) {
 export function preparePulseRun(manifest, opts = {}) {
   const picked = selectPulseTrack(manifest, opts);
   const meta = picked.meta || {};
+  const beatmap = opts.beatmap || null;
   const chart = buildBeatChart({
-    bpm: Number(meta.bpmEstimate) || 110,
-    durationSec: Number(meta.durationSec) || 55,
+    beatTimes: beatmap?.beatTimes,
+    onsetTimes: beatmap?.onsetTimes,
+    onsetStrengths: beatmap?.onsetStrengths,
+    bpm: Number(beatmap?.bpm) || Number(meta.bpmEstimate) || 0,
+    durationSec: Number(beatmap?.durationSec) || Number(meta.durationSec) || 0,
     difficulty: picked.difficulty,
     trackId: picked.file || 'track',
     dailyDate: picked.daily ? picked.dailyDate || '' : '',
@@ -247,6 +343,7 @@ export function preparePulseRun(manifest, opts = {}) {
   return {
     ...picked,
     url: pulseTrackUrl(picked.file),
+    beatmapUrl: pulseBeatmapUrl(meta.beatmap),
     playbackRate: pulsePlaybackRate(picked.file || 'track'),
     chart,
   };
@@ -334,6 +431,34 @@ export function formatPulseFormula(survivalMs, orbs, comboBonus, nearMisses, sco
 
 let manifestPromise = null;
 let cachedManifest = null;
+/** @type {Map<string, object>} */
+const beatmapCache = new Map();
+/** @type {Map<string, Promise<object>>} */
+const beatmapPromises = new Map();
+
+/** @param {string} ref manifest beatmap path or URL */
+export function preloadPulseBeatmap(ref) {
+  const url = pulseBeatmapUrl(ref);
+  if (!url || typeof fetch !== 'function') return Promise.resolve(null);
+  if (beatmapCache.has(url)) return Promise.resolve(beatmapCache.get(url));
+  if (!beatmapPromises.has(url)) {
+    const pending = fetch(url)
+      .then((res) => {
+        if (!res.ok) throw new Error('pulse beatmap');
+        return res.json();
+      })
+      .then((data) => {
+        beatmapCache.set(url, data);
+        return data;
+      })
+      .catch((err) => {
+        beatmapPromises.delete(url);
+        throw err;
+      });
+    beatmapPromises.set(url, pending);
+  }
+  return beatmapPromises.get(url);
+}
 
 export function preloadPulseManifest() {
   if (cachedManifest) return Promise.resolve(cachedManifest);
@@ -345,6 +470,10 @@ export function preloadPulseManifest() {
       })
       .then((data) => {
         cachedManifest = data;
+        const tracks = data?.tracks || {};
+        for (const meta of Object.values(tracks)) {
+          if (meta?.beatmap) preloadPulseBeatmap(meta.beatmap).catch(() => {});
+        }
         return data;
       })
       .catch((err) => {
@@ -484,8 +613,11 @@ export class PulseGame {
 
   songTime() {
     if (this._forcedTime != null) return this._forcedTime;
-    const t = this.audio?.clipTime?.();
-    if (typeof t === 'number' && t > 0.001) return t;
+    if (this.audio?.hasClip?.()) {
+      const t = this.audio.clipTime?.();
+      const media = typeof t === 'number' && Number.isFinite(t) ? t : 0;
+      return media + PULSE_AUDIO_OFFSET_SEC;
+    }
     return this._fallbackTime;
   }
 
@@ -506,30 +638,58 @@ export class PulseGame {
     this.alive = true;
     this.lastTs = 0;
     this._fallbackTime = 0;
+    this._runToken = (this._runToken || 0) + 1;
+    const token = this._runToken;
     const arm = (manifest) => {
-      if (!this.running) return;
-      const run = preparePulseRun(manifest, {
+      if (!this.running || this._runToken !== token) return;
+      const picked = selectPulseTrack(manifest, {
         difficulty: this.difficultyId,
         daily: this.daily,
         dailyDate: this.dailyDate || '',
         rng: opts.rng,
       });
-      this.trackFile = run.file;
-      this.trackUrl = run.url;
-      this.playbackRate = run.playbackRate;
-      this.durationSec = run.chart.durationSec;
-      this.travelSec = run.chart.travelSec;
-      this.beatSec = run.chart.beatSec;
-      this.notes = run.chart.notes.map((n) => ({
-        ...n,
-        resolved: false,
-        holding: false,
-        judgment: null,
-        flash: 0,
-      }));
+      this.trackFile = picked.file;
+      this.trackUrl = pulseTrackUrl(picked.file);
+      this.playbackRate = pulsePlaybackRate(picked.file || 'track');
+      const meta = picked.meta || {};
+      this.durationSec = Number(meta.durationSec) || this.durationSec;
       if (!opts.silent) {
         this.audio?.stopMusic?.();
-        this.audio?.playClip?.(run.url, { playbackRate: run.playbackRate });
+        this.audio?.playClip?.(this.trackUrl, { playbackRate: this.playbackRate });
+      }
+      const applyChart = (beatmap) => {
+        if (!this.running || this._runToken !== token) return;
+        if (this.trackFile !== picked.file) return;
+        const chart = buildBeatChart({
+          beatTimes: beatmap?.beatTimes,
+          onsetTimes: beatmap?.onsetTimes,
+          onsetStrengths: beatmap?.onsetStrengths,
+          bpm: Number(beatmap?.bpm) || Number(meta.bpmEstimate) || 0,
+          durationSec: Number(beatmap?.durationSec) || Number(meta.durationSec) || 0,
+          difficulty: picked.difficulty,
+          trackId: picked.file || 'track',
+          dailyDate: picked.daily ? picked.dailyDate || '' : '',
+        });
+        this.durationSec = chart.durationSec || this.durationSec;
+        this.travelSec = chart.travelSec;
+        this.beatSec = chart.beatSec;
+        this.notes = chart.notes.map((n) => ({
+          ...n,
+          resolved: false,
+          holding: false,
+          judgment: null,
+          flash: 0,
+        }));
+        this.syncScore();
+        this.emitHud();
+      };
+      const cached = beatmapCache.get(pulseBeatmapUrl(meta.beatmap));
+      if (opts.beatmap) applyChart(opts.beatmap);
+      else if (cached) applyChart(cached);
+      else {
+        preloadPulseBeatmap(meta.beatmap)
+          .then((beatmap) => applyChart(beatmap))
+          .catch(() => applyChart(null));
       }
       this.syncScore();
       this.emitHud();
@@ -540,7 +700,7 @@ export class PulseGame {
       preloadPulseManifest()
         .then((manifest) => arm(manifest))
         .catch(() => {
-          /* Chart still runs on the fallback clock if the pack is missing. */
+          /* No chart until a beatmap exists. The fallback clock is only for tests. */
         });
     }
     this.syncScore();
@@ -589,11 +749,8 @@ export class PulseGame {
   }
 
   update(dt) {
-    if (this._forcedTime == null) {
-      const media = this.audio?.clipTime?.();
-      if (typeof media === 'number' && media > 0.001) this._fallbackTime = media;
-      else this._fallbackTime += dt;
-    }
+    const mediaClock = this._forcedTime == null && !!this.audio?.hasClip?.();
+    if (!mediaClock && this._forcedTime == null) this._fallbackTime += dt;
     const now = this.songTime();
     this.survivalMs = Math.max(0, Math.floor(now * 1000));
     this.resolveNotes(now);
