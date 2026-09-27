@@ -11,6 +11,7 @@ import { handleApi, resetSchemaForTests } from '../worker/api.js';
 import { selectBoard } from '../shared/scores.js';
 import { isOwnRow } from '../src/identity.js';
 import { selfCheck } from '../shared/aerger.js';
+import { selfCheck as duelSelfCheck } from '../shared/duel.js';
 import { DatabaseSync } from 'node:sqlite';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -44,19 +45,27 @@ const migrationAerger = fs.readFileSync(path.join(root, 'migrations', '0004_aerg
 assert(migrationAerger.includes('CREATE TABLE IF NOT EXISTS aerger_rooms'), 'aerger migration');
 assert(migrationAerger.includes('version'), 'aerger version column');
 assert(!/ALTER TABLE scores/i.test(migrationAerger), 'aerger migration leaves scores alone');
+const migrationDuel = fs.readFileSync(path.join(root, 'migrations', '0005_duel_rooms.sql'), 'utf8');
+assert(migrationDuel.includes('CREATE TABLE IF NOT EXISTS duel_rooms'), 'duel migration');
+assert(!/ALTER TABLE scores/i.test(migrationDuel), 'duel migration leaves scores alone');
 selfCheck();
+duelSelfCheck();
 {
   const fresh = new DatabaseSync(':memory:');
-  for (const file of ['0001_init.sql', '0002_client_id.sql', '0003_game.sql', '0004_aerger_rooms.sql']) {
+  for (const file of ['0001_init.sql', '0002_client_id.sql', '0003_game.sql', '0004_aerger_rooms.sql', '0005_duel_rooms.sql']) {
     fresh.exec(fs.readFileSync(path.join(root, 'migrations', file), 'utf8'));
   }
   const tables = fresh.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((row) => row.name);
-  assert(tables.includes('scores') && tables.includes('aerger_rooms'), `migration tables ${tables}`);
+  assert(tables.includes('scores') && tables.includes('aerger_rooms') && tables.includes('duel_rooms'), `migration tables ${tables}`);
   const scoreCols = fresh.prepare('PRAGMA table_info(scores)').all().map((col) => col.name);
   assert(scoreCols.includes('game') && scoreCols.includes('client_id'), 'score columns survive aerger migration');
   const roomCols = fresh.prepare('PRAGMA table_info(aerger_rooms)').all().map((col) => col.name);
   for (const col of ['code', 'version', 'state', 'updated_at', 'created_at']) {
     assert(roomCols.includes(col), `aerger column ${col}`);
+  }
+  const duelCols = fresh.prepare('PRAGMA table_info(duel_rooms)').all().map((col) => col.name);
+  for (const col of ['code', 'version', 'state', 'updated_at', 'created_at']) {
+    assert(duelCols.includes(col), `duel column ${col}`);
   }
   fresh.close();
 }
@@ -661,6 +670,71 @@ try {
   const roomRows = db._sqlite.prepare('SELECT COUNT(*) AS n FROM aerger_rooms').get().n;
   assert(roomRows >= 1, 'room row stored');
   assert(scoreRows > 0, 'scores table still populated');
+
+  const notDuelScore = await api('/api/scores', {
+    method: 'POST',
+    ip: '203.0.113.140',
+    body: { name: 'Duel', score: computeScore(1000, 0, 0, 0), survivalMs: 1000, orbs: 0, game: 'duel' },
+  });
+  assert(notDuelScore.status === 400, 'duel wins are not skill-run rows');
+  const duelCreated = await api('/api/duel/create', {
+    method: 'POST',
+    ip: '203.0.113.141',
+    body: { name: 'Ada' },
+  });
+  assert(duelCreated.status === 200 && duelCreated.data.code.length === 6, `duel create ${JSON.stringify(duelCreated.data)}`);
+  assert(duelCreated.data.state?.seats?.[0]?.you === true, 'duel host seat');
+  const duelCode = duelCreated.data.code;
+  const duelPeek = await api(`/api/duel/room/${duelCode}`, { ip: '203.0.113.142' });
+  assert(duelPeek.status === 200 && duelPeek.data.version === 1, 'duel room read');
+  const duelCached = await api(`/api/duel/room/${duelCode}`, {
+    ip: '203.0.113.142',
+    headers: { 'If-None-Match': duelPeek.etag },
+  });
+  assert(duelCached.status === 304, `duel 304 ${duelCached.status}`);
+  const duelJoined = await api('/api/duel/join', {
+    method: 'POST',
+    ip: '203.0.113.143',
+    body: { code: duelCode, name: 'Bea', version: duelPeek.data.version },
+  });
+  assert(duelJoined.status === 200, `duel join ${JSON.stringify(duelJoined.data)}`);
+  const [duelPadA, duelPadB] = await Promise.all([
+    api('/api/duel/paddle', {
+      method: 'POST',
+      ip: '203.0.113.141',
+      body: { code: duelCode, secret: duelCreated.data.secret, paddle: 0.22 },
+    }),
+    api('/api/duel/paddle', {
+      method: 'POST',
+      ip: '203.0.113.143',
+      body: { code: duelCode, secret: duelJoined.data.secret, paddle: 0.78 },
+    }),
+  ]);
+  assert(duelPadA.status === 200 && duelPadB.status === 200, `duel paddle race ${duelPadA.status}/${duelPadB.status}`);
+  const duelHostReady = await api('/api/duel/ready', {
+    method: 'POST',
+    ip: '203.0.113.141',
+    body: { code: duelCode, secret: duelCreated.data.secret, version: Math.max(duelPadA.data.version, duelPadB.data.version) },
+  });
+  assert(duelHostReady.status === 200 && duelHostReady.data.state.status === 'lobby', 'duel one ready stays in the lobby');
+  const duelGuestReady = await api('/api/duel/ready', {
+    method: 'POST',
+    ip: '203.0.113.143',
+    body: { code: duelCode, secret: duelJoined.data.secret, version: duelHostReady.data.version },
+  });
+  assert(duelGuestReady.status === 200 && duelGuestReady.data.state.status === 'countdown', 'duel countdown');
+  await new Promise((resolve) => setTimeout(resolve, 3400));
+  const duelLive = await api(`/api/duel/room/${duelCode}`, {
+    ip: '203.0.113.142',
+    headers: { 'If-None-Match': `W/"${duelGuestReady.data.version}"` },
+  });
+  assert(duelLive.status === 200 && duelLive.data.state.status === 'playing', `duel live ${JSON.stringify(duelLive.data)}`);
+  assert(duelLive.data.state.phase === 'live' && duelLive.data.state.ball.vy !== 0, 'duel server launches the ball');
+  assert(Math.abs(duelLive.data.state.seats[0].paddle - 0.22) < 0.02, 'duel host paddle survived the serve');
+  const duelRows = db._sqlite.prepare('SELECT COUNT(*) AS n FROM duel_rooms').get().n;
+  assert(duelRows >= 1, 'duel room row stored');
+  const scoresAfterDuel = db._sqlite.prepare('SELECT COUNT(*) AS n FROM scores').get().n;
+  assert(scoresAfterDuel === scoreRows, 'duel does not write skill scores');
 
   db._sqlite.exec('DROP INDEX IF EXISTS idx_scores_game_board');
   db._sqlite.exec('ALTER TABLE scores DROP COLUMN game');

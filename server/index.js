@@ -27,6 +27,8 @@ import {
 } from '../shared/scores.js';
 import { handleAerger } from '../worker/aerger-api.js';
 import { createFileAergerStore } from './aerger-file-store.js';
+import { handleDuel } from '../worker/duel-api.js';
+import { createFileDuelStore } from './duel-file-store.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, '..', 'data');
@@ -48,20 +50,32 @@ const limiter = rateLimit({
   legacyHeaders: false,
   message: { error: 'Too many requests' },
 });
-// Ärger polls about every 1–2s and has its own in-memory limiter. The score limiter
+// Ärger and Duel poll on their own in-memory limiters. The score limiter
 // stays at 30/min so leaderboard spam protection does not change.
 app.use('/api/', (req, res, next) => {
   if (req.originalUrl.startsWith('/api/aerger')) return next();
+  if (req.originalUrl.startsWith('/api/duel')) return next();
   return limiter(req, res, next);
 });
 
 const aergerStore = createFileAergerStore(
   process.env.AERGER_FILE || path.join(DATA_DIR, 'aerger-rooms.json')
 );
+const duelStore = createFileDuelStore(process.env.DUEL_FILE || path.join(DATA_DIR, 'duel-rooms.json'));
 
 app.use('/api/aerger', async (req, res) => {
   try {
     const response = await handleAerger(expressToRequest(req), aergerStore);
+    await sendWebResponse(res, response);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.use('/api/duel', async (req, res) => {
+  try {
+    const response = await handleDuel(expressToRequest(req), duelStore);
     await sendWebResponse(res, response);
   } catch (err) {
     console.error(err);

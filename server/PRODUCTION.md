@@ -16,6 +16,7 @@ Production does **not** use `data/scores.json`. The game and the API share one C
 - Optional `clientId` (UUID v4) is stored on the row. Older rows leave it null. See `migrations/0002_client_id.sql`
 - `game` is `rush`, `mirror`, `drift`, or `pulse`. Missing values and rows from before `migrations/0003_game.sql` are `rush`. The four top-50 boards do not mix. The stored cap of 500 rows is still one table. Drift and Pulse reuse the existing `game` column.
 - Orbit Ärger uses `aerger_rooms` (`migrations/0004_aerger_rooms.sql`), not `scores`. Local Express keeps those rooms in `data/aerger-rooms.json`.
+- Orbit Duel uses `duel_rooms` (`migrations/0005_duel_rooms.sql`), not `scores`. Local Express keeps those rooms in `data/duel-rooms.json`.
 
 The JSON contract matches `server/index.js`. The frontend calls same-origin `/api` when `VITE_API_BASE` is empty.
 

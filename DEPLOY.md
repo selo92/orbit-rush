@@ -96,3 +96,7 @@ SQLite here has no `ADD COLUMN IF NOT EXISTS`. The migration runs once. The Work
 ## 8. Orbit Ärger rooms
 
 `migrations/0004_aerger_rooms.sql` creates `aerger_rooms` (one JSON `state` blob, `version`, timestamps). It does not alter `scores`. The Worker also creates the table on startup. Rooms are HTTP-polled; there is no Durable Object and no WebSocket. Do not point Ärger at the Rush/Mirror leaderboard.
+
+## 9. Orbit Duel rooms
+
+`migrations/0005_duel_rooms.sql` creates `duel_rooms` the same way. It does not alter `scores` or `aerger_rooms`. The Worker creates the table on startup. Paddle posts and polls stay on this Worker: no Durable Object, no WebSocket, no second script. Do not submit Duel wins through `POST /api/scores`.

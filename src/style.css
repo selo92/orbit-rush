@@ -959,6 +959,15 @@ h2 {
   color: #ffe566;
 }
 
+.hub-tile.duel {
+  border-color: rgba(0, 240, 255, 0.55);
+  background: linear-gradient(145deg, rgba(32, 8, 40, 0.72), rgba(6, 28, 36, 0.62));
+}
+
+.hub-tile.duel strong {
+  color: #7af6ff;
+}
+
 .hub-tile.drift {
   border-color: rgba(125, 255, 168, 0.55);
   background: linear-gradient(160deg, rgba(8, 42, 32, 0.62), rgba(8, 12, 28, 0.55));
@@ -1533,3 +1542,187 @@ h2 {
 .title-actions{display:flex;gap:10px;margin-top:8px}.title-actions .btn{flex:1;margin-top:0}
 .daily-line{margin:6px 0 10px;font-size:13px;color:var(--muted)}.daily-line strong{color:#ffe566}
 .skin-swatch{width:36px;height:36px;border-radius:50%;background:radial-gradient(circle at 30% 30%,var(--c,#00f0ff),var(--a,#ff2bd6));box-shadow:0 0 14px var(--c,#00f0ff)}
+
+#screen-duel {
+  align-items: flex-start;
+  overflow: hidden;
+  padding: calc(8px + var(--safe-top)) 8px calc(8px + var(--safe-bottom));
+}
+
+.duel-panel {
+  width: min(100%, 460px);
+  max-height: 100%;
+  overflow-y: auto;
+  text-align: left;
+  padding: 14px 12px 12px;
+  touch-action: pan-y;
+}
+
+.duel-panel h1,
+.duel-panel h2,
+.duel-panel .eyebrow,
+.duel-panel .tagline,
+.duel-code {
+  text-align: center;
+}
+
+.duel-panel label {
+  display: block;
+  margin-top: 8px;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+}
+
+.duel-panel input {
+  width: 100%;
+  margin-top: 6px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(0, 240, 255, 0.35);
+  background: rgba(0, 0, 0, 0.45);
+  color: var(--text);
+  font-size: 16px;
+  outline: none;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.duel-en,
+.duel-rules {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: center;
+}
+
+.duel-code {
+  margin: 4px 0;
+  font-size: 2rem;
+  letter-spacing: 0.28em;
+  font-weight: 800;
+  color: #7af6ff;
+  text-shadow: 0 0 16px rgba(0, 240, 255, 0.35);
+  user-select: text;
+}
+
+.duel-seats {
+  list-style: none;
+  margin: 8px 0 12px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.duel-seat {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.35);
+  color: var(--muted);
+}
+
+.duel-seat.you {
+  border-color: rgba(0, 240, 255, 0.45);
+  color: var(--text);
+}
+
+.duel-seat.ready {
+  box-shadow: inset 0 0 0 1px rgba(61, 255, 154, 0.35);
+}
+
+.duel-scorebar {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.duel-side {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.duel-side span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 9rem;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.duel-side strong {
+  font-size: 1.6rem;
+  letter-spacing: 0.04em;
+}
+
+.duel-side.opp strong {
+  color: #ff7ad9;
+  text-shadow: 0 0 12px rgba(255, 43, 214, 0.35);
+}
+
+.duel-side.me {
+  margin-left: auto;
+}
+
+.duel-side.me strong {
+  color: #7af6ff;
+  text-shadow: 0 0 12px rgba(0, 240, 255, 0.35);
+}
+
+.duel-banner {
+  margin: 0 0 8px;
+  text-align: center;
+  min-height: 1.2em;
+  letter-spacing: 0.08em;
+  color: #f4fbff;
+}
+
+.duel-stage {
+  position: relative;
+  width: min(100%, calc(68vh * 0.75));
+  max-height: 68vh;
+  aspect-ratio: 3 / 4;
+  margin: 0 auto 8px;
+}
+
+.duel-stage canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  border-radius: 16px;
+  touch-action: none;
+  background: #070714;
+}
+
+.duel-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  border-radius: 16px;
+  background: rgba(5, 5, 16, 0.72);
+  text-align: center;
+}
+
+.duel-overlay h2 {
+  margin: 0;
+  color: #7af6ff;
+  text-shadow: 0 0 16px rgba(0, 240, 255, 0.35);
+}
+
+@media (orientation: landscape) {
+  .duel-stage {
+    width: min(100%, calc(78vh * 0.75));
+    max-height: 78vh;
+  }
+}

@@ -76,6 +76,8 @@ assert(rngMod.utcDateString(new Date(Date.UTC(2026, 8, 22))).startsWith('2026-09
 
 const aergerMod = await import(path.join(root, 'shared', 'aerger.js'));
 aergerMod.selfCheck();
+const duelMod = await import(path.join(root, 'shared', 'duel.js'));
+duelMod.selfCheck();
 const diceMod = await import(path.join(root, 'src', 'aerger-dice.js'));
 assert(diceMod.tumbleHoldMs(0, 100, false) === diceMod.MIN_LOCAL_TUMBLE_MS - 100, 'tumble bridges a fast POST');
 assert(diceMod.tumbleHoldMs(0, 5000, false) === 0, 'a slow POST does not add extra wait');
@@ -113,6 +115,10 @@ const aergerMigration = fs.readFileSync(path.join(root, 'migrations', '0004_aerg
 assert(aergerMigration.includes('aerger_rooms'), 'aerger migration creates rooms');
 assert(aergerMigration.includes('version'), 'aerger migration has version');
 assert(!/ALTER TABLE scores/i.test(aergerMigration), 'aerger migration does not alter scores');
+const duelMigration = fs.readFileSync(path.join(root, 'migrations', '0005_duel_rooms.sql'), 'utf8');
+assert(duelMigration.includes('duel_rooms'), 'duel migration creates rooms');
+assert(duelMigration.includes('version'), 'duel migration has version');
+assert(!/ALTER TABLE scores/i.test(duelMigration), 'duel migration does not alter scores');
 
 const achMod = await import(path.join(root, 'src', 'achievements.js'));
 assert(achMod.ACHIEVEMENTS.length >= 6, 'at least 6 achievements');
@@ -1738,7 +1744,12 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
   if (hadCancel) globalThis.cancelAnimationFrame = hadCancel;
 }
 
-const env = { ...process.env, PORT: String(PORT), AERGER_FILE: path.join(root, 'data', `aerger-smoke-${PORT}.json`) };
+const env = {
+  ...process.env,
+  PORT: String(PORT),
+  AERGER_FILE: path.join(root, 'data', `aerger-smoke-${PORT}.json`),
+  DUEL_FILE: path.join(root, 'data', `duel-smoke-${PORT}.json`),
+};
 const scoresPath = path.join(root, 'data', 'scores.json');
 const backup = fs.existsSync(scoresPath) ? fs.readFileSync(scoresPath, 'utf8') : '[]';
 
@@ -2165,6 +2176,68 @@ try {
   });
   assert(tooSoon.status === 409, 'aerger needs two players');
 
+  const duelCreated = await fetch(`${aergerBase}/api/duel/create`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Ada' }),
+  }).then(async (res) => ({ status: res.status, data: await res.json(), etag: res.headers.get('etag') }));
+  assert(duelCreated.status === 200 && duelCreated.data.code?.length === 6, 'duel create');
+  assert(duelCreated.data.state?.seats?.[0]?.you === true, 'duel host is you');
+  assert(!JSON.stringify(duelCreated.data.state).includes(duelCreated.data.secret), 'duel secret stays off the public state');
+  const duelCode = duelCreated.data.code;
+  const duelPeek = await fetch(`${aergerBase}/api/duel/room/${duelCode}`);
+  const duelPeekBody = await duelPeek.json();
+  assert(duelPeek.status === 200 && duelPeekBody.version === 1, 'duel peek');
+  const duelCached = await fetch(`${aergerBase}/api/duel/room/${duelCode}`, {
+    headers: { 'If-None-Match': duelPeek.headers.get('etag') },
+  });
+  assert(duelCached.status === 304, 'duel lobby poll is 304');
+  const duelJoined = await fetch(`${aergerBase}/api/duel/join`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code: duelCode, name: 'Bea', version: duelPeekBody.version }),
+  }).then(async (res) => ({ status: res.status, data: await res.json() }));
+  assert(duelJoined.status === 200 && duelJoined.data.state.seats[1].you === true, 'duel join');
+  const [padA, padB] = await Promise.all([
+    fetch(`${aergerBase}/api/duel/paddle`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: duelCode, secret: duelCreated.data.secret, paddle: 0.2 }),
+    }).then(async (res) => ({ status: res.status, data: await res.json() })),
+    fetch(`${aergerBase}/api/duel/paddle`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: duelCode, secret: duelJoined.data.secret, paddle: 0.8 }),
+    }).then(async (res) => ({ status: res.status, data: await res.json() })),
+  ]);
+  assert(padA.status === 200 && padB.status === 200, `duel paddle race ${padA.status} ${padB.status}`);
+  const duelMid = await fetch(`${aergerBase}/api/duel/room/${duelCode}`).then((res) => res.json());
+  assert(Math.abs(duelMid.state.seats[0].paddle - 0.2) < 0.02, 'duel host paddle stuck');
+  assert(Math.abs(duelMid.state.seats[1].paddle - 0.8) < 0.02, 'duel guest paddle stuck');
+  const duelHostReady = await fetch(`${aergerBase}/api/duel/ready`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code: duelCode, secret: duelCreated.data.secret, version: duelMid.version }),
+  }).then(async (res) => ({ status: res.status, data: await res.json() }));
+  assert(duelHostReady.status === 200 && duelHostReady.data.state.status === 'lobby', 'duel host ready waits');
+  const duelStale = await fetch(`${aergerBase}/api/duel/ready`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code: duelCode, secret: duelJoined.data.secret, version: duelMid.version }),
+  });
+  assert(duelStale.status === 409, 'duel stale ready rejected');
+  const duelGuestReady = await fetch(`${aergerBase}/api/duel/ready`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      code: duelCode,
+      secret: duelJoined.data.secret,
+      version: duelHostReady.data.version,
+    }),
+  }).then(async (res) => ({ status: res.status, data: await res.json() }));
+  assert(duelGuestReady.status === 200 && duelGuestReady.data.state.status === 'countdown', 'duel both ready counts down');
+  assert(duelGuestReady.data.state.target === 7, 'duel plays to 7');
+
   console.log('SMOKE OK', {
     formula: score,
     top: listAll.scores[0]?.name,
@@ -2176,4 +2249,5 @@ try {
   child.kill('SIGTERM');
   void backup;
   fs.rmSync(path.join(root, 'data', `aerger-smoke-${PORT}.json`), { force: true });
+  fs.rmSync(path.join(root, 'data', `duel-smoke-${PORT}.json`), { force: true });
 }
