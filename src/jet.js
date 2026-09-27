@@ -1946,11 +1946,18 @@ export class JetGame {
       ctx.lineTo(edge, this.h);
       ctx.stroke();
       ctx.setLineDash?.([]);
-      ctx.fillStyle = '#ffe566';
       ctx.font = '700 13px Segoe UI, system-ui, sans-serif';
       ctx.textAlign = 'center';
-      const labelX = clamp(edge + dir * 58, 44, this.w - 44);
-      ctx.fillText('ACHTUNG', labelX, Math.max(108, this.h * 0.2));
+      ctx.textBaseline = 'middle';
+      const labelX = clamp(side < 0 ? width * 0.5 : this.w - width * 0.5, 52, this.w - 52);
+      const labelY = Math.max(108, this.h * 0.22);
+      const pillW = Math.min(width - 12, (ctx.measureText?.('ACHTUNG').width || 74) + 18);
+      ctx.globalAlpha = 0.92;
+      ctx.fillStyle = 'rgba(8, 6, 12, 0.84)';
+      ctx.fillRect(labelX - pillW / 2, labelY - 12, pillW, 24);
+      ctx.fillStyle = '#ffe566';
+      ctx.fillText('ACHTUNG', labelX, labelY);
+      ctx.textBaseline = 'alphabetic';
       ctx.globalAlpha = 0.9;
       for (let i = 0; i < 4; i++) {
         const y = this.h * (0.32 + i * 0.12);
@@ -1979,12 +1986,17 @@ export class JetGame {
       ctx.lineTo(edge, this.h);
       ctx.stroke();
     }
-    const freeX = side < 0 ? edge + (this.w - edge) * 0.5 : edge * 0.5;
-    ctx.globalAlpha = 0.92;
-    ctx.fillStyle = '#fff6ea';
+    const freeX = clamp(side < 0 ? edge + (this.w - edge) * 0.5 : edge * 0.5, 36, this.w - 36);
+    const freeY = Math.max(146, this.h * 0.3);
+    ctx.globalAlpha = 0.94;
     ctx.font = '700 12px Segoe UI, system-ui, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('FREI', clamp(freeX, 28, this.w - 28), Math.max(146, this.h * 0.3));
+    ctx.textBaseline = 'middle';
+    const freeW = (ctx.measureText?.('FREI').width || 36) + 16;
+    ctx.fillStyle = 'rgba(8, 6, 12, 0.78)';
+    ctx.fillRect(freeX - freeW / 2, freeY - 11, freeW, 22);
+    ctx.fillStyle = '#fff6ea';
+    ctx.fillText('FREI', freeX, freeY);
     ctx.restore();
   }
 
