@@ -9,6 +9,14 @@
  * Difficulty (Einfach / Mittel / Schwer / Baba) scales speed, bend, lane width,
  * and tunnel obstacles. Mittel is harder than the original single ramp.
  * Einfach stays wide and slow. Scores keep the same difficulty field as Rush.
+ *
+ * Forward speed is two ramps added together. The distance ramp is the short
+ * climb from speedBase to speedBase + speedGain (then flat). A smoothstep over
+ * survival time adds speedLate on top and is nearly flat for the first few
+ * seconds, so the opening stays the preset's start speed. The sum is capped.
+ * Bends, lane width, and obstacles still follow rampDist only — they do not
+ * pack tighter after that — so the late speedup is a shorter reaction window,
+ * not a second obstacle squeeze.
  */
 import {
   computeScore,
@@ -42,6 +50,9 @@ export const DRIFT_DIFFICULTIES = {
     speedBase: 19,
     speedGain: 12,
     speedDist: 2200,
+    /** Extra speed from the survival-time ramp. Full at speedRampSec. */
+    speedLate: 14,
+    speedRampSec: 100,
     rampDist: 2200,
     laneStart: 1.52,
     laneShrink: 0.28,
@@ -76,6 +87,8 @@ export const DRIFT_DIFFICULTIES = {
     speedBase: 33,
     speedGain: 28,
     speedDist: 1250,
+    speedLate: 16,
+    speedRampSec: 75,
     rampDist: 1400,
     laneStart: 1.06,
     laneShrink: 0.4,
@@ -110,6 +123,8 @@ export const DRIFT_DIFFICULTIES = {
     speedBase: 44,
     speedGain: 38,
     speedDist: 1000,
+    speedLate: 12,
+    speedRampSec: 75,
     rampDist: 1100,
     laneStart: 0.92,
     laneShrink: 0.34,
@@ -144,6 +159,8 @@ export const DRIFT_DIFFICULTIES = {
     speedBase: 54,
     speedGain: 48,
     speedDist: 820,
+    speedLate: 10,
+    speedRampSec: 75,
     rampDist: 900,
     laneStart: 0.84,
     laneShrink: 0.3,
@@ -180,6 +197,12 @@ export function getDriftDifficulty(id) {
 
 function clamp(v, a, b) {
   return Math.max(a, Math.min(b, v));
+}
+
+/** Smoothstep on [0, 1]. Zero slope at both ends, so the opening stays gentle. */
+function smoothstep01(t) {
+  const x = clamp(t, 0, 1);
+  return x * x * (3 - 2 * x);
 }
 
 /**
@@ -269,10 +292,18 @@ export class DriftGame {
     this.trail = 0;
   }
 
-  speedAt(z) {
+  /**
+   * Forward speed at tunnel distance `z` and survival time in seconds.
+   * Distance ramp and time ramp add. Both are clamped, so this never exceeds
+   * speedBase + speedGain + speedLate.
+   * @param {number} z
+   * @param {number} [survivalSec]
+   */
+  speedAt(z, survivalSec = 0) {
     const cfg = this.diff;
-    const ramp = Math.min(1, Math.max(0, z) / cfg.speedDist);
-    return cfg.speedBase + ramp * cfg.speedGain;
+    const distRamp = Math.min(1, Math.max(0, z) / cfg.speedDist);
+    const timeRamp = smoothstep01((Number(survivalSec) || 0) / cfg.speedRampSec);
+    return cfg.speedBase + distRamp * cfg.speedGain + timeRamp * cfg.speedLate;
   }
 
   resize() {
@@ -577,7 +608,7 @@ export class DriftGame {
     this.x += this.vx * dt;
 
     const prevZ = this.playerZ;
-    const spd = this.speedAt(prevZ);
+    const spd = this.speedAt(prevZ, this.survivalMs / 1000);
     this.playerZ = prevZ + spd * dt;
     this.survivalMs += dt * 1000;
     this.comboTimer = Math.max(0, this.comboTimer - dt);

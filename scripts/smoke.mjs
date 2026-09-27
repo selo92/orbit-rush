@@ -508,6 +508,33 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
   assert(easySpeed < midSpeed && midSpeed < hardSpeed && hardSpeed < babaSpeed, 'speed climbs with difficulty');
   assert(pace.speedAt(2000) > babaSpeed, 'baba ramps above its base speed');
 
+  for (const id of ['einfach', 'mittel', 'schwer', 'baba']) {
+    const d = makeDrift(390, 844);
+    d.setDifficulty(id);
+    const cfg = d.diff;
+    const cap = cfg.speedBase + cfg.speedGain + cfg.speedLate;
+    const far = cfg.speedDist * 4;
+    assert(d.speedAt(0, 0) === cfg.speedBase, `${id} opens at its base speed`);
+    assert(d.speedAt(0, 4) - cfg.speedBase < 0.4, `${id} time ramp stays gentle for the first seconds`);
+    assert(d.speedAt(far, 0) === cfg.speedBase + cfg.speedGain, `${id} distance ramp still plateaus without the time ramp`);
+    const mid = d.speedAt(far, cfg.speedRampSec * 0.5);
+    const full = d.speedAt(far, cfg.speedRampSec);
+    const later = d.speedAt(far, cfg.speedRampSec + 30);
+    assert(d.speedAt(far, 0) < mid && mid < full, `${id} keeps accelerating after the distance plateau`);
+    assert(Math.abs(full - cap) < 1e-9 && Math.abs(later - cap) < 1e-9, `${id} speed caps at base + gain + late`);
+  }
+
+  const early = makeDrift(390, 844);
+  early.setDifficulty('mittel');
+  early.resetState();
+  early.grace = 999;
+  early.alive = true;
+  for (let i = 0; i < 180; i++) early.update(1 / 60);
+  const lived = early.speedAt(early.playerZ, early.survivalMs / 1000);
+  const distOnly = early.speedAt(early.playerZ, 0);
+  assert(early.alive && early.survivalMs > 2500, 'a short mittel run survives the opening');
+  assert(lived > distOnly && lived - distOnly < 0.5, 'three seconds add only a small time-ramp bump');
+
   function laneHalf(id, z) {
     const d = makeDrift(390, 844);
     d.setDifficulty(id);

@@ -36,6 +36,8 @@ Solo-Tunnel. Das Schiff bleibt unten in der Mitte, die Bahn biegt und wird enger
 
 Vor dem Start wählst du **Einfach · Mittel · Schwer · Baba** (deutsch, eigener Screen). **Mittel** ist schneller und enger als die alte einzelne Rampe und hat Hindernisse. **Einfach** bleibt weit, langsam und mit wenigen Trümmern. Höher heißt mehr Tempo, schärfere Kurven, schmalere Bahn, dichtere Hindernisse. Der Grad liegt lokal unter `orbit-drift-difficulty` und ändert den Rush-Grad nicht.
 
+Im Lauf steigt das Tempo weiter. Die kurze Streckenrampe bleibt (dann flach). Darüber legt eine geglättete Zeitrampen nach, in den ersten Sekunden fast nicht, und erreicht ihre Kappe erst spät: Einfach 19 → 45 in 100 s, Mittel 33 → 77 in 75 s, Schwer 44 → 94 in 75 s, Baba 54 → 112 in 75 s. Kurven, Bahnbreite und Hindernisse ziehen nur über die Strecke an und werden danach nicht enger. Die Formel und die Rangliste bleiben dieselben; ein längerer Lauf sammelt Ringe nur etwas schneller, weil die Bahn zügiger vorbeizieht.
+
 Ringe in der Bahn sind die Orbs der gemeinsamen Formel. Wer ein Tor knapp an der Wand passiert und danach noch lebt, bekommt einen Near-Miss. Ketten funktionieren wie bei Rush. Angezeigt wird die Strecke in km; die Punkte bleiben an der Zeit hängen, damit der Server sie prüfen kann.
 
 ```text
