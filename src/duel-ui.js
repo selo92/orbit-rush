@@ -1,23 +1,30 @@
 /**
  * Orbit Duel client. Polls GET /api/duel/room/:code.
  * Lobby polls slowly. A live rally polls faster and draws the ball ahead
- * from the last server snapshot. Paddle posts are throttled; points stay server-side.
+ * from the snapshot timestamp, so a late poll does not freeze or smear it.
+ * The poll also carries the paddle. Points stay server-side.
  * Hidden tabs pause. The pilot name is the same orbit-rush-name as the other games.
  */
 import { loadPlayerName, savePlayerName } from './identity.js';
 import {
   BALL_R,
   HEARTBEAT_MS,
+  PADDLE_FAST_INTERVAL_MS,
   PADDLE_H,
-  PADDLE_MIN_INTERVAL_MS,
   PADDLE_W,
   WIN_SCORE,
   clampPaddle,
   normalizeRoomCode,
   paddleCenterY,
+  paddleCovers,
+  paddleWriteIntervalMs,
   pollDelayMs,
+  projectDefense,
   projectLive,
+  viewY,
 } from '../shared/duel.js';
+
+const FIELD_INSET = 10;
 
 const API_BASE = (import.meta.env?.VITE_API_BASE ?? '').replace(/\/$/, '');
 const SS_KEY = 'orbit-duel-session';
@@ -40,13 +47,18 @@ let showHub = () => {};
 let playClick = () => {};
 let localPaddle = 0.5;
 let lastSent = 0.5;
+let lastSendAt = 0;
+let sendFlight = false;
 let clockOffset = 0;
 let clockReady = false;
 let lastFrame = 0;
+let snapPerf = 0;
+let blend = null;
+let dragging = false;
+let paddleShown = [0.5, 0.5];
+let paddleFrameAt = 0;
 const keys = new Set();
 const trail = [];
-let visualBall = null;
-let seenRally = -1;
 
 const stars = Array.from({ length: 36 }, (_, i) => ({
   x: ((i * 53) % 97) / 97,
@@ -80,8 +92,11 @@ function clearSession() {
   secret = '';
   version = 0;
   state = null;
-  visualBall = null;
-  seenRally = -1;
+  lastSendAt = 0;
+  snapPerf = 0;
+  blend = null;
+  paddleShown = [0.5, 0.5];
+  paddleFrameAt = 0;
   trail.length = 0;
   try {
     sessionStorage.removeItem(SS_KEY);
@@ -164,6 +179,63 @@ function estimatedNow() {
   return Date.now() + clockOffset;
 }
 
+function renderNow() {
+  if (!state?.ball || !snapPerf) return estimatedNow();
+  return state.ball.t + (performance.now() - snapPerf);
+}
+
+function roleOf(source) {
+  return source?.seats?.find((seat) => seat.you)?.role || null;
+}
+
+function projectState(source, now) {
+  if (!source) return source;
+  const role = roleOf(source);
+  const save = source.openSave;
+  if (
+    save &&
+    role &&
+    save.defender === role &&
+    source.checkpoint?.ball &&
+    paddleCovers(save.x, localPaddle) &&
+    now < save.until
+  ) {
+    return projectDefense(source, now, role, localPaddle);
+  }
+  return projectLive(source, now, role, localPaddle);
+}
+
+function noteProjectionError(prev, next) {
+  if (!prev?.ball || !next?.ball || !snapPerf) {
+    blend = null;
+    return;
+  }
+  if (prev.rally !== next.rally || prev.phase !== next.phase || prev.status !== next.status) {
+    blend = null;
+    trail.length = 0;
+    return;
+  }
+  const nowPerf = performance.now();
+  const prevView = projectState(prev, prev.ball.t + (nowPerf - snapPerf));
+  const nextView = projectState(next, next.ball.t);
+  if (!prevView?.ball || !nextView?.ball) {
+    blend = null;
+    return;
+  }
+  const dx = prevView.ball.x - nextView.ball.x;
+  const dy = prevView.ball.y - nextView.ball.y;
+  const flipped =
+    prevView.ball.vy * nextView.ball.vy < 0 &&
+    Math.abs(prevView.ball.vy) > 0.05 &&
+    Math.abs(nextView.ball.vy) > 0.05;
+  if (flipped || Math.hypot(dx, dy) > 0.2) {
+    blend = null;
+    trail.length = 0;
+    return;
+  }
+  blend = { x: dx, y: dy, born: nowPerf };
+}
+
 function applyEnvelope(data) {
   if (!data) return;
   const incoming = Number.isInteger(data.version) ? data.version : 0;
@@ -172,15 +244,30 @@ function applyEnvelope(data) {
   if (data.secret) secret = data.secret;
   if (data.code) code = data.code;
   if (data.state) {
-    const sameVersion = !incoming || incoming === version;
-    const olderBall =
-      sameVersion &&
+    const next = data.state;
+    const renderT = state?.ball && snapPerf ? state.ball.t + (performance.now() - snapPerf) : 0;
+    const sameRally =
       state?.ball &&
-      data.state.ball &&
-      Number(data.state.ball.t) < Number(state.ball.t) &&
-      data.state.rally === state.rally &&
-      data.state.status === state.status;
-    if (!olderBall) state = data.state;
+      next.ball &&
+      next.rally === state.rally &&
+      next.status === state.status &&
+      next.phase === 'live' &&
+      state.phase === 'live';
+    const authoritative =
+      !state?.ball ||
+      next.phase !== 'live' ||
+      next.status !== state.status ||
+      next.rally !== state.rally ||
+      (next.score?.[0] || 0) !== (state.score?.[0] || 0) ||
+      (next.score?.[1] || 0) !== (state.score?.[1] || 0);
+    const rewind = sameRally && !authoritative && Number(next.ball.t) < renderT - 40;
+    if (rewind) {
+      state = { ...next, ball: state.ball, checkpoint: next.checkpoint || state.checkpoint };
+    } else {
+      noteProjectionError(state, next);
+      state = next;
+      snapPerf = performance.now();
+    }
   }
   if (incoming) version = incoming;
   saveSession();
@@ -212,8 +299,11 @@ async function request(path, { method = 'GET', body } = {}) {
 async function pollOnce() {
   if (!code || document.hidden) return;
   const fast = state?.status === 'playing' || state?.status === 'countdown';
-  const since = !fast && version ? `?since=${version}` : '';
-  const { status, data } = await request(`/api/duel/room/${code}${since}`);
+  const params = new URLSearchParams();
+  if (!fast && version) params.set('since', String(version));
+  if (fast) params.set('p', clampPaddle(localPaddle).toFixed(4));
+  const query = params.toString();
+  const { status, data } = await request(`/api/duel/room/${code}${query ? `?${query}` : ''}`);
   if (status === 304 || (data?.unchanged && !data?.state)) {
     noteServerNow(data?.serverNow);
     return;
@@ -266,7 +356,7 @@ function startLoops() {
   }, HEARTBEAT_MS);
   sendTimer = setInterval(() => {
     if (live && !document.hidden) sendPaddle();
-  }, PADDLE_MIN_INTERVAL_MS);
+  }, PADDLE_FAST_INTERVAL_MS);
   lastFrame = performance.now();
   raf = requestAnimationFrame(tick);
 }
@@ -285,21 +375,31 @@ async function heartbeat() {
 }
 
 async function sendPaddle() {
-  if (!code || !secret || !state) return;
-  if (state.status !== 'countdown' && state.status !== 'playing') return;
-  if (Math.abs(localPaddle - lastSent) < 0.008) return;
+  if (!code || !secret || !state || sendFlight) return;
+  if (state.status !== 'countdown' && state.status !== 'playing' && !state.openSave) return;
+  const role = roleOf(state);
+  const interval = paddleWriteIntervalMs(state, role);
+  if (Date.now() - lastSendAt < interval) return;
   const paddle = clampPaddle(localPaddle);
+  const save = state.openSave;
+  const defending = !!(save && save.defender === role && paddleCovers(save.x, paddle));
+  if (Math.abs(paddle - lastSent) < 0.008 && !defending) return;
+  sendFlight = true;
+  lastSendAt = Date.now();
   try {
     const { status, data } = await request('/api/duel/paddle', {
       method: 'POST',
       body: { code, secret, paddle },
     });
     if (status === 200) {
-      lastSent = paddle;
+      const me = data?.state?.seats?.find((seat) => seat.you);
+      if (!data?.state || (me && Math.abs((me.paddle ?? paddle) - paddle) < 0.02)) lastSent = paddle;
       if (data?.state) applyEnvelope(data);
     }
   } catch {
     /* next interval retries */
+  } finally {
+    sendFlight = false;
   }
 }
 
@@ -332,6 +432,7 @@ async function createRoom() {
     }
     localPaddle = 0.5;
     lastSent = 0.5;
+    lastSendAt = 0;
     applyEnvelope(data);
     setStatus('Code teilen. Der Gast tritt bei, dann tippt ihr beide Bereit.', 'calm');
   } catch {
@@ -394,6 +495,7 @@ async function joinRoom() {
     }
     localPaddle = 0.5;
     lastSent = 0.5;
+    lastSendAt = 0;
     applyEnvelope(data);
     setStatus('Du bist drin. Tippe Bereit, wenn der andere da ist.', 'calm');
   } catch {
@@ -433,6 +535,7 @@ async function rematch() {
     }
     localPaddle = 0.5;
     lastSent = 0.5;
+    lastSendAt = 0;
     setStatus('Neue Runde. Beide wieder Bereit.', 'calm');
   } catch {
     setStatus('API nicht erreichbar. npm run start:api', 'error');
@@ -480,8 +583,17 @@ function countdownLabel() {
   return String(Math.ceil(left / 1000));
 }
 
+function defendingSave() {
+  const role = roleOf(state);
+  const save = state?.openSave;
+  if (!save || !role || save.defender !== role || !state.checkpoint?.ball) return false;
+  if (!paddleCovers(save.x, localPaddle)) return false;
+  return renderNow() < save.until;
+}
+
 function bannerText() {
   if (!state) return '';
+  if (defendingSave() && state.status !== 'finished') return `Zuerst ${state.target || WIN_SCORE}`;
   if (state.status === 'countdown') {
     const label = countdownLabel();
     return label === 'LOS' ? 'Los!' : label;
@@ -524,16 +636,17 @@ function renderMatchChrome() {
   const opp = otherSeat();
   const mine = me?.role === 'guest' ? 1 : 0;
   const theirs = mine === 0 ? 1 : 0;
+  const board = defendingSave() && state.checkpoint?.score ? state.checkpoint.score : state?.score;
   const myScore = $('duel-my-score');
   const oppScore = $('duel-opp-score');
   const myName = $('duel-my-name');
   const oppName = $('duel-opp-name');
-  if (myScore) myScore.textContent = String(state?.score?.[mine] ?? 0);
-  if (oppScore) oppScore.textContent = String(state?.score?.[theirs] ?? 0);
+  if (myScore) myScore.textContent = String(board?.[mine] ?? 0);
+  if (oppScore) oppScore.textContent = String(board?.[theirs] ?? 0);
   if (myName) myName.textContent = me?.name || 'Du';
   if (oppName) oppName.textContent = opp?.occupied ? opp.name : '…';
   const overlay = $('duel-overlay');
-  const finished = state?.status === 'finished';
+  const finished = state?.status === 'finished' && !defendingSave();
   overlay?.classList.toggle('hidden', !finished);
   if (finished) {
     const won = me && state.winner === me.role;
@@ -575,8 +688,9 @@ function aimFromEvent(event) {
   const canvas = $('duel-canvas');
   if (!canvas) return;
   const rect = canvas.getBoundingClientRect();
-  if (!rect.width) return;
-  const x = (event.clientX - rect.left) / rect.width;
+  const fw = rect.width - FIELD_INSET * 2;
+  if (fw <= 0) return;
+  const x = (event.clientX - rect.left - FIELD_INSET) / fw;
   localPaddle = clampPaddle(x);
 }
 
@@ -592,9 +706,8 @@ function stepKeys(dt) {
 }
 
 function projected() {
-  const me = mySeat();
   if (!state) return null;
-  return projectLive(state, estimatedNow(), me?.role, localPaddle);
+  return projectState(state, renderNow());
 }
 
 function draw() {
@@ -614,8 +727,8 @@ function draw() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   const view = projected() || state;
   const guestView = mySeat()?.role === 'guest';
-  const sy = (y) => (guestView ? 1 - y : y);
-  const inset = 10;
+  const sy = (y) => viewY(y, guestView ? 'guest' : 'host');
+  const inset = FIELD_INSET;
   const fw = cssW - inset * 2;
   const fh = cssH - inset * 2;
   const px = (x) => inset + x * fw;
@@ -666,28 +779,36 @@ function draw() {
     ctx.restore();
   };
 
+  const frameNow = performance.now();
+  const frameDt = paddleFrameAt ? Math.min(0.05, (frameNow - paddleFrameAt) / 1000) : 0.016;
+  paddleFrameAt = frameNow;
+  const ease = 1 - Math.exp(-frameDt / 0.045);
   const seats = view?.seats || state?.seats || [];
   for (const seat of seats) {
     const mine = seat.role === me?.role;
-    const x = mine ? localPaddle : seat.paddle;
+    const index = seat.role === 'guest' ? 1 : 0;
+    if (!mine) paddleShown[index] += ((seat.paddle ?? 0.5) - paddleShown[index]) * ease;
+    const x = mine ? localPaddle : paddleShown[index];
     if (seat.occupied || mine) drawPaddle(seat.role, x, mine);
   }
 
   const ball = view?.ball || state?.ball;
   if (ball) {
-    const bx = px(ball.x);
-    const by = py(ball.y);
-    if (!visualBall || seenRally !== (view?.rally ?? state?.rally) || view?.phase !== 'live') {
-      visualBall = { x: bx, y: by };
-      seenRally = view?.rally ?? state?.rally ?? 0;
-      trail.length = 0;
-    } else {
-      visualBall.x += (bx - visualBall.x) * 0.45;
-      visualBall.y += (by - visualBall.y) * 0.45;
+    let worldX = ball.x;
+    let worldY = ball.y;
+    if (blend) {
+      const decay = Math.exp(-(performance.now() - blend.born) / 80);
+      if (decay < 0.04) blend = null;
+      else {
+        worldX += blend.x * decay;
+        worldY += blend.y * decay;
+      }
     }
-    trail.push({ x: visualBall.x, y: visualBall.y });
+    const bx = px(worldX);
+    const by = py(worldY);
+    trail.push({ x: bx, y: by });
     if (trail.length > 7) trail.shift();
-    const radius = Math.max(6, BALL_R * fh);
+    const radius = Math.max(4, BALL_R * fh);
     trail.forEach((dot, index) => {
       ctx.globalAlpha = ((index + 1) / trail.length) * 0.35;
       ctx.fillStyle = '#ffffff';
@@ -701,7 +822,7 @@ function draw() {
     ctx.shadowBlur = 18;
     ctx.fillStyle = '#f4fbff';
     ctx.beginPath();
-    ctx.arc(visualBall.x, visualBall.y, radius, 0, Math.PI * 2);
+    ctx.arc(bx, by, radius, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
   }
@@ -726,6 +847,9 @@ function tick(now) {
   lastFrame = now;
   stepKeys(dt);
   syncBanner();
+  if (state && (state.status === 'playing' || state.status === 'finished' || state.status === 'countdown')) {
+    renderMatchChrome();
+  }
   draw();
 }
 
@@ -796,12 +920,22 @@ export function mountDuel({ onHub, audioClick }) {
   const canvas = $('duel-canvas');
   canvas?.addEventListener('pointerdown', (event) => {
     if (!live) return;
+    dragging = true;
     canvas.setPointerCapture?.(event.pointerId);
     aimFromEvent(event);
+    sendPaddle();
   });
   canvas?.addEventListener('pointermove', (event) => {
     if (!live) return;
-    if (event.buttons || event.pointerType === 'touch') aimFromEvent(event);
+    if (!dragging && !event.buttons && event.pointerType !== 'touch') return;
+    aimFromEvent(event);
+  });
+  canvas?.addEventListener('pointerup', () => {
+    dragging = false;
+    sendPaddle();
+  });
+  canvas?.addEventListener('pointercancel', () => {
+    dragging = false;
   });
   window.addEventListener('keydown', (event) => onKey(event, true));
   window.addEventListener('keyup', (event) => onKey(event, false));

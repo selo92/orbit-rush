@@ -166,21 +166,36 @@ async function loadFresh(store, code, request) {
   return { room };
 }
 
-async function projectRoom(store, room) {
+async function projectRoom(store, room, paddleInput) {
   let current = room;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const now = Date.now();
-    const projected = applyClock(current.state, now);
-    if (!projected.dirty) return { room: current, view: projected.state, now };
-    const saved = await store.cas(current.code, current.version, projected.state, now);
+    let viewState = current.state;
+    let dirty = false;
+    let clocked = false;
+    if (paddleInput && Number.isFinite(paddleInput.paddle)) {
+      const applied = applyPaddle(current.state, paddleInput.secret, paddleInput.paddle, now);
+      if (applied.ok) {
+        viewState = applied.state;
+        dirty = !applied.unchanged;
+        clocked = true;
+      }
+    }
+    if (!clocked) {
+      const projected = applyClock(viewState, now);
+      viewState = projected.state;
+      dirty = projected.dirty;
+    }
+    if (!dirty) return { room: current, view: viewState, now };
+    const saved = await store.cas(current.code, current.version, viewState, now);
     if (saved) {
       const savedRoom = {
         ...current,
         version: current.version + 1,
-        state: projected.state,
+        state: viewState,
         updatedAt: now,
       };
-      return { room: savedRoom, view: projected.state, now };
+      return { room: savedRoom, view: viewState, now };
     }
     const fresh = await store.get(current.code);
     if (!fresh) return { missing: true };
@@ -320,10 +335,15 @@ export async function handleDuel(request, store) {
     if (!route.code) return json({ error: 'code', message: 'Raumcode ungültig.' }, 400, request);
     const loaded = await loadFresh(store, route.code, request);
     if (loaded.error) return loaded.error;
-    const projected = await projectRoom(store, loaded.room);
+    const secret = secretFrom(request, null);
+    const paddleRaw = url.searchParams.get('p');
+    const paddleInput =
+      secret && paddleRaw != null && Number.isFinite(Number(paddleRaw))
+        ? { secret, paddle: Number(paddleRaw) }
+        : null;
+    const projected = await projectRoom(store, loaded.room, paddleInput);
     if (projected.missing) return json({ error: 'not-found', message: 'Raum nicht gefunden.' }, 404, request);
     const { room, view, now } = projected;
-    const secret = secretFrom(request, null);
     const skipCache = liveBall(view);
     if (!skipCache && etagMatches(request.headers.get('If-None-Match'), room.version)) {
       return new Response(null, {

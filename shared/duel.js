@@ -4,7 +4,10 @@
  *
  * The server owns the ball. A poll projects the ball forward in memory and only
  * writes D1 when a point, a serve, a forfeit, or a throttled paddle move happens.
- * Clients may draw ahead from the last snapshot; points come from the server.
+ * Clients draw ahead from the last snapshot in real time; points come from the server.
+ * Hits are swept against the paddle face (the ball cannot tunnel through),
+ * and a paddle update is applied before that catch-up step. A miss inside
+ * HIT_GRACE_MS can still be saved when the blocking paddle arrives.
  *
  * Rules:
  * - Host paddle is the bottom, guest paddle is the top. Each client flips the
@@ -25,13 +28,15 @@ export const SPEED_GAIN = 1.04;
 export const COUNTDOWN_MS = 3000;
 export const SERVE_DELAY_MS = 900;
 export const POLL_MS_LOBBY = 1600;
-export const POLL_MS_PLAY = 220;
+export const POLL_MS_PLAY = 120;
 export const PADDLE_MIN_INTERVAL_MS = 240;
+export const PADDLE_FAST_INTERVAL_MS = 100;
 export const PADDLE_EPSILON = 0.008;
+export const HIT_GRACE_MS = 240;
 export const HEARTBEAT_MS = 12_000;
 export const ABANDON_MS = 70_000;
 export const ROOM_TTL_MS = 3 * 60 * 60 * 1000;
-export const PREDICT_MS = 450;
+export const PREDICT_MS = 900;
 
 const STEP_MS = 16;
 const MAX_SIM_MS = 2000;
@@ -67,6 +72,39 @@ export function paddleFaceY(role) {
   const half = PADDLE_H / 2;
   const center = paddleCenterY(role);
   return role === 'guest' ? center + half : center - half;
+}
+
+/** Ball-center Y where the ball's surface meets the inner paddle face. */
+export function contactPlaneY(role) {
+  return role === 'guest' ? paddleFaceY('guest') + BALL_R : paddleFaceY('host') - BALL_R;
+}
+
+/** Guest view mirrors Y so their paddle stays at the bottom. X is not flipped. */
+export function viewY(y, role) {
+  return role === 'guest' ? 1 - y : y;
+}
+
+export function paddleCovers(ballX, paddleX) {
+  return Math.abs(ballX - clampPaddle(paddleX)) <= PADDLE_W / 2 + BALL_R;
+}
+
+/** Faster writes only while the ball is coming at this paddle, so blocks land in D1. */
+export function paddleWriteIntervalMs(state, role) {
+  if (role !== 'host' && role !== 'guest') return PADDLE_MIN_INTERVAL_MS;
+  const miss = state?.lastMiss;
+  if (miss?.defender === role) {
+    const waiting = state.phase === 'wait' && state.notice === 'point';
+    const falseWin = state.status === 'finished' && state.notice === 'win';
+    if ((waiting || falseWin) && state.openSave == null) return PADDLE_FAST_INTERVAL_MS;
+  }
+  const save = state?.openSave;
+  if (save?.defender === role) return PADDLE_FAST_INTERVAL_MS;
+  const ball = state?.ball;
+  if (!ball || state.status !== 'playing' || state.phase !== 'live') return PADDLE_MIN_INTERVAL_MS;
+  const toward = role === 'guest' ? ball.vy < 0 : ball.vy > 0;
+  if (!toward) return PADDLE_MIN_INTERVAL_MS;
+  if (Math.abs(ball.y - contactPlaneY(role)) <= 0.38) return PADDLE_FAST_INTERVAL_MS;
+  return PADDLE_MIN_INTERVAL_MS;
 }
 
 function clone(state) {
@@ -216,9 +254,47 @@ function reflect(ball, paddleX, vySign) {
   ball.vy = vySign * Math.cos(angle) * speed;
 }
 
-function overlap(ballX, paddleX) {
-  const px = clampPaddle(paddleX);
-  return Math.abs(ballX - px) <= PADDLE_W / 2 + BALL_R * 0.25;
+function crossU(y0, y1, plane) {
+  if (y1 === y0) return null;
+  const u = (plane - y0) / (y1 - y0);
+  if (u < -0.0001 || u > 1.0001) return null;
+  return Math.min(1, Math.max(0, u));
+}
+
+function noteCheckpoint(state) {
+  const ball = state.ball;
+  if (!ball || state.phase !== 'live' || state.status !== 'playing') return;
+  const top = contactPlaneY('guest') + 0.2;
+  const bot = contactPlaneY('host') - 0.2;
+  if (ball.y <= top || ball.y >= bot) return;
+  state.checkpoint = {
+    ball: { x: ball.x, y: ball.y, vx: ball.vx, vy: ball.vy, t: ball.t },
+    score: [state.score?.[0] || 0, state.score?.[1] || 0],
+    rally: state.rally || 0,
+    serve: state.serve,
+  };
+}
+
+function paddleHitOnSegment(state, x0, y0, x1, y1, vy) {
+  if (vy < 0) {
+    const plane = contactPlaneY('guest');
+    const u = crossU(y0, y1, plane);
+    if (u == null || y0 < plane - 0.0001) return null;
+    const x = x0 + (x1 - x0) * u;
+    const paddleX = clampPaddle(state.seats[1]?.paddle ?? 0.5);
+    if (!paddleCovers(x, paddleX)) return null;
+    return { u, x, plane, paddleX, vySign: 1 };
+  }
+  if (vy > 0) {
+    const plane = contactPlaneY('host');
+    const u = crossU(y0, y1, plane);
+    if (u == null || y0 > plane + 0.0001) return null;
+    const x = x0 + (x1 - x0) * u;
+    const paddleX = clampPaddle(state.seats[0]?.paddle ?? 0.5);
+    if (!paddleCovers(x, paddleX)) return null;
+    return { u, x, plane, paddleX, vySign: -1 };
+  }
+  return null;
 }
 
 function scorePoint(state, scorer, now) {
@@ -258,76 +334,149 @@ function launch(state, now, rng) {
   state.phase = 'live';
   state.rally = (state.rally || 0) + 1;
   state.notice = null;
+  state.lastMiss = null;
+}
+
+const GOAL_TOP = BALL_R * 0.45;
+const GOAL_BOTTOM = 1 - BALL_R * 0.45;
+
+function placeMiss(state, defender, x, crossAt, opts, now) {
+  const scorer = defender === 'host' ? 'guest' : 'host';
+  const plane = contactPlaneY(defender);
+  const heldX = Math.min(1 - BALL_R, Math.max(BALL_R, x));
+  if (opts.stopOnScore) {
+    state.ball.x = heldX;
+    state.ball.y = defender === 'guest' ? GOAL_TOP : GOAL_BOTTOM;
+    state.ball.t = crossAt;
+    return { scored: true, held: true };
+  }
+  // Keep the miss in memory until the grace window ends so a late paddle
+  // write can still replay the rally. This view is not a D1 write by itself.
+  if (now < crossAt + HIT_GRACE_MS) {
+    const outward = defender === 'guest' ? 1 : -1;
+    state.ball.x = heldX;
+    state.ball.y = plane + outward * 0.002;
+    state.ball.t = crossAt;
+    return { scored: false, deferred: true };
+  }
+  state.lastMiss = { defender, x: heldX, at: crossAt, scorer };
+  scorePoint(state, scorer, crossAt);
+  return { scored: true };
 }
 
 /**
  * Integrate the live ball. `stopOnScore` freezes the ball on the goal line
  * without awarding a point — clients use that so only the server counts.
+ * Paddle contact is swept, so a step that jumps past the face still hits
+ * at the crossing x instead of the x after the step.
  */
 export function stepBall(state, now, opts = {}) {
-  const stopOnScore = !!opts.stopOnScore;
   if (state.status !== 'playing' || state.phase !== 'live' || !state.ball) return { scored: false };
   let t = state.ball.t || now;
   if (now <= t) return { scored: false };
   const end = Math.min(now, t + MAX_SIM_MS);
   let guard = 0;
-  while (t < end - 0.01 && guard < 200) {
+  while (t < end - 0.01 && guard < 400) {
     guard += 1;
+    noteCheckpoint(state);
     const dtMs = Math.min(STEP_MS, end - t);
     const dt = dtMs / 1000;
     const ball = state.ball;
-    let x = ball.x + ball.vx * dt;
-    let y = ball.y + ball.vy * dt;
-    if (x < BALL_R) {
-      x = BALL_R;
-      ball.vx = Math.abs(ball.vx);
-    } else if (x > 1 - BALL_R) {
-      x = 1 - BALL_R;
-      ball.vx = -Math.abs(ball.vx);
-    }
-    const guestFace = paddleFaceY('guest');
-    const hostFace = paddleFaceY('host');
-    if (ball.vy < 0 && ball.y >= guestFace - 0.0001 && y <= guestFace) {
-      const guest = state.seats[1];
-      if (guest && overlap(x, guest.paddle)) {
-        ball.x = x;
-        reflect(ball, clampPaddle(guest.paddle), 1);
-        y = guestFace + BALL_R + 0.006;
+    const x0 = ball.x;
+    const y0 = ball.y;
+    const vx = ball.vx;
+    const vy = ball.vy;
+    let x1 = x0 + vx * dt;
+    let y1 = y0 + vy * dt;
+    let used = dt;
+
+    if (x1 < BALL_R && vx < 0 && x0 > BALL_R) {
+      const u = (BALL_R - x0) / (x1 - x0);
+      if (u >= 0 && u < 1) {
+        x1 = BALL_R;
+        y1 = y0 + (y1 - y0) * u;
+        used = dt * u;
       }
-    } else if (ball.vy > 0 && ball.y <= hostFace + 0.0001 && y >= hostFace) {
-      const host = state.seats[0];
-      if (host && overlap(x, host.paddle)) {
-        ball.x = x;
-        reflect(ball, clampPaddle(host.paddle), -1);
-        y = hostFace - BALL_R - 0.006;
+    } else if (x1 > 1 - BALL_R && vx > 0 && x0 < 1 - BALL_R) {
+      const u = (1 - BALL_R - x0) / (x1 - x0);
+      if (u >= 0 && u < 1) {
+        x1 = 1 - BALL_R;
+        y1 = y0 + (y1 - y0) * u;
+        used = dt * u;
       }
     }
-    if (y < BALL_R * 0.45) {
-      if (stopOnScore) {
-        ball.x = x;
-        ball.y = BALL_R * 0.45;
-        ball.t = t + dtMs;
-        return { scored: true, held: true };
-      }
-      scorePoint(state, 'host', t + dtMs);
-      return { scored: true };
+
+    const hit = paddleHitOnSegment(state, x0, y0, x1, y1, vy);
+    if (hit) {
+      ball.x = hit.x;
+      ball.y = hit.plane;
+      reflect(ball, hit.paddleX, hit.vySign);
+      ball.y = hit.plane + hit.vySign * 0.0015;
+      const advMs = Math.max(1, used * hit.u * 1000);
+      t += advMs;
+      ball.t = t;
+      continue;
     }
-    if (y > 1 - BALL_R * 0.45) {
-      if (stopOnScore) {
-        ball.x = x;
-        ball.y = 1 - BALL_R * 0.45;
-        ball.t = t + dtMs;
-        return { scored: true, held: true };
-      }
-      scorePoint(state, 'guest', t + dtMs);
-      return { scored: true };
+
+    const reachedGoal =
+      (vy < 0 && y1 <= GOAL_TOP) || (vy > 0 && y1 >= GOAL_BOTTOM);
+    if (reachedGoal) {
+      const defender = vy < 0 ? 'guest' : 'host';
+      const plane = contactPlaneY(defender);
+      const uPlane = crossU(y0, y1, plane);
+      const u = uPlane == null ? 1 : uPlane;
+      const crossAt = t + Math.max(0, used * u * 1000);
+      const result = placeMiss(state, defender, x0 + (x1 - x0) * u, crossAt, opts, now);
+      return result;
     }
-    ball.x = x;
-    ball.y = y;
-    t += dtMs;
+
+    const wall = used < dt - 1e-6;
+    ball.x = x1;
+    ball.y = y1;
+    if (wall) {
+      if (x1 <= BALL_R + 1e-5) ball.vx = Math.abs(vx);
+      else if (x1 >= 1 - BALL_R - 1e-5) ball.vx = -Math.abs(vx);
+    } else if (x1 < BALL_R) {
+      ball.x = BALL_R;
+      ball.vx = Math.abs(vx);
+    } else if (x1 > 1 - BALL_R) {
+      ball.x = 1 - BALL_R;
+      ball.vx = -Math.abs(vx);
+    }
+    const advMs = Math.max(wall ? 1 : 0, used * 1000);
+    t += advMs || dtMs;
     ball.t = t;
   }
   return { scored: false };
+}
+
+function tryUndoMiss(state, role, now) {
+  const miss = state.lastMiss;
+  const cp = state.checkpoint;
+  if (!miss || miss.defender !== role || !cp?.ball) return false;
+  if (now - miss.at > HIT_GRACE_MS) return false;
+  const waiting = state.phase === 'wait' && state.notice === 'point' && now < (state.serveAt || 0);
+  const falseWin = state.status === 'finished' && state.notice === 'win' && state.winner === miss.scorer;
+  if (!waiting && !falseWin) return false;
+  const paddle = role === 'guest' ? state.seats[1]?.paddle : state.seats[0]?.paddle;
+  if (!paddleCovers(miss.x, paddle)) return false;
+  const trial = clone(state);
+  trial.status = 'playing';
+  trial.phase = 'live';
+  trial.notice = null;
+  trial.winner = null;
+  trial.score = [cp.score[0] || 0, cp.score[1] || 0];
+  trial.rally = cp.rally || 0;
+  trial.serve = cp.serve || 'host';
+  trial.serveAt = 0;
+  trial.ball = { x: cp.ball.x, y: cp.ball.y, vx: cp.ball.vx, vy: cp.ball.vy, t: cp.ball.t };
+  trial.lastMiss = null;
+  stepBall(trial, now);
+  const away = role === 'guest' ? trial.ball?.vy > 0 : trial.ball?.vy < 0;
+  if (trial.status !== 'playing' || trial.phase !== 'live' || !away) return false;
+  for (const key of Object.keys(state)) delete state[key];
+  Object.assign(state, trial);
+  return true;
 }
 
 function forfeit(state, now) {
@@ -392,32 +541,36 @@ export function applyClock(state, now, rng = Math.random) {
 }
 
 export function applyPaddle(state, secret, paddle, now) {
-  if (!state || (state.status !== 'lobby' && state.status !== 'countdown' && state.status !== 'playing')) {
+  if (
+    !state ||
+    (state.status !== 'lobby' && state.status !== 'countdown' && state.status !== 'playing' && state.status !== 'finished')
+  ) {
     return fail(409, 'not-playing', 'Runde läuft nicht.');
   }
   const who = findSeat(state, secret);
   if (!who) return fail(403, 'not-seated', 'Du sitzt nicht in diesem Raum.');
-  const clock = applyClock(state, now);
-  const next = clock.state;
+  const next = clone(state);
   const seat = next.seats[who.index];
   if (!seat?.occupied) return fail(403, 'not-seated', 'Du sitzt nicht in diesem Raum.');
   if (seat.abandoned) return fail(403, 'abandoned', 'Sitz ist freigegeben.');
-  if (next.status === 'finished') {
-    return clock.dirty
-      ? { ok: true, state: next, unchanged: false }
-      : { ok: true, unchanged: true, state: next };
-  }
-  const clamped = clampPaddle(paddle);
-  const delta = Math.abs(clamped - (seat.paddle ?? 0.5));
-  const tooSoon = now - (seat.lastPaddleAt || 0) < PADDLE_MIN_INTERVAL_MS;
-  const moved = delta >= PADDLE_EPSILON && !tooSoon;
   touch(seat, now);
-  if (!moved && !clock.dirty) return { ok: true, unchanged: true, state: next };
+  const clamped = clampPaddle(paddle);
+  const interval = paddleWriteIntervalMs(next, seat.role);
+  const delta = Math.abs(clamped - (seat.paddle ?? 0.5));
+  const tooSoon = now - (seat.lastPaddleAt || 0) < interval;
+  const moved = delta >= PADDLE_EPSILON && !tooSoon;
+  // The new face is in place before the catch-up step, so this request
+  // collides with where the paddle is now, not where it was last write.
   if (moved) {
     seat.paddle = clamped;
     seat.lastPaddleAt = now;
   }
-  return { ok: true, state: next, unchanged: false };
+  if (tryUndoMiss(next, seat.role, now)) return { ok: true, state: next, unchanged: false };
+  if (next.status === 'finished') return { ok: true, unchanged: true, state: next };
+  const clock = applyClock(next, now);
+  const result = clock.state;
+  if (!moved && !clock.dirty) return { ok: true, unchanged: true, state: result };
+  return { ok: true, state: result, unchanged: false };
 }
 
 export function applyHeartbeat(state, secret, now) {
@@ -516,6 +669,21 @@ export function publicState(state, secret) {
           t: state.ball.t,
         }
       : stillBall(0),
+    checkpoint: state.checkpoint?.ball
+      ? {
+          ball: {
+            x: state.checkpoint.ball.x,
+            y: state.checkpoint.ball.y,
+            vx: state.checkpoint.ball.vx,
+            vy: state.checkpoint.ball.vy,
+            t: state.checkpoint.ball.t,
+          },
+          score: [state.checkpoint.score?.[0] || 0, state.checkpoint.score?.[1] || 0],
+          rally: state.checkpoint.rally || 0,
+          serve: state.checkpoint.serve || 'host',
+        }
+      : null,
+    openSave: openSaveOf(state),
     seats: state.seats.map((seat) => ({
       role: seat.role,
       name: seat.name,
@@ -529,6 +697,16 @@ export function publicState(state, secret) {
   };
 }
 
+function openSaveOf(state) {
+  const miss = state?.lastMiss;
+  if (!miss || !Number.isFinite(miss.at)) return null;
+  const until = miss.at + HIT_GRACE_MS;
+  const waiting = state.phase === 'wait' && state.notice === 'point';
+  const falseWin = state.status === 'finished' && state.notice === 'win' && state.winner === miss.scorer;
+  if (!waiting && !falseWin) return null;
+  return { defender: miss.defender, x: miss.x, until };
+}
+
 /** Draw-ahead from a public snapshot. Does not award points. */
 export function projectLive(state, now, myRole, myPaddle) {
   if (!state || state.status !== 'playing' || state.phase !== 'live' || !state.ball) return state;
@@ -537,6 +715,30 @@ export function projectLive(state, now, myRole, myPaddle) {
     const seat = next.seats.find((item) => item.role === myRole);
     if (seat) seat.paddle = clampPaddle(myPaddle);
   }
+  const cap = Math.min(now, (next.ball.t || now) + PREDICT_MS);
+  stepBall(next, cap, { stopOnScore: true });
+  return next;
+}
+
+/**
+ * While the server is still inside the save window, the defender keeps
+ * drawing the rally from the pre-contact checkpoint instead of the reset ball.
+ */
+export function projectDefense(state, now, role, paddle) {
+  if (!state?.checkpoint?.ball || (role !== 'host' && role !== 'guest')) return state;
+  const next = clone(state);
+  next.status = 'playing';
+  next.phase = 'live';
+  next.notice = null;
+  next.winner = null;
+  next.score = [state.checkpoint.score?.[0] || 0, state.checkpoint.score?.[1] || 0];
+  next.rally = state.checkpoint.rally || state.rally || 0;
+  next.serve = state.checkpoint.serve || state.serve;
+  next.ball = { ...state.checkpoint.ball };
+  next.lastMiss = null;
+  next.openSave = null;
+  const seat = next.seats.find((item) => item.role === role);
+  if (seat && Number.isFinite(paddle)) seat.paddle = clampPaddle(paddle);
   const cap = Math.min(now, (next.ball.t || now) + PREDICT_MS);
   stepBall(next, cap, { stopOnScore: true });
   return next;
@@ -685,6 +887,96 @@ export function selfCheck() {
   if (gone.state.status !== 'finished' || gone.state.winner !== 'host' || gone.state.notice !== 'forfeit') {
     throw new Error('an abandoned guest forfeits');
   }
+
+  if (viewY(paddleCenterY('guest'), 'guest') < 0.9) throw new Error('guest view keeps their paddle at the bottom');
+  if (viewY(paddleCenterY('host'), 'guest') > 0.1) throw new Error('guest view puts the host paddle at the top');
+  if (viewY(0.25, 'host') !== 0.25) throw new Error('host view does not flip y');
+
+  const edgeX = 0.5 + PADDLE_W / 2 + BALL_R * 0.6;
+  let edge = started.state;
+  edge.ball = { x: edgeX, y: 0.7, vx: 0, vy: 0.9, t: missAt + 30_000 };
+  edge.phase = 'live';
+  edge.status = 'playing';
+  edge.score = [0, 0];
+  edge.seats[0].paddle = 0.5;
+  edge.seats[1].paddle = 0.5;
+  edge.seats[0].lastSeen = missAt + 30_000;
+  edge.seats[1].lastSeen = missAt + 30_000;
+  const edged = applyClock(edge, missAt + 30_400);
+  if (edged.state.score[0] + edged.state.score[1] !== 0) throw new Error('ball radius should still meet the paddle');
+  if (!(edged.state.ball.vy < 0)) throw new Error('an edge hit bounces');
+
+  let sweep = started.state;
+  const plane = contactPlaneY('host');
+  sweep = {
+    ...started.state,
+    phase: 'live',
+    status: 'playing',
+    score: [0, 0],
+    ball: { x: 0.5 + 0.16, y: plane - 0.002, vx: 4, vy: 1, t: missAt + 40_000 },
+    seats: started.state.seats.map((seat, index) => ({
+      ...seat,
+      paddle: 0.5,
+      lastSeen: missAt + 40_000,
+      lastPaddleAt: 0,
+    })),
+  };
+  const swept = applyClock(sweep, missAt + 40_000 + 32);
+  if (swept.state.score[1] !== 0 || !(swept.state.ball.vy < 0)) {
+    throw new Error('a fast diagonal step must hit at the crossing, not past the paddle');
+  }
+
+  const lateT = missAt + 50_000;
+  const late = {
+    ...started.state,
+    phase: 'live',
+    status: 'playing',
+    score: [1, 1],
+    ball: { x: 0.8, y: 0.86, vx: 0, vy: 0.7, t: lateT },
+    seats: started.state.seats.map((seat, index) => ({
+      ...seat,
+      paddle: index === 0 ? 0.2 : 0.5,
+      lastSeen: lateT,
+      lastPaddleAt: 0,
+    })),
+  };
+  const blocked = applyPaddle(late, 'host-secret', 0.8, lateT + 150);
+  if (!blocked.ok || blocked.state.score[0] + blocked.state.score[1] !== 2) {
+    throw new Error('paddle is applied before the ball steps, so the block counts');
+  }
+  if (!(blocked.state.ball.vy < 0)) throw new Error('late paddle still sends the ball back');
+
+  const fromMid = {
+    ...late,
+    ball: { x: 0.8, y: 0.5, vx: 0, vy: 0.7, t: lateT },
+  };
+  const grace = applyClock(fromMid, lateT + 620);
+  if (grace.dirty || grace.state.score[1] !== 1 || grace.state.phase !== 'live') {
+    throw new Error('a fresh miss waits inside the grace window and is not written');
+  }
+  const committed = applyClock(fromMid, lateT + 1200);
+  if (committed.state.score[1] !== 2 || !committed.state.lastMiss || !committed.state.checkpoint?.ball) {
+    throw new Error('the miss counts after the grace window');
+  }
+  const undone = applyPaddle(committed.state, 'host-secret', 0.8, committed.state.lastMiss.at + 100);
+  if (!undone.ok || undone.state.score[1] !== 1 || undone.state.phase !== 'live' || !(undone.state.ball.vy < 0)) {
+    throw new Error('a paddle that covers the miss inside the grace window restores the rally');
+  }
+
+  const far = applyPaddle(blocked.state, 'host-secret', 0.42, blocked.state.ball.t + 30);
+  if (!far.unchanged && Math.abs((far.state.seats[0].paddle ?? 0) - blocked.state.seats[0].paddle) > 0.02) {
+    throw new Error('paddle writes stay slow while the ball is leaving');
+  }
+  const approaching = {
+    ...blocked.state,
+    ball: { ...blocked.state.ball, y: contactPlaneY('host') - 0.2, vy: 0.6, t: blocked.state.ball.t },
+    seats: blocked.state.seats.map((seat, index) => ({
+      ...seat,
+      lastPaddleAt: blocked.state.ball.t,
+    })),
+  };
+  const quick = applyPaddle(approaching, 'host-secret', clampPaddle(approaching.seats[0].paddle + 0.05), approaching.ball.t + 120);
+  if (!quick.ok || quick.unchanged) throw new Error('approaching paddle writes are accepted inside 120ms');
 
   if (CODE_ALPHABET.length < 30) throw new Error('alphabet');
 }
