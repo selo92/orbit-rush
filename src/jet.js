@@ -16,6 +16,22 @@ const TWO_PI = Math.PI * 2;
 const PLAYER_R = 9;
 const WEAPON_MAX = 5;
 
+/**
+ * Träger sweep. The warning holds the ignition lane, then a narrow beam
+ * crosses and switches off. Draw and hit tests share `carrierLaserWidth()`.
+ */
+export const CARRIER_LASER = {
+  warn: 1.05,
+  sweep: 1.35,
+  cycle: 6.6,
+};
+
+/** Storm Titan columns: a short full-height strike with the same telegraph window. */
+export const TITAN_PILLAR = {
+  warn: 1.05,
+  hot: 0.42,
+};
+
 export const JET_WEAPONS = ['', 'Einzel', 'Doppel', 'Dreifach', 'Fächer', 'Laser'];
 
 export const JET_PICKUPS = {
@@ -525,6 +541,8 @@ export class JetGame {
       attackT: 0,
       laser: 'off',
       laserX: this.w * 0.5,
+      laserW: 14,
+      laserDir: 1,
       state: 'emerge',
       stateT: 0,
       visible: true,
@@ -558,22 +576,62 @@ export class JetGame {
     if (b.hp <= 0) this.defeatBoss();
   }
 
+  /**
+   * Visible core of the Träger beam. Kept far under 18% of the play width so
+   * a thumb can slide through the core.
+   */
+  carrierLaserWidth() {
+    return Math.min(16, Math.max(12, this.w * 0.042));
+  }
+
+  /**
+   * The hot beam travels between two edge pockets. Those pockets stay inside
+   * the jet's movement range and are never swept, so the arena is not sealed.
+   */
+  carrierLaserTrack() {
+    const inset = Math.max(72, Math.min(this.w * 0.22, this.w * 0.5 - 36));
+    const start = inset;
+    const end = Math.max(start + 1, this.w - inset);
+    return { start, end, span: end - start };
+  }
+
   stepCarrier(b, dt, pace) {
     b.y = Math.max(92, this.h * 0.15);
     b.x = this.w * 0.5 + Math.sin(b.t * 0.7) * (this.w * 0.28);
     b.hw = Math.min(96, this.w * 0.24);
     b.hh = 30;
-    const cycle = 6.6;
+    b.laserW = this.carrierLaserWidth();
+    // The title card covers the telegraph. Hold the attack until it clears.
+    if (this.introT > 0) {
+      b.attackT = 0;
+      b.laser = 'off';
+      b.deployed = false;
+      return;
+    }
+    const { warn, sweep, cycle } = CARRIER_LASER;
     if (b.attackT >= cycle) {
       b.attackT -= cycle;
       b.deployed = false;
+      b.laserDir = -(b.laserDir || 1);
     }
     const at = b.attackT;
-    if (at < 1.15) b.laser = 'warn';
-    else if (at < 3.4) b.laser = 'hot';
-    else b.laser = 'off';
-    b.laserX = 28 + (this.w - 56) * clamp((at - 0.45) / 2.8, 0, 1);
-    if (b.laser === 'hot' && Math.abs(this.px - b.laserX) < 14) this.hurt();
+    const dir = b.laserDir || 1;
+    const track = this.carrierLaserTrack();
+    let along = 0;
+    if (at < warn) {
+      b.laser = 'warn';
+      along = 0;
+    } else if (at < warn + sweep) {
+      b.laser = 'hot';
+      along = (at - warn) / sweep;
+    } else {
+      b.laser = 'off';
+      along = 1;
+    }
+    const origin = dir > 0 ? track.start : track.end;
+    b.laserX = origin + dir * track.span * clamp(along, 0, 1);
+    // Same half-width as the drawn core. The halo is wider and does not hit.
+    if (b.laser === 'hot' && Math.abs(this.px - b.laserX) <= b.laserW * 0.5) this.hurt();
     if (!b.deployed && at >= 2.55) {
       b.deployed = true;
       this.spawnEnemy('drone', b.x - 36, b.y + 40);
@@ -663,14 +721,15 @@ export class JetGame {
     if (b.pillarCd <= 0) {
       b.pillarCd = 3.15;
       const side = Math.random() < 0.5 ? -1 : 1;
+      const pillarW = Math.min(36, this.w * 0.16);
       const xs = [this.px, this.px + side * Math.min(110, this.w * 0.28)];
       for (const x of xs) {
         b.pillars.push({
           x: clamp(x, 24, this.w - 24),
-          w: 36,
+          w: pillarW,
           age: 0,
-          warn: 0.72,
-          hot: 0.42,
+          warn: TITAN_PILLAR.warn,
+          hot: TITAN_PILLAR.hot,
         });
       }
     }
@@ -683,7 +742,7 @@ export class JetGame {
     for (const pillar of b.pillars) {
       pillar.age += dt * pace;
       const hot = pillar.age >= pillar.warn && pillar.age <= pillar.warn + pillar.hot;
-      if (hot && Math.abs(this.px - pillar.x) < pillar.w * 0.55) this.hurt();
+      if (hot && Math.abs(this.px - pillar.x) <= pillar.w * 0.5) this.hurt();
     }
     b.pillars = b.pillars.filter((pillar) => pillar.age < pillar.warn + pillar.hot + 0.05);
   }
@@ -1638,12 +1697,7 @@ export class JetGame {
       ctx.stroke();
     }
     ctx.restore();
-    if (b.laser === 'warn' || b.laser === 'hot') {
-      ctx.globalAlpha = b.laser === 'hot' ? 0.85 : 0.35;
-      ctx.fillStyle = b.laser === 'hot' ? '#ff4d6d' : '#ffe566';
-      ctx.fillRect(b.laserX - (b.laser === 'hot' ? 8 : 1.5), 0, b.laser === 'hot' ? 16 : 3, this.h);
-      ctx.globalAlpha = 1;
-    }
+    if (b.kind === 'carrier') this.drawCarrierLaser(ctx, b);
     if (b.kind === 'frost') {
       for (const lane of b.lanes) {
         ctx.fillStyle = `rgba(180, 230, 255, ${0.12 + Math.min(0.2, lane.life * 0.05)})`;
@@ -1651,12 +1705,84 @@ export class JetGame {
       }
     }
     if (b.kind === 'titan') {
-      for (const pillar of b.pillars) {
-        const hot = pillar.age >= pillar.warn;
-        ctx.fillStyle = hot ? 'rgba(57, 255, 154, 0.45)' : 'rgba(201, 166, 255, 0.22)';
-        ctx.fillRect(pillar.x - pillar.w * 0.5, 0, pillar.w, this.h);
-      }
+      for (const pillar of b.pillars) this.drawTitanPillar(ctx, pillar, b);
     }
+  }
+
+  drawCarrierLaser(ctx, b) {
+    if (b.laser !== 'warn' && b.laser !== 'hot') return;
+    const width = b.laserW || this.carrierLaserWidth();
+    const x = b.laserX;
+    const dir = b.laserDir || 1;
+    ctx.save();
+    if (b.laser === 'warn') {
+      const pulse = 0.45 + 0.55 * (0.5 + 0.5 * Math.sin(b.t * 14));
+      ctx.globalAlpha = 0.16 + 0.22 * pulse;
+      ctx.fillStyle = '#ff4d6d';
+      ctx.fillRect(x - width, 0, width * 2, this.h);
+      ctx.globalAlpha = 0.95;
+      ctx.strokeStyle = '#ffe566';
+      ctx.lineWidth = 2;
+      ctx.setLineDash?.([9, 7]);
+      ctx.beginPath();
+      ctx.moveTo(x, 8);
+      ctx.lineTo(x, this.h);
+      ctx.stroke();
+      ctx.setLineDash?.([]);
+      ctx.fillStyle = '#ffe566';
+      ctx.font = '700 12px Segoe UI, system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      const labelX = clamp(x + dir * 48, 40, this.w - 40);
+      ctx.fillText('ACHTUNG', labelX, Math.max(96, this.h * 0.2));
+      ctx.globalAlpha = 0.85;
+      for (let i = 0; i < 4; i++) {
+        const y = this.h * (0.32 + i * 0.12);
+        ctx.beginPath();
+        ctx.moveTo(x + dir * 12, y);
+        ctx.lineTo(x + dir * 22, y + 6);
+        ctx.lineTo(x + dir * 12, y + 12);
+        ctx.closePath();
+        ctx.fill();
+      }
+    } else {
+      // Halo is wider than the core on purpose: only `width` deals damage.
+      ctx.globalAlpha = 0.2;
+      ctx.fillStyle = '#ff4d6d';
+      ctx.fillRect(x - width * 0.5 - 8, 0, width + 16, this.h);
+      ctx.globalAlpha = 0.9;
+      ctx.fillStyle = '#ff2d55';
+      ctx.fillRect(x - width * 0.5, 0, width, this.h);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = '#fff6f8';
+      ctx.fillRect(x - 1.25, 0, 2.5, this.h);
+    }
+    ctx.restore();
+  }
+
+  drawTitanPillar(ctx, pillar, b) {
+    const hot = pillar.age >= pillar.warn;
+    const x = pillar.x - pillar.w * 0.5;
+    ctx.save();
+    if (!hot) {
+      const pulse = 0.4 + 0.6 * Math.abs(Math.sin((pillar.age + b.t) * 12));
+      ctx.globalAlpha = 0.28 + 0.45 * pulse;
+      ctx.strokeStyle = '#c9a6ff';
+      ctx.lineWidth = 2;
+      ctx.setLineDash?.([8, 6]);
+      ctx.strokeRect(x + 1, 0, Math.max(1, pillar.w - 2), this.h);
+      ctx.setLineDash?.([]);
+      ctx.globalAlpha = 0.12 * pulse;
+      ctx.fillStyle = '#c9a6ff';
+      ctx.fillRect(x, 0, pillar.w, this.h);
+    } else {
+      ctx.globalAlpha = 0.5;
+      ctx.fillStyle = '#39ff9a';
+      ctx.fillRect(x, 0, pillar.w, this.h);
+      ctx.globalAlpha = 0.9;
+      ctx.fillStyle = '#eafff4';
+      ctx.fillRect(pillar.x - 1.5, 0, 3, this.h);
+    }
+    ctx.restore();
   }
 
   drawBossBar(ctx, stage) {

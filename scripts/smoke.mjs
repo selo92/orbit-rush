@@ -607,7 +607,7 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
   spike.update(0.4);
   assert(spike.hull === 0 && spike.alive === false, 'a third spike hit ends the run');
 
-  const { JetGame, JET_STAGES, getJetDifficulty, formatJetFormula } = await import(path.join(root, 'src', 'jet.js'));
+  const { JetGame, JET_STAGES, getJetDifficulty, formatJetFormula, CARRIER_LASER, TITAN_PILLAR } = await import(path.join(root, 'src', 'jet.js'));
   function makeJet(w, h) {
     const canvas = {
       width: w,
@@ -725,6 +725,7 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
   const bosses = makeJet(390, 844);
   bosses.stageIndex = 0;
   bosses.beginBoss();
+  bosses.introT = 0;
   bosses.boss.attackT = 2.5;
   bosses.px = 30;
   bosses.stepBoss(0.08);
@@ -733,6 +734,96 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
   bosses.boss.attackT = 1.2;
   bosses.stepBoss(0.05);
   assert(bosses.boss.laser === 'hot', 'carrier sweeps a laser');
+
+  assert(CARRIER_LASER.warn >= 0.8 && CARRIER_LASER.warn <= 1.2, 'carrier telegraph lasts about a second');
+  assert(TITAN_PILLAR.warn >= 0.8 && TITAN_PILLAR.warn <= 1.2, 'titan pillar telegraph lasts about a second');
+  const fair = makeJet(390, 844);
+  fair.beginBoss();
+  fair.introT = 1.1;
+  fair.boss.attackT = 3;
+  fair.stepBoss(0.05);
+  assert(fair.boss.laser === 'off' && fair.boss.attackT === 0, 'the laser waits until the boss title clears');
+  fair.introT = 0;
+  fair.boss.attackT = CARRIER_LASER.warn * 0.55;
+  fair.stepBoss(0);
+  assert(fair.boss.laser === 'warn', 'carrier laser telegraphs before it burns');
+  fair.px = fair.boss.laserX;
+  fair.invuln = 0;
+  fair.shield = 2;
+  const warnLives = fair.lives;
+  const warnShield = fair.shield;
+  fair.stepBoss(0.02);
+  assert(
+    fair.boss.laser === 'warn' && fair.lives === warnLives && fair.shield === warnShield,
+    'the telegraph does not spend a life or a shield'
+  );
+  fair.boss.laserDir = 1;
+  fair.boss.attackT = CARRIER_LASER.warn + CARRIER_LASER.sweep * 0.5;
+  fair.stepBoss(0);
+  assert(fair.boss.laser === 'hot', 'the beam is hot while it crosses');
+  const gapL = fair.boss.laserX - fair.boss.laserW * 0.5;
+  const gapR = fair.w - (fair.boss.laserX + fair.boss.laserW * 0.5);
+  assert(fair.boss.laserW / fair.w <= 0.18, 'carrier laser stays under 18% of the play width');
+  assert(gapL > fair.w * 0.3 && gapR > fair.w * 0.3, 'mid-sweep leaves a safe lane on both sides');
+  const xEarly = (() => {
+    fair.boss.attackT = CARRIER_LASER.warn + 0.04;
+    fair.stepBoss(0);
+    return fair.boss.laserX;
+  })();
+  fair.boss.attackT = CARRIER_LASER.warn + CARRIER_LASER.sweep * 0.7;
+  fair.stepBoss(0);
+  assert(fair.boss.laserX > xEarly + fair.w * 0.25, 'the hot beam sweeps across the field');
+  fair.px = fair.boss.laserX + fair.boss.laserW * 0.5 + 2;
+  fair.invuln = 0;
+  fair.shield = 0;
+  const beside = fair.lives;
+  fair.stepBoss(0);
+  assert(fair.lives === beside, 'the hitbox stops at the drawn beam');
+  fair.px = fair.boss.laserX;
+  fair.shield = 2;
+  fair.weapon = 4;
+  fair.invuln = 0;
+  const shieldedLives = fair.lives;
+  fair.stepBoss(0);
+  assert(
+    fair.shield === 1 && fair.lives === shieldedLives && fair.weapon === 4,
+    'Schild absorbs the carrier laser'
+  );
+  fair.px = fair.boss.laserX;
+  fair.shield = 0;
+  fair.invuln = 0;
+  const openLives = fair.lives;
+  fair.stepBoss(0);
+  assert(fair.lives === openLives - 1, 'without a shield the carrier laser costs a life');
+  fair.boss.attackT = CARRIER_LASER.warn + CARRIER_LASER.sweep + 0.04;
+  fair.stepBoss(0);
+  assert(fair.boss.laser === 'off', 'the beam switches off instead of holding the lane');
+  fair.boss.laserDir = 1;
+  fair.boss.attackT = CARRIER_LASER.cycle;
+  fair.stepBoss(0);
+  assert(fair.boss.laserDir === -1, 'the next sweep comes from the other side');
+
+  const pocket = makeJet(390, 844);
+  pocket.beginBoss();
+  pocket.introT = 0;
+  pocket.boss.laserDir = 1;
+  pocket.px = 36;
+  pocket.invuln = 0;
+  pocket.shield = 0;
+  pocket.boss.attackT = CARRIER_LASER.warn;
+  const leftLives = pocket.lives;
+  const sweepSteps = 36;
+  const sweepDt = (CARRIER_LASER.sweep + 0.08) / sweepSteps;
+  for (let i = 0; i < sweepSteps; i++) pocket.stepBoss(sweepDt);
+  assert(pocket.lives === leftLives && pocket.boss.laser === 'off', 'the left pocket stays safe for a full left-to-right sweep');
+  pocket.boss.laserDir = 1;
+  pocket.boss.attackT = CARRIER_LASER.warn;
+  pocket.px = pocket.w - 36;
+  pocket.invuln = 0;
+  pocket.shield = 0;
+  const rightLives = pocket.lives;
+  for (let i = 0; i < sweepSteps; i++) pocket.stepBoss(sweepDt);
+  assert(pocket.lives === rightLives, 'the right pocket stays safe so the beam cannot pin the jet');
 
   bosses.stageIndex = 1;
   bosses.beginBoss();
@@ -757,6 +848,15 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
   bosses.stepBoss(0.05);
   assert(bosses.boss.kind === 'titan' && bosses.boss.pillars.length >= 1, 'storm titan telegraphs pillars');
   const pillar = bosses.boss.pillars[0];
+  assert(pillar.warn >= 0.8 && pillar.warn <= 1.2, 'titan pillar warns before it strikes');
+  assert(pillar.hot <= 0.55 && pillar.w / bosses.w <= 0.18, 'titan pillar is a short narrow column');
+  bosses.px = pillar.x;
+  bosses.invuln = 0;
+  bosses.shield = 1;
+  const titanShieldLives = bosses.lives;
+  pillar.age = pillar.warn;
+  bosses.stepBoss(0.05);
+  assert(bosses.shield === 0 && bosses.lives === titanShieldLives, 'a shield absorbs a titan pillar');
   bosses.px = pillar.x;
   bosses.invuln = 0;
   bosses.shield = 0;
