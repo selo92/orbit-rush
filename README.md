@@ -152,14 +152,14 @@ Kein neues Produkt, kein zweiter Worker, kein Durable Object, kein WebSocket. Ei
 | `POST /api/duel/ready` `leave` `rematch` | Server prüft den Sitz. Alte `version` → **409** |
 | `POST /api/duel/paddle` | Paddle 0–1. Beide dürfen gleichzeitig schreiben; der Worker wiederholt die Zeile selbst |
 | `POST /api/duel/heartbeat` | höchstens alle 12 s eine Schreibaktion pro Sitz |
-| `GET /api/duel/room/:code` | Stand lesen. In der Rallye steht der Ball immer im Body |
+| `GET /api/duel/room/:code` | Stand lesen. In der Rallye steht der Ball immer im Body. `?p=` trägt das eigene Paddle mit, schreibt aber nur wenn das Intervall es erlaubt |
 
-Lobby und Abpfiff: Poll etwa alle **1,6 s** (danach **1 s**), Pause bei `document.hidden`, `If-None-Match` → **304**, `?since=` → kleines JSON. Während Countdown und Rallye pollt der Client alle **220 ms** und schickt das Paddle höchstens alle **240 ms**, und nur wenn es sich bewegt hat. Unveränderte Polls in der Rallye sind trotzdem **kein** 304: der Ball wird im Speicher vorgerechnet und nur bei Punkt, Aufschlag oder Aufgabe nach D1 geschrieben.
+Lobby und Abpfiff: Poll etwa alle **1,6 s** (danach **1 s**), Pause bei `document.hidden`, `If-None-Match` → **304**, `?since=` → kleines JSON. Während Countdown und Rallye pollt der Client alle **120 ms**. Das Paddle schreibt höchstens alle **240 ms**, und alle **100 ms** solange der Ball auf dieses Paddle zufliegt — und nur wenn es sich bewegt hat. Der Treffer wird mit dem neuen Paddle gerechnet, bevor der Ball in diesem Request weiterläuft. Unveränderte Polls in der Rallye sind trotzdem **kein** 304: der Ball wird im Speicher vorgerechnet und nur bei Punkt, Aufschlag, Aufgabe oder einem erlaubten Paddle-Schritt nach D1 geschrieben.
 
 **Budget (Annahme Free: 5 Mio. Reads/Tag, 100k Writes/Tag):**
 
-- Zwei Spieler, Poll alle 220 ms, 10 Minuten ≈ 2 × 270 × 10 ≈ **5.500 Reads** nur fürs Pollen. Ein Paddle-POST liest die Zeile zusätzlich. Weit unter 5 Mio./Tag.
-- Schlimmster Fall, beide sägen dauernd am Paddle: etwa **8 D1-Writes/s** (4 Hz × 2). Das sind grob **3 Stunden** solcher Matches pro Tag, dann ist das Write-Kontingent voll. Steht das Paddle, schreibt der Worker fast nur Punkte, Aufschläge und Heartbeats.
+- Zwei Spieler, Poll alle 120 ms, 10 Minuten ≈ 2 × 500 × 10 ≈ **10.000 Reads** nur fürs Pollen. Ein Paddle-POST liest die Zeile zusätzlich. Weit unter 5 Mio./Tag.
+- Schlimmster Fall, beide sägen dauernd am Paddle: etwa **8 D1-Writes/s** (4 Hz × 2), plus etwa **6/s** extra für den Spieler, auf den der Ball gerade zufliegt. Das sind grob **2 Stunden** solcher Dauer-Wackler pro Tag, dann ist das Write-Kontingent voll. Steht das Paddle, schreibt der Worker fast nur Punkte, Aufschläge und Heartbeats.
 - Räume ohne Update seit **3 Stunden** werden wie bei Ärger gelegentlich gelöscht.
 
 ## English
