@@ -909,12 +909,12 @@ h2 {
 
 .hub-tile {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
   width: 100%;
   min-height: 64px;
-  padding: 10px 14px 8px;
+  padding: 10px 12px;
   border-radius: 16px;
   cursor: pointer;
   text-align: left;
@@ -923,18 +923,67 @@ h2 {
   border: 1px solid rgba(0, 240, 255, 0.35);
 }
 
+.hub-glyph {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  padding: 4px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid color-mix(in srgb, currentColor 55%, transparent);
+  filter: drop-shadow(0 0 6px color-mix(in srgb, currentColor 50%, transparent));
+}
+
+.hub-tile .hub-copy {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 auto;
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
+}
+
 .hub-tile strong {
   font-size: 18px;
   letter-spacing: 0.08em;
   font-weight: 800;
 }
 
-.hub-tile span {
+.hub-tile .hub-copy > span {
   color: var(--muted);
   font-size: 13px;
   line-height: 1.35;
   letter-spacing: 0;
   font-weight: 500;
+}
+
+.hub-tile.rush .hub-glyph {
+  color: var(--cyan);
+}
+
+.hub-tile.mirror .hub-glyph {
+  color: var(--magenta);
+}
+
+.hub-tile.aerger .hub-glyph {
+  color: #ffe566;
+}
+
+.hub-tile.drift .hub-glyph {
+  color: #7dffa8;
+}
+
+.hub-tile.pulse .hub-glyph {
+  color: #c9b6ff;
+}
+
+.hub-tile.jet .hub-glyph {
+  color: #ffb15a;
 }
 
 .hub-tile.rush strong {
