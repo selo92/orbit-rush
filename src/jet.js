@@ -723,6 +723,8 @@ export class JetGame {
       if (!b.beamLocked) {
         b.beamLocked = true;
         b.beamSide = this.px < this.w * 0.5 ? -1 : 1;
+        // Shots already in the air would land while the player is reading the lane.
+        for (const shot of this.eBullets) shot.alive = false;
         this.noteAttack('sand');
       }
       b.beam = 'warn';
