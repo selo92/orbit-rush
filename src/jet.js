@@ -26,10 +26,42 @@ export const CARRIER_LASER = {
   cycle: 6.6,
 };
 
+/**
+ * Sandwyrm beam. A side column warns, then burns, and the other side stays
+ * open. There is no full-screen sand wash: dust lives only inside the column,
+ * and the hit test uses the same width as the drawn rect.
+ */
+export const WYRM_BEAM = {
+  idle: 0.75,
+  warn: 1.05,
+  hot: 1.15,
+  surface: 4.5,
+  burrow: 1.2,
+  rise: 0.7,
+};
+
 /** Storm Titan columns: a short full-height strike with the same telegraph window. */
 export const TITAN_PILLAR = {
   warn: 1.05,
   hot: 0.42,
+};
+
+/** Shown for about 1.5s when a hit connects. Keys match `hurt(source)`. */
+export const JET_HIT_LINES = {
+  bullet: 'Getroffen: Gegnerschuss',
+  laser: 'Getroffen: Laser — an die Seite!',
+  sand: 'Getroffen: Sandsturm / Strahl',
+  obstacle: 'Getroffen: Hindernis',
+  boss: 'Getroffen: Boss-Angriff',
+  enemy: 'Getroffen: Gegner',
+};
+
+/** Once per run, the first time that attack family starts its telegraph. */
+export const JET_ATTACK_TIPS = {
+  sand: 'Strahl kommt — an die freie Seite!',
+  burrow: 'Sandwyrm kommt — weg von der Markierung!',
+  laser: 'Laser kommt — an die Seite!',
+  pillar: 'Säule kommt — raus aus der Markierung!',
 };
 
 export const JET_WEAPONS = ['', 'Einzel', 'Doppel', 'Dreifach', 'Fächer', 'Laser'];
@@ -257,6 +289,12 @@ export class JetGame {
     this.flash = 0;
     this.muzzle = 0;
     this.sandstorm = 0;
+    this.hitText = '';
+    this.hitSource = '';
+    this.hitT = 0;
+    this.tipText = '';
+    this.tipT = 0;
+    this.attackSeen = {};
     this.lightning = 0;
     this.bombWave = 0;
     this.scrollT = 0;
@@ -468,6 +506,8 @@ export class JetGame {
     this.flash = Math.max(0, this.flash - dt * 1.8);
     this.muzzle = Math.max(0, this.muzzle - dt);
     this.sandstorm = Math.max(0, this.sandstorm - dt);
+    this.hitT = Math.max(0, this.hitT - dt);
+    this.tipT = Math.max(0, this.tipT - dt);
     this.lightning = Math.max(0, this.lightning - dt);
     this.bombWave = Math.max(0, this.bombWave - dt * 1.4);
     this.tutorial = Math.max(0, this.tutorial - dt);
@@ -543,6 +583,10 @@ export class JetGame {
       laserX: this.w * 0.5,
       laserW: 14,
       laserDir: 1,
+      beam: 'off',
+      beamSide: 1,
+      beamW: 0,
+      beamLocked: false,
       state: 'emerge',
       stateT: 0,
       visible: true,
@@ -621,6 +665,7 @@ export class JetGame {
     if (at < warn) {
       b.laser = 'warn';
       along = 0;
+      this.noteAttack('laser');
     } else if (at < warn + sweep) {
       b.laser = 'hot';
       along = (at - warn) / sweep;
@@ -631,7 +676,7 @@ export class JetGame {
     const origin = dir > 0 ? track.start : track.end;
     b.laserX = origin + dir * track.span * clamp(along, 0, 1);
     // Same half-width as the drawn core. The halo is wider and does not hit.
-    if (b.laser === 'hot' && Math.abs(this.px - b.laserX) <= b.laserW * 0.5) this.hurt();
+    if (b.laser === 'hot' && Math.abs(this.px - b.laserX) <= b.laserW * 0.5) this.hurt('laser');
     if (!b.deployed && at >= 2.55) {
       b.deployed = true;
       this.spawnEnemy('drone', b.x - 36, b.y + 40);
@@ -646,21 +691,98 @@ export class JetGame {
     }
   }
 
+  /**
+   * Width of the sand column. The other side of the field stays clear, so the
+   * beam cannot cover the screen the way the old sand wash did.
+   */
+  wyrmBeamWidth() {
+    return this.w * 0.38;
+  }
+
+  /** Player center inside the drawn sand column. The open side does not hit. */
+  inWyrmBeam() {
+    const b = this.boss;
+    if (!b || b.beam !== 'hot') return false;
+    const width = b.beamW || this.wyrmBeamWidth();
+    if ((b.beamSide || 1) < 0) return this.px <= width;
+    return this.px >= this.w - width;
+  }
+
+  stepWyrmBeam(b) {
+    const { idle, warn, hot } = WYRM_BEAM;
+    const at = b.attackT;
+    const warnEnd = idle + warn;
+    const hotEnd = warnEnd + hot;
+    b.beamW = this.wyrmBeamWidth();
+    if (at < idle) {
+      b.beam = 'off';
+      b.beamLocked = false;
+      return;
+    }
+    if (at < warnEnd) {
+      if (!b.beamLocked) {
+        b.beamLocked = true;
+        b.beamSide = this.px < this.w * 0.5 ? -1 : 1;
+        this.noteAttack('sand');
+      }
+      b.beam = 'warn';
+      return;
+    }
+    if (at < hotEnd) {
+      if (!b.beamLocked) {
+        b.beamLocked = true;
+        b.beamSide = this.px < this.w * 0.5 ? -1 : 1;
+      }
+      b.beam = 'hot';
+      if (this.inWyrmBeam()) this.hurt('sand');
+      return;
+    }
+    b.beam = 'off';
+  }
+
   stepWyrm(b, dt, pace) {
-    b.stormCd -= dt * pace;
-    if (b.stormCd <= 0) {
-      this.sandstorm = 2.15;
-      b.stormCd = 8.4;
+    b.hw = Math.min(52, this.w * 0.16);
+    b.hh = 18;
+    // Title card would hide the telegraph. Hold the column until it clears.
+    if (this.introT > 0) {
+      b.attackT = 0;
+      b.beam = 'off';
+      b.beamLocked = false;
+      b.state = 'emerge';
+      b.stateT = 0;
+      b.visible = true;
+      b.y = Math.max(108, this.h * 0.2);
+      b.x = clamp(b.x, 36, this.w - 36);
+      return;
     }
     b.stateT += dt * pace;
     if (b.state === 'burrow') {
       b.visible = false;
-      if (b.stateT > 1.12) {
-        b.x = clamp(b.nextX, 40, this.w - 40);
+      b.beam = 'off';
+      b.beamLocked = false;
+      b.attackT = 0;
+      if (b.stateT > WYRM_BEAM.burrow) {
+        b.x = clamp(b.nextX, 48, this.w - 48);
         b.y = Math.max(110, this.h * 0.2);
-        b.state = 'emerge';
+        b.state = 'rise';
         b.stateT = 0;
         b.visible = true;
+      }
+      return;
+    }
+    if (b.state === 'rise') {
+      b.visible = true;
+      b.beam = 'off';
+      b.attackT = 0;
+      b.beamLocked = false;
+      b.y = Math.max(108, this.h * 0.2);
+      b.x = clamp(b.nextX || b.x, 36, this.w - 36);
+      if (b.stateT > WYRM_BEAM.rise) {
+        b.state = 'emerge';
+        b.stateT = 0;
+        b.attackT = 0;
+        b.beam = 'off';
+        b.beamLocked = false;
       }
       return;
     }
@@ -668,19 +790,31 @@ export class JetGame {
     b.y = Math.max(108, this.h * 0.2);
     b.x += Math.sin(b.t * 1.6) * 70 * dt;
     b.x = clamp(b.x, 36, this.w - 36);
-    b.shotCd -= dt * pace;
-    if (b.shotCd <= 0) {
-      b.shotCd = 0.78;
-      const sp = 165 * this.fireMul();
-      this.spawnEBullet(b.x, b.y + 18, (Math.random() - 0.5) * 90, sp);
-      this.spawnEBullet(b.x - 18, b.y + 12, -50, sp * 0.9);
-      this.spawnEBullet(b.x + 18, b.y + 12, 50, sp * 0.9);
+    this.stepWyrmBeam(b);
+    // Bullets pause while the column is the thing to read.
+    if (b.beam !== 'warn' && b.beam !== 'hot') {
+      b.shotCd -= dt * pace;
+      if (b.shotCd <= 0) {
+        b.shotCd = 0.9;
+        const sp = 155 * this.fireMul();
+        this.spawnEBullet(b.x, b.y + 18, (Math.random() - 0.5) * 70, sp);
+        this.spawnEBullet(b.x - 16, b.y + 12, -40, sp * 0.9);
+        this.spawnEBullet(b.x + 16, b.y + 12, 40, sp * 0.9);
+      }
     }
-    if (b.stateT > 2.65) {
+    if (b.state === 'emerge' && b.stateT > WYRM_BEAM.surface) {
       b.state = 'burrow';
       b.stateT = 0;
       b.visible = false;
-      b.nextX = 40 + Math.random() * Math.max(20, this.w - 80);
+      b.beam = 'off';
+      b.beamLocked = false;
+      b.attackT = 0;
+      let nx = 48 + Math.random() * Math.max(20, this.w - 96);
+      if (Math.abs(nx - this.px) < 80) {
+        nx = clamp(this.px + (this.px < this.w * 0.5 ? 120 : -120), 48, this.w - 48);
+      }
+      b.nextX = nx;
+      this.noteAttack('burrow');
     }
   }
 
@@ -723,6 +857,7 @@ export class JetGame {
       const side = Math.random() < 0.5 ? -1 : 1;
       const pillarW = Math.min(36, this.w * 0.16);
       const xs = [this.px, this.px + side * Math.min(110, this.w * 0.28)];
+      this.noteAttack('pillar');
       for (const x of xs) {
         b.pillars.push({
           x: clamp(x, 24, this.w - 24),
@@ -742,7 +877,7 @@ export class JetGame {
     for (const pillar of b.pillars) {
       pillar.age += dt * pace;
       const hot = pillar.age >= pillar.warn && pillar.age <= pillar.warn + pillar.hot;
-      if (hot && Math.abs(this.px - pillar.x) <= pillar.w * 0.5) this.hurt();
+      if (hot && Math.abs(this.px - pillar.x) <= pillar.w * 0.5) this.hurt('boss');
     }
     b.pillars = b.pillars.filter((pillar) => pillar.age < pillar.warn + pillar.hot + 0.05);
   }
@@ -1109,7 +1244,7 @@ export class JetGame {
       const d = hypot(b.x - this.px, b.y - this.py);
       if (d <= b.r + PLAYER_R) {
         b.alive = false;
-        this.hurt();
+        this.hurt('bullet');
       } else if (!b.grazed && d < 28) {
         b.grazed = true;
         this.addNear();
@@ -1120,7 +1255,7 @@ export class JetGame {
       if (hypot(e.x - this.px, e.y - this.py) <= e.r + PLAYER_R) {
         e.alive = false;
         this.burst(e.x, e.y, this.stage().enemy, 8);
-        this.hurt();
+        this.hurt('enemy');
       }
     }
     for (const o of this.obstacles) {
@@ -1128,7 +1263,7 @@ export class JetGame {
       if (hypot(o.x - this.px, o.y - this.py) <= o.r + PLAYER_R) {
         o.alive = false;
         this.burst(o.x, o.y, this.stage().accent, 8);
-        this.hurt();
+        this.hurt('obstacle');
       }
     }
     for (const p of this.pickups) {
@@ -1139,7 +1274,7 @@ export class JetGame {
         this.grantPickup(p.kind);
       }
     }
-    if (this.boss && this.boss.visible !== false && this.invuln <= 0 && this.bossHitsPlayer()) this.hurt();
+    if (this.boss && this.boss.visible !== false && this.invuln <= 0 && this.bossHitsPlayer()) this.hurt('boss');
   }
 
   bossHitsPlayer() {
@@ -1214,9 +1349,14 @@ export class JetGame {
     this.syncScore();
   }
 
-  /** One life, or one shield charge. A life also drops a single weapon tier. */
-  hurt() {
+  /**
+   * One life, or one shield charge. A life also drops a single weapon tier.
+   * `source` picks the German reason line. Omitted sources still hurt, with no line.
+   * @param {keyof typeof JET_HIT_LINES} [source]
+   */
+  hurt(source) {
     if (!this.alive || this.invuln > 0 || this.phase === 'banner') return;
+    this.showHit(source);
     if (this.shield > 0) {
       this.shield -= 1;
       this.invuln = 0.38;
@@ -1235,6 +1375,24 @@ export class JetGame {
     this.audio?.hit?.();
     this.burst(this.px, this.py, '#ff4d6d', 12);
     if (this.lives <= 0) this.die();
+  }
+
+  /** @param {keyof typeof JET_HIT_LINES} [source] */
+  showHit(source) {
+    const text = JET_HIT_LINES[source];
+    if (!text) return;
+    this.hitSource = source;
+    this.hitText = text;
+    this.hitT = 1.65;
+  }
+
+  /** First telegraph of an attack family this run. Later waves stay quiet. */
+  noteAttack(family) {
+    const text = JET_ATTACK_TIPS[family];
+    if (!text || this.attackSeen[family]) return;
+    this.attackSeen[family] = true;
+    this.tipText = text;
+    this.tipT = 1.85;
   }
 
   fireBomb() {
@@ -1348,6 +1506,8 @@ export class JetGame {
       bombs: this.bombs,
       tutorial: this.tutorial,
       bosses: this.bossesCleared,
+      hitText: this.hitT > 0 ? this.hitText : '',
+      tipText: this.tipT > 0 ? this.tipText : '',
     });
   }
 
@@ -1390,6 +1550,7 @@ export class JetGame {
       kills: this.kills,
       weapon: this.weapon,
       cycle: this.cycle,
+      hitReason: this.hitText || '',
       formula: formatJetFormula(survivalMs, this.orbsCollected, this.comboBonus, this.nearMisses, this.score),
     };
   }
@@ -1449,10 +1610,6 @@ export class JetGame {
       ctx.fillText(ft.text, ft.x, ft.y);
     }
     ctx.globalAlpha = 1;
-    if (this.sandstorm > 0) {
-      ctx.fillStyle = `rgba(120, 60, 16, ${Math.min(0.55, this.sandstorm * 0.28)})`;
-      ctx.fillRect(0, 0, this.w, this.h);
-    }
     if (this.lightning > 0 && stage.id === 'storm') {
       ctx.strokeStyle = `rgba(210, 255, 220, ${Math.min(1, this.lightning * 8)})`;
       ctx.lineWidth = 2;
@@ -1490,6 +1647,41 @@ export class JetGame {
       ctx.fillRect(0, 0, this.w, this.h);
     }
     ctx.restore();
+    this.drawNotices(ctx);
+  }
+
+  drawNotice(ctx, text, y, accent) {
+    const maxW = Math.max(40, this.w - 28);
+    let size = 16;
+    ctx.save();
+    ctx.font = `700 ${size}px Segoe UI, system-ui, sans-serif`;
+    if (ctx.measureText) {
+      while (size > 12 && ctx.measureText(text).width > maxW - 22) {
+        size -= 1;
+        ctx.font = `700 ${size}px Segoe UI, system-ui, sans-serif`;
+      }
+    }
+    const textW = ctx.measureText ? ctx.measureText(text).width : text.length * size * 0.55;
+    const tw = Math.min(maxW, textW + 22);
+    const x = (this.w - tw) / 2;
+    const h = size + 14;
+    ctx.fillStyle = 'rgba(8, 6, 12, 0.9)';
+    ctx.fillRect(x, y, tw, h);
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(x + 0.5, y + 0.5, tw - 1, h - 1);
+    ctx.fillStyle = '#fff6ea';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, this.w * 0.5, y + h / 2);
+    ctx.restore();
+    return h;
+  }
+
+  drawNotices(ctx) {
+    let y = Math.max(168, this.h * 0.42);
+    if (this.tipT > 0 && this.tipText) y += this.drawNotice(ctx, this.tipText, y, '#ffe566') + 6;
+    if (this.hitT > 0 && this.hitText) this.drawNotice(ctx, this.hitText, y, '#ff4d6d');
   }
 
   drawBackdrop(ctx, stage) {
@@ -1647,12 +1839,7 @@ export class JetGame {
 
   drawBoss(ctx, b, stage) {
     if (b.kind === 'wyrm' && !b.visible) {
-      ctx.globalAlpha = 0.35;
-      ctx.fillStyle = stage.fog;
-      ctx.beginPath();
-      ctx.arc(b.nextX || b.x, b.y + 10, 10, 0, TWO_PI);
-      ctx.fill();
-      ctx.globalAlpha = 1;
+      this.drawWyrmBurrow(ctx, b);
       return;
     }
     ctx.save();
@@ -1698,6 +1885,7 @@ export class JetGame {
     }
     ctx.restore();
     if (b.kind === 'carrier') this.drawCarrierLaser(ctx, b);
+    if (b.kind === 'wyrm') this.drawWyrmBeam(ctx, b);
     if (b.kind === 'frost') {
       for (const lane of b.lanes) {
         ctx.fillStyle = `rgba(180, 230, 255, ${0.12 + Math.min(0.2, lane.life * 0.05)})`;
@@ -1707,6 +1895,95 @@ export class JetGame {
     if (b.kind === 'titan') {
       for (const pillar of b.pillars) this.drawTitanPillar(ctx, pillar, b);
     }
+  }
+
+  drawWyrmBurrow(ctx, b) {
+    const x = clamp(b.nextX || b.x, 48, this.w - 48);
+    const y = Math.max(108, this.h * 0.2);
+    const pulse = 0.45 + 0.55 * Math.abs(Math.sin((b.t || 0) * 10));
+    ctx.save();
+    ctx.globalAlpha = 0.4 + 0.45 * pulse;
+    ctx.strokeStyle = '#ffe566';
+    ctx.lineWidth = 2;
+    ctx.setLineDash?.([6, 5]);
+    ctx.beginPath();
+    ctx.arc(x, y, 22 + 6 * pulse, 0, TWO_PI);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x, 10);
+    ctx.lineTo(x, y + 26);
+    ctx.stroke();
+    ctx.setLineDash?.([]);
+    ctx.globalAlpha = 0.95;
+    ctx.fillStyle = '#ffe566';
+    ctx.font = '700 12px Segoe UI, system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('ACHTUNG', clamp(x, 52, this.w - 52), y + 46);
+    ctx.restore();
+  }
+
+  drawWyrmBeam(ctx, b) {
+    if (b.beam !== 'warn' && b.beam !== 'hot') return;
+    const width = b.beamW || this.wyrmBeamWidth();
+    const side = b.beamSide || 1;
+    const x = side < 0 ? 0 : this.w - width;
+    const edge = side < 0 ? width : this.w - width;
+    const dir = side < 0 ? 1 : -1;
+    ctx.save();
+    if (b.beam === 'warn') {
+      const pulse = 0.45 + 0.55 * (0.5 + 0.5 * Math.sin((b.t || 0) * 14));
+      ctx.globalAlpha = 0.14 + 0.16 * pulse;
+      ctx.fillStyle = '#ff7a33';
+      ctx.fillRect(x, 0, width, this.h);
+      ctx.globalAlpha = 0.95;
+      ctx.strokeStyle = '#ffe566';
+      ctx.lineWidth = 2;
+      ctx.setLineDash?.([9, 7]);
+      ctx.beginPath();
+      ctx.moveTo(edge, 8);
+      ctx.lineTo(edge, this.h);
+      ctx.stroke();
+      ctx.setLineDash?.([]);
+      ctx.fillStyle = '#ffe566';
+      ctx.font = '700 13px Segoe UI, system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      const labelX = clamp(edge + dir * 58, 44, this.w - 44);
+      ctx.fillText('ACHTUNG', labelX, Math.max(108, this.h * 0.2));
+      ctx.globalAlpha = 0.9;
+      for (let i = 0; i < 4; i++) {
+        const y = this.h * (0.32 + i * 0.12);
+        ctx.beginPath();
+        ctx.moveTo(edge + dir * 12, y);
+        ctx.lineTo(edge + dir * 24, y + 6);
+        ctx.lineTo(edge + dir * 12, y + 12);
+        ctx.closePath();
+        ctx.fill();
+      }
+    } else {
+      ctx.globalAlpha = 0.34;
+      ctx.fillStyle = '#c47a3a';
+      ctx.fillRect(x, 0, width, this.h);
+      ctx.globalAlpha = 0.78;
+      ctx.fillStyle = '#ff7a33';
+      const inset = 5;
+      ctx.fillRect(x + inset, 0, Math.max(8, width - inset * 2), this.h);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = '#fff1d6';
+      ctx.fillRect(x + width * 0.45, 0, 3, this.h);
+      ctx.strokeStyle = '#ffe566';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(edge, 0);
+      ctx.lineTo(edge, this.h);
+      ctx.stroke();
+    }
+    const freeX = side < 0 ? edge + (this.w - edge) * 0.5 : edge * 0.5;
+    ctx.globalAlpha = 0.92;
+    ctx.fillStyle = '#fff6ea';
+    ctx.font = '700 12px Segoe UI, system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('FREI', clamp(freeX, 28, this.w - 28), Math.max(146, this.h * 0.3));
+    ctx.restore();
   }
 
   drawCarrierLaser(ctx, b) {

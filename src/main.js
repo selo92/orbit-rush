@@ -1062,6 +1062,12 @@ function showGameOver(result) {
         ? 'Ein Name, einmal. Spätere Runs speichern automatisch.'
         : 'Enter a name once. Later runs save automatically.';
   }
+  const cause = $('over-cause');
+  if (cause) {
+    const reason = jetRun ? result.hitReason || '' : '';
+    cause.textContent = reason;
+    cause.classList.toggle('hidden', !reason);
+  }
   $('over-title').textContent = jetRun
     ? 'ABGESCHOSSEN'
     : pulseRun
