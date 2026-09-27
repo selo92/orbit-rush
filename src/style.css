@@ -1017,6 +1017,10 @@ h2 {
   color: #7af6ff;
 }
 
+.hub-tile.duel .hub-glyph {
+  color: #7af6ff;
+}
+
 .hub-tile.drift {
   border-color: rgba(125, 255, 168, 0.55);
   background: linear-gradient(160deg, rgba(8, 42, 32, 0.62), rgba(8, 12, 28, 0.55));
