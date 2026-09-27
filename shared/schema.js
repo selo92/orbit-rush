@@ -5,6 +5,7 @@
  * migrations/0003_game.sql adds scores.game, default 'rush' for existing rows.
  * Orbit Drift stores game='drift', Orbit Pulse stores game='pulse', and Orbit Jet stores game='jet' in that same TEXT column. No further migration.
  * migrations/0004_aerger_rooms.sql adds aerger_rooms (Orbit Ärger). Scores stay untouched.
+ * migrations/0005_duel_rooms.sql adds duel_rooms (Orbit Duel). Scores stay untouched.
  * CREATE below is the full fresh schema. worker/api.js ALTERs legacy score columns.
  */
 
@@ -41,6 +42,14 @@ export const SCHEMA_STATEMENTS = [
     created_at INTEGER NOT NULL
   )`,
   `CREATE INDEX IF NOT EXISTS idx_aerger_rooms_updated ON aerger_rooms (updated_at)`,
+  `CREATE TABLE IF NOT EXISTS duel_rooms (
+    code TEXT PRIMARY KEY,
+    version INTEGER NOT NULL,
+    state TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    created_at INTEGER NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_duel_rooms_updated ON duel_rooms (updated_at)`,
 ];
 
 /** Applied after legacy tables gain client_id. Safe to run more than once. */

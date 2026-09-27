@@ -7,7 +7,7 @@
       content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
     />
     <meta name="theme-color" content="#050510" />
-    <meta name="description" content="Orbit Arcade — Orbit Rush, Orbit Mirror, Orbit Ärger, Orbit Drift, Orbit Pulse, and Orbit Jet. Skill runs plus a four-player board game." />
+    <meta name="description" content="Orbit Arcade — Orbit Rush, Orbit Mirror, Orbit Ärger, Orbit Duel, Orbit Drift, Orbit Pulse, and Orbit Jet. Skill runs, a board game, and remote two-player pong." />
     <title>Orbit Rush</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='10' fill='%2300f0ff'/%3E%3Ccircle cx='32' cy='32' r='22' fill='none' stroke='%23ff2bd6' stroke-width='3'/%3E%3C/svg%3E" />
     <link rel="stylesheet" href="/src/style.css" />
@@ -70,7 +70,7 @@
         <div class="panel hub-panel">
           <p class="eyebrow">ORBIT RUSH</p>
           <h1 class="logo">ORBIT<span>ARCADE</span></h1>
-          <p class="tagline">Sechs Spiele. Ein Pilot.</p>
+          <p class="tagline">Sieben Spiele. Ein Pilot.</p>
           <p id="hub-identity" class="identity-line hidden">Welcome back, <strong id="hub-identity-name"></strong></p>
           <div class="hub-tiles">
             <button type="button" id="btn-hub-rush" class="hub-tile rush">
@@ -84,6 +84,10 @@
             <button type="button" id="btn-hub-aerger" class="hub-tile aerger">
               <strong>ORBIT ÄRGER</strong>
               <span>Würfeln. Schmeißen. Zu viert online.</span>
+            </button>
+            <button type="button" id="btn-hub-duel" class="hub-tile duel">
+              <strong>ORBIT DUEL</strong>
+              <span>Zwei Paddles. Ein Ball. Weit weg, ein Code.</span>
             </button>
             <button type="button" id="btn-hub-drift" class="hub-tile drift">
               <strong>ORBIT DRIFT</strong>
@@ -158,6 +162,67 @@
             <p id="aerger-table-status" class="status" aria-live="polite"></p>
             <button type="button" id="aerger-leave" class="btn ghost">VERLASSEN</button>
             <button type="button" id="aerger-table-hub" class="btn ghost">ARCADE</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Orbit Duel: two paddles, one ball. Polls the Worker; no WebSocket. -->
+      <section id="screen-duel" class="screen hidden">
+        <div class="panel duel-panel">
+          <div id="duel-menu">
+            <p class="eyebrow">DUELL · 2 SPIELER</p>
+            <h1 class="logo">ORBIT<span>DUEL</span></h1>
+            <p class="tagline">Zwei Paddles. Ein Ball. Wer zuerst 7 hat, gewinnt.</p>
+            <p class="tagline duel-en">One room code. You play the bottom paddle.</p>
+            <p id="duel-wins" class="best-line">Siege auf diesem Gerät: 0</p>
+            <label for="duel-name">Pilot · Name</label>
+            <input id="duel-name" maxlength="16" placeholder="PILOT" autocomplete="nickname" enterkeyhint="done" />
+            <button type="button" id="duel-create" class="btn primary">RAUM ERSTELLEN</button>
+            <label for="duel-code">Raumcode</label>
+            <input id="duel-code" maxlength="6" placeholder="ABC234" autocomplete="off" autocapitalize="characters" spellcheck="false" />
+            <button type="button" id="duel-join" class="btn ghost">BEITRETEN</button>
+            <p class="duel-rules">Du spielst unten. Ziehen, oder A/D und die Pfeile. Der Ball gehört dem Server.</p>
+            <p id="duel-menu-status" class="status" aria-live="polite"></p>
+            <button type="button" id="duel-menu-hub" class="btn ghost">ARCADE</button>
+          </div>
+
+          <div id="duel-lobby" class="hidden">
+            <p class="eyebrow">LOBBY</p>
+            <h2>ORBIT DUEL</h2>
+            <p id="duel-lobby-code" class="duel-code">------</p>
+            <button type="button" id="duel-copy" class="btn ghost">CODE KOPIEREN</button>
+            <p class="tagline">Schick den Code. Beide tippen Bereit.</p>
+            <ul id="duel-seats" class="duel-seats"></ul>
+            <button type="button" id="duel-ready" class="btn primary">BEREIT</button>
+            <p id="duel-lobby-status" class="status" aria-live="polite"></p>
+            <button type="button" id="duel-lobby-leave" class="btn ghost">VERLASSEN</button>
+            <button type="button" id="duel-lobby-hub" class="btn ghost">ARCADE</button>
+          </div>
+
+          <div id="duel-match" class="hidden">
+            <div class="duel-scorebar">
+              <div class="duel-side opp">
+                <span id="duel-opp-name">…</span>
+                <strong id="duel-opp-score">0</strong>
+              </div>
+              <div class="duel-side me">
+                <strong id="duel-my-score">0</strong>
+                <span id="duel-my-name">Du</span>
+              </div>
+            </div>
+            <p id="duel-banner" class="duel-banner" aria-live="polite">Gleich geht's los</p>
+            <div class="duel-stage">
+              <canvas id="duel-canvas" aria-label="Orbit Duel Spielfeld"></canvas>
+              <div id="duel-overlay" class="duel-overlay hidden">
+                <h2 id="duel-overlay-title">Gewonnen</h2>
+                <p id="duel-overlay-body" class="tagline"></p>
+                <button type="button" id="duel-rematch" class="btn primary">NOCHMAL</button>
+              </div>
+            </div>
+            <p class="duel-rules">Ziehen oder A/D · ←/→ · zuerst 7</p>
+            <p id="duel-match-status" class="status" aria-live="polite"></p>
+            <button type="button" id="duel-leave" class="btn ghost">VERLASSEN</button>
+            <button type="button" id="duel-match-hub" class="btn ghost">ARCADE</button>
           </div>
         </div>
       </section>

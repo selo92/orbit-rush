@@ -12,6 +12,7 @@ import {
 } from './pulse.js';
 import { JetGame, getJetDifficulty } from './jet.js';
 import { mountAerger } from './aerger-ui.js';
+import { mountDuel } from './duel-ui.js';
 import {
   DIFFICULTIES,
   DIFFICULTY_IDS,
@@ -90,6 +91,7 @@ const screens = {
   jetOnboard: $('screen-jet-onboard'),
   jetDiff: $('screen-jet-diff'),
   aerger: $('screen-aerger'),
+  duel: $('screen-duel'),
 };
 
 const hud = $('hud');
@@ -111,10 +113,12 @@ const toastEl = $('toast');
 let lastResult = null;
 let lbBackTo = 'title';
 let lbFilter = 'all';
-/** @type {'hub'|'rush'|'mirror'|'aerger'|'drift'|'pulse'|'jet'} */
+/** @type {'hub'|'rush'|'mirror'|'aerger'|'duel'|'drift'|'pulse'|'jet'} */
 let activeGame = 'hub';
 /** @type {() => void} */
 let pauseAerger = () => {};
+/** @type {() => void} */
+let pauseDuel = () => {};
 /** @type {'rush'|'mirror'|'drift'|'pulse'|'jet'} */
 let lbGame = 'rush';
 let submitting = false;
@@ -567,6 +571,7 @@ function setHudChrome(mode) {
 
 function showScreen(name) {
   if (name !== 'aerger') pauseAerger();
+  if (name !== 'duel') pauseDuel();
   for (const [k, el] of Object.entries(screens)) {
     if (!el) continue;
     el.classList.toggle('hidden', k !== name);
@@ -2175,6 +2180,37 @@ $('btn-hub-aerger').addEventListener('click', () => {
   audio.resume();
   audio.click();
   openAerger();
+});
+
+const duel = mountDuel({
+  onHub: () => showHub(),
+  audioClick: () => {
+    audio.resume();
+    audio.click();
+  },
+});
+pauseDuel = () => duel.pause();
+
+function openDuel() {
+  activeGame = 'duel';
+  if (game.running) game.stop();
+  if (mirror.running) mirror.stop();
+  if (drift.running) drift.stop();
+  if (pulse.running) pulse.stop();
+  if (jet.running) jet.stop();
+  audio.stopMusic();
+  audio.stopClip();
+  hud.classList.add('hidden');
+  setHudChrome('rush');
+  hudMode.classList.add('hidden');
+  showScreen('duel');
+  duel.open();
+}
+
+$('btn-hub-duel').addEventListener('click', () => {
+  audio.resume();
+  audio.click();
+  openDuel();
 });
 
 $('btn-hub-rush').addEventListener('click', () => {

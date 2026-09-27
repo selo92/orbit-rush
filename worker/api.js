@@ -5,6 +5,8 @@
 import { CLIENT_ID_INDEX_SQL, GAME_INDEX_SQL, SCHEMA_STATEMENTS } from '../shared/schema.js';
 import { handleAerger } from './aerger-api.js';
 import { createD1AergerStore } from './aerger-store.js';
+import { handleDuel } from './duel-api.js';
+import { createD1DuelStore } from './duel-store.js';
 import {
   RATE_MAX,
   RATE_WINDOW_MS,
@@ -291,6 +293,19 @@ export async function handleApi(request, db) {
       }
     }
     return handleAerger(request, createD1AergerStore(db));
+  }
+
+  // Orbit Duel polls during a rally. Same idea as Ärger: not the score limiter.
+  if (url.pathname.startsWith('/api/duel')) {
+    if (request.method !== 'OPTIONS') {
+      try {
+        await ensureSchema(db);
+      } catch (err) {
+        console.error('schema', err);
+        return json({ error: 'Database not configured' }, 500, request);
+      }
+    }
+    return handleDuel(request, createD1DuelStore(db));
   }
 
   if (request.method === 'OPTIONS' && url.pathname.startsWith('/api/')) {
