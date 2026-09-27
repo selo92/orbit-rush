@@ -66,6 +66,14 @@ export const JET_ATTACK_TIPS = {
 
 export const JET_WEAPONS = ['', 'Einzel', 'Doppel', 'Dreifach', 'Fächer', 'Laser'];
 
+/**
+ * Shared end-boss HP scale. Applied only when a stage boss spawns, so regular
+ * enemies keep their toughness. 0.6 is a 40% cut: fights finish faster, and
+ * the starting Einzel weapon still needs a real exchange. Attack phases are
+ * timed, so this scale does not move telegraphs or phase moments.
+ */
+export const JET_BOSS_HP_SCALE = 0.6;
+
 export const JET_PICKUPS = {
   weapon: { label: 'WAFFE', color: '#ffe566' },
   shield: { label: 'SCHILD', color: '#7af7ff' },
@@ -563,7 +571,10 @@ export class JetGame {
 
   beginBoss() {
     const stage = this.stage();
-    const hp = Math.max(40, Math.round(stage.bossHp * this.diff.tough * (1 + this.cycle * 0.28)));
+    const hp = Math.max(
+      40,
+      Math.round(stage.bossHp * JET_BOSS_HP_SCALE * this.diff.tough * (1 + this.cycle * 0.28))
+    );
     this.phase = 'boss';
     this.phaseTime = 0;
     this.banner = stage.bossName;

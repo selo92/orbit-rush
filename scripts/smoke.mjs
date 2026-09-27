@@ -607,7 +607,7 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
   spike.update(0.4);
   assert(spike.hull === 0 && spike.alive === false, 'a third spike hit ends the run');
 
-  const { JetGame, JET_STAGES, getJetDifficulty, formatJetFormula, CARRIER_LASER, TITAN_PILLAR, WYRM_BEAM, JET_HIT_LINES, JET_ATTACK_TIPS } = await import(path.join(root, 'src', 'jet.js'));
+  const { JetGame, JET_STAGES, JET_BOSS_HP_SCALE, getJetDifficulty, formatJetFormula, CARRIER_LASER, TITAN_PILLAR, WYRM_BEAM, JET_HIT_LINES, JET_ATTACK_TIPS } = await import(path.join(root, 'src', 'jet.js'));
   function makeJet(w, h) {
     const canvas = {
       width: w,
@@ -634,6 +634,24 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
   assert(JET_STAGES.length >= 4, 'jet has four stages');
   assert(new Set(JET_STAGES.map((s) => s.boss)).size === JET_STAGES.length, 'each jet stage has its own boss');
   assert(JET_STAGES.map((s) => s.name).join('|') === 'Neon City|Desert Dusk|Ice Orbit|Storm Nebula', 'stage names');
+  assert(JET_BOSS_HP_SCALE === 0.6, 'bosses share a 40% HP cut');
+  const bossHpMittel = { carrier: 138, wyrm: 150, frost: 144, titan: 174 };
+  for (let i = 0; i < JET_STAGES.length; i++) {
+    const fight = makeJet(390, 844);
+    fight.stageIndex = i;
+    fight.beginBoss();
+    const stage = JET_STAGES[i];
+    assert(
+      fight.boss.hp === bossHpMittel[stage.boss] && fight.boss.maxHp === fight.boss.hp,
+      `${stage.bossName} starts at the reduced mittel HP`
+    );
+  }
+  const looped = makeJet(390, 844);
+  looped.cycle = 1;
+  looped.beginBoss();
+  assert(looped.boss.hp === 177, 'later loops still scale the reduced boss HP');
+  const plain = makeJet(390, 844).spawnEnemy('scout', 10, 10);
+  assert(plain.hp === 3, 'regular enemies keep their HP');
   assert(getJetDifficulty('einfach').speed < getJetDifficulty('mittel').speed, 'einfach is slower');
   assert(getJetDifficulty('mittel').speed < getJetDifficulty('schwer').speed, 'schwer is faster than mittel');
   assert(getJetDifficulty('schwer').speed < getJetDifficulty('baba').speed, 'baba is the fastest jet');
