@@ -231,6 +231,7 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
   assert(scoresMod.normalizeGame('Drift') === 'drift', 'normalize drift');
   assert(scoresMod.normalizeGame('Pulse') === 'pulse', 'normalize pulse');
   assert(scoresMod.normalizeGame('Jet') === 'jet', 'normalize jet');
+  assert(scoresMod.normalizeGame('Dash') === 'dash', 'normalize dash');
   assert(scoresMod.normalizeGame('nope') === 'rush', 'unknown game defaults to rush');
 {
   const mixed = [
@@ -238,6 +239,7 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
     { name: 'M', score: 50, ts: 2, difficulty: 'mittel', mode: 'normal', game: 'mirror' },
     { name: 'D', score: 80, ts: 3, difficulty: 'mittel', mode: 'normal', game: 'drift' },
     { name: 'J', score: 60, ts: 6, difficulty: 'mittel', mode: 'normal', game: 'jet' },
+    { name: 'S', score: 40, ts: 7, difficulty: 'einfach', mode: 'normal', game: 'dash' },
     { name: 'P', score: 90, ts: 4, difficulty: 'schwer', mode: 'normal', game: 'pulse' },
     {
       name: 'PD',
@@ -266,7 +268,7 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
     nearMisses: 0,
     game: 'nope',
   });
-  assert(!badGame.ok && badGame.error === 'Invalid game (rush|mirror|drift|pulse|jet)', 'reject bad game');
+  assert(!badGame.ok && badGame.error === 'Invalid game (rush|mirror|drift|pulse|jet|dash)', 'reject bad game');
   const okGame = scoresMod.validatePostBody({
     name: 'A',
     score: 10,
@@ -301,6 +303,21 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
     difficulty: 'schwer',
   });
   assert(jetBody.ok && jetBody.value.game === 'jet' && jetBody.value.difficulty === 'schwer', 'post jet');
+  const onlyS = scoresMod.selectBoard(mixed, { game: 'dash' });
+  assert(onlyS.length === 1 && onlyS[0].name === 'S' && onlyS[0].game === 'dash', 'dash board');
+  const qDash = scoresMod.validateScoresQuery(new URLSearchParams('game=dash&difficulty=einfach'));
+  assert(qDash.ok && qDash.game === 'dash' && qDash.difficulty === 'einfach', 'query dash');
+  const dashBody = scoresMod.validatePostBody({
+    name: 'DashPilot',
+    score: computeScore(4000, 2, 50, 1),
+    survivalMs: 4000,
+    orbs: 2,
+    comboBonus: 50,
+    nearMisses: 1,
+    game: 'dash',
+    difficulty: 'einfach',
+  });
+  assert(dashBody.ok && dashBody.value.game === 'dash' && dashBody.value.difficulty === 'einfach', 'post dash');
   const onlyP = scoresMod.selectBoard(mixed, { game: 'pulse' });
   assert(onlyP.length === 2 && onlyP.every((row) => row.game === 'pulse'), 'pulse board includes its rows');
   const pulseDaily = scoresMod.selectBoard(mixed, {
@@ -1056,6 +1073,179 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
     game: result.game,
   });
   assert(accepted.ok, `jet run passes the server check ${accepted.error || ''}`);
+}
+
+{
+  const {
+    DashGame,
+    DASH_LANES,
+    LANE_PITCH,
+    planDashRow,
+    dashSpeed,
+    dashHitsLane,
+    getDashDifficulty,
+    formatDashFormula,
+  } = await import(path.join(root, 'src', 'dash.js'));
+
+  function makeDash() {
+    const canvas = {
+      width: 390,
+      height: 844,
+      style: {},
+      getContext() {
+        return { setTransform() {} };
+      },
+      addEventListener() {},
+      removeEventListener() {},
+      setPointerCapture() {},
+    };
+    const audio = new Proxy({}, { get: () => () => {} });
+    return new DashGame(canvas, { audio, onGameOver() {}, onHud() {} });
+  }
+
+  let prev = null;
+  let seed = 17;
+  const rnd = () => {
+    seed = (seed * 16807) % 2147483647;
+    return (seed - 1) / 2147483646;
+  };
+  for (let i = 0; i < 240; i++) {
+    const two = i % 4 === 0 ? 1 : 0.15;
+    const plan = planDashRow(rnd, prev, two);
+    assert(plan.blocked.length >= 1 && plan.blocked.length <= 2, 'a row blocks one or two lanes');
+    if (two === 1) assert(plan.blocked.length === 2, 'a full double-wall chance blocks two lanes');
+    assert(!plan.blocked.includes(plan.safe), 'the safe lane is open');
+    assert(DASH_LANES.some((lane) => !plan.blocked.includes(lane)), 'a row never seals every lane');
+    if (prev != null) assert(Math.abs(plan.safe - prev) <= 1, 'the open lane stays one swipe away');
+    prev = plan.safe;
+  }
+
+  const einfach = getDashDifficulty('einfach');
+  const baba = getDashDifficulty('baba');
+  assert(einfach.speedBase < baba.speedBase, 'baba starts faster than einfach');
+  assert(dashSpeed(einfach, 0, 0) === einfach.speedBase, 'opening speed is the preset base');
+  assert(dashSpeed(baba, 100000, 100000) === baba.speedCap, 'speed ramp stops at the cap');
+  assert(dashSpeed(einfach, 100000, 100000) <= einfach.speedCap, 'einfach cap holds');
+  assert(einfach.speedCap < getDashDifficulty('mittel').speedCap, 'caps climb with the grade');
+  assert(!dashHitsLane(0, 1), 'a centered runner does not touch the side lane');
+  assert(dashHitsLane(0, 0), 'a centered runner hits a center blocker');
+
+  const swipe = makeDash();
+  swipe.running = true;
+  swipe.alive = true;
+  swipe.paused = false;
+  assert(swipe.handleSwipe(0, 80) === false && swipe.lane === 0, 'a vertical swipe does not change lane');
+  assert(swipe.handleSwipe(20, 0) === false && swipe.lane === 0, 'a short swipe is ignored');
+  assert(swipe.handleSwipe(40, 12) === true && swipe.lane === 1, 'one horizontal swipe steps one lane');
+  assert(swipe.handleSwipe(48, 4) === false && swipe.lane === 1, 'a second swipe at the edge stays put');
+  assert(swipe.nudge(-1) === true && swipe.lane === 0, 'A/D style step moves back one lane');
+  assert(swipe.nudge(-1) === true && swipe.nudge(-1) === false && swipe.lane === -1, 'two steps reach the far lane and stop');
+
+  const crash = makeDash();
+  crash.running = true;
+  crash.alive = true;
+  crash.grace = 0;
+  crash.distance = 40;
+  crash.lane = 0;
+  crash.x = 0;
+  crash.nextZ = 1e9;
+  crash.rows = [
+    {
+      id: 1,
+      z: 40.3,
+      blocked: [0],
+      safe: 1,
+      kind: 'barrier',
+      depth: 1.2,
+      ring: false,
+      ringTaken: false,
+      resolved: false,
+    },
+  ];
+  crash.update(0.02);
+  assert(crash.alive === false, 'a blocker in the current lane ends the run');
+  crash.stop();
+
+  const slip = makeDash();
+  slip.running = true;
+  slip.alive = true;
+  slip.grace = 0;
+  slip.distance = 40;
+  slip.lane = -1;
+  slip.x = -LANE_PITCH;
+  slip.nextZ = 1e9;
+  slip.rows = [
+    {
+      id: 2,
+      z: 40.3,
+      blocked: [0, 1],
+      safe: -1,
+      kind: 'wall',
+      depth: 1.2,
+      ring: true,
+      ringTaken: false,
+      resolved: false,
+    },
+  ];
+  slip.update(0.04);
+  assert(slip.alive === true, 'the open lane of a two-lane wall is safe');
+  assert(slip.orbsCollected === 1, 'a ring in the open lane scores');
+  slip.survivalMs = 3200;
+  slip.syncScore();
+  const slipResult = slip.buildResult();
+  assert(slipResult.game === 'dash' && slipResult.orbs === 1, 'dash result names the board and the ring');
+  assert(
+    slipResult.score === computeScore(slipResult.survivalMs, slipResult.orbs, slipResult.comboBonus, slipResult.nearMisses),
+    'dash score matches the shared formula'
+  );
+  assert(
+    slipResult.formula ===
+      formatDashFormula(slipResult.survivalMs, slipResult.orbs, slipResult.comboBonus, slipResult.nearMisses, slipResult.score),
+    'dash formula string matches'
+  );
+  const slipPost = scoresMod.validatePostBody({
+    name: 'DashPilot',
+    score: slipResult.score,
+    survivalMs: slipResult.survivalMs,
+    orbs: slipResult.orbs,
+    comboBonus: slipResult.comboBonus,
+    nearMisses: slipResult.nearMisses,
+    difficulty: slipResult.difficulty,
+    game: slipResult.game,
+  });
+  assert(slipPost.ok, `dash run passes the server check ${slipPost.error || ''}`);
+  slip.stop();
+
+  for (const id of DIFFICULTY_ENUM) {
+    const run = makeDash();
+    run.setDifficulty(id);
+    run.resetState();
+    run.running = true;
+    run.alive = true;
+    for (let i = 0; i < 280; i++) {
+      const reach = run.speed * 0.02 + 0.35;
+      const row = run.rows.find((item) => {
+        const rel = item.z - run.distance;
+        return rel < item.depth + reach && rel > -0.3;
+      });
+      if (row) {
+        run.lane = row.safe;
+        run.x = row.safe * LANE_PITCH;
+      }
+      run.update(0.02);
+      assert(run.speed <= run.diff.speedCap + 1e-6, `${id} speed stays under the cap`);
+      if (!run.alive) break;
+    }
+    assert(run.alive, `${id} survives when each row's open lane is taken`);
+    assert(run.distance > 40, `${id} run moves forward`);
+    let previous = null;
+    for (const row of run.rows) {
+      assert(!row.blocked.includes(row.safe) && row.blocked.length >= 1 && row.blocked.length <= 2, `${id} row leaves a lane`);
+      if (previous != null) assert(Math.abs(row.safe - previous) <= 1, `${id} safe lanes stay adjacent`);
+      previous = row.safe;
+    }
+    run.stop();
+  }
 }
 
 {
@@ -2113,6 +2303,33 @@ try {
   assert(jetPost.ok, `jet post failed: ${JSON.stringify(jetApi)}`);
   assert(jetApi.scores.every((s) => s.game === 'jet'), 'express jet board');
   assert(jetApi.scores.some((s) => s.name === 'JetPilot' && s.difficulty === 'schwer'), 'express jet pilot');
+
+  // The score limiter is 30 requests per minute. Dash is the next board after Jet.
+  await new Promise((r) => setTimeout(r, 61000));
+  const dashScore = computeScore(4000, 2, 50, 1);
+  const dashPost = await fetch(`http://127.0.0.1:${PORT}/api/scores`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: 'DashPilot',
+      score: dashScore,
+      survivalMs: 4000,
+      orbs: 2,
+      comboBonus: 50,
+      nearMisses: 1,
+      difficulty: 'einfach',
+      game: 'dash',
+      clientId: 'd1d1d1d1-d1d1-4d1d-8d1d-d1d1d1d1d1d1',
+    }),
+  });
+  const dashApi = await dashPost.json();
+  assert(dashPost.ok, `dash post failed: ${JSON.stringify(dashApi)}`);
+  assert(dashApi.scores.every((s) => s.game === 'dash'), 'express dash board');
+  assert(dashApi.scores.some((s) => s.name === 'DashPilot' && s.difficulty === 'einfach'), 'express dash pilot');
+  const rushAfterDash = await fetch(`http://127.0.0.1:${PORT}/api/scores?game=rush`).then((r) => r.json());
+  assert(!rushAfterDash.scores.some((s) => s.name === 'DashPilot'), 'express keeps dash off rush');
+  const dashBoard = await fetch(`http://127.0.0.1:${PORT}/api/scores?game=dash&difficulty=einfach`).then((r) => r.json());
+  assert(dashBoard.game === 'dash' && dashBoard.scores.some((s) => s.name === 'DashPilot'), 'express dash filter');
 
   const aergerBase = `http://127.0.0.1:${PORT}`;
   const created = await fetch(`${aergerBase}/api/aerger/create`, {

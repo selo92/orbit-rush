@@ -7,7 +7,7 @@
       content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
     />
     <meta name="theme-color" content="#050510" />
-    <meta name="description" content="Orbit Arcade — Orbit Rush, Orbit Mirror, Orbit Ärger, Orbit Duel, Orbit Drift, Orbit Pulse, and Orbit Jet. Skill runs, a board game, and remote two-player pong." />
+    <meta name="description" content="Orbit Arcade — Orbit Rush, Orbit Mirror, Orbit Ärger, Orbit Duel, Orbit Drift, Orbit Pulse, Orbit Jet, and Orbit Dash. Skill runs, a board game, and remote two-player pong." />
     <title>Orbit Rush</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='10' fill='%2300f0ff'/%3E%3Ccircle cx='32' cy='32' r='22' fill='none' stroke='%23ff2bd6' stroke-width='3'/%3E%3C/svg%3E" />
     <link rel="stylesheet" href="/src/style.css" />
@@ -70,7 +70,7 @@
         <div class="panel hub-panel">
           <p class="eyebrow">ORBIT RUSH</p>
           <h1 class="logo">ORBIT<span>ARCADE</span></h1>
-          <p class="tagline">Sieben Spiele. Ein Pilot.</p>
+          <p class="tagline">Acht Spiele. Ein Pilot.</p>
           <p id="hub-identity" class="identity-line hidden">Welcome back, <strong id="hub-identity-name"></strong></p>
           <div class="hub-tiles">
             <button type="button" id="btn-hub-rush" class="hub-tile rush">
@@ -148,6 +148,17 @@
               <span class="hub-copy">
                 <strong>ORBIT JET</strong>
                 <span>Flieg den Jet. Auto-Feuer. Besiege den Boss.</span>
+              </span>
+            </button>
+            <button type="button" id="btn-hub-dash" class="hub-tile dash">
+              <svg class="hub-glyph" viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+                <path d="M7.2 6.2v19.6M16 4.2v23.6M24.8 6.2v19.6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+                <path fill="currentColor" d="M16 8.4 19.4 16.2h-6.8z" />
+                <rect x="21.6" y="19.4" width="6.2" height="3.5" rx="0.7" fill="#ff2bd6" />
+              </svg>
+              <span class="hub-copy">
+                <strong>ORBIT DASH</strong>
+                <span>Drei Bahnen. Links oder rechts wischen.</span>
               </span>
             </button>
           </div>
@@ -515,6 +526,65 @@
           <p id="jet-diff-best" class="best-line muted">Rekord auf Mittel: <strong id="jet-diff-best-val">—</strong></p>
           <button type="button" id="btn-jet-diff-start" class="btn primary pulse">START</button>
           <button type="button" id="btn-jet-diff-back" class="btn ghost">ZURÜCK</button>
+        </div>
+      </section>
+
+      <!-- Orbit Dash menu -->
+      <section id="screen-dash" class="screen hidden">
+        <div class="panel dash-panel">
+          <p class="eyebrow">ENDLESS RUNNER</p>
+          <h1 class="logo">ORBIT<span>DASH</span></h1>
+          <p class="tagline">Drei Bahnen. Links oder rechts wischen.</p>
+          <p class="tagline">Du läufst von selbst. Barrieren, Kisten und niedrige Wände stoppen den Lauf.</p>
+          <p id="dash-best" class="best-line">
+            Rekord (Mittel): <strong id="dash-best-val">—</strong>
+          </p>
+          <button type="button" id="btn-dash-play" class="btn primary pulse">SPIELEN</button>
+          <button type="button" id="btn-dash-lb" class="btn ghost">BESTENLISTE</button>
+          <button type="button" id="btn-dash-hub" class="btn ghost">ARCADE</button>
+        </div>
+      </section>
+
+      <section id="screen-dash-onboard" class="screen hidden">
+        <div class="panel onboard-panel">
+          <p class="eyebrow">BAHN WECHSELN</p>
+          <h2>Links/rechts wischen</h2>
+          <p class="tagline">
+            Ein Wisch schiebt dich genau eine Bahn weiter. Pfeile oder A und D machen dasselbe.
+            Du läufst von selbst. Barrieren, Kisten und niedrige Wände in deiner Bahn beenden den Lauf.
+            Mindestens eine Bahn bleibt frei. Ringe geben Extra-Punkte.
+          </p>
+          <button type="button" id="btn-dash-onboard" class="btn primary">VERSTANDEN</button>
+          <button type="button" id="btn-dash-onboard-skip" class="btn ghost">SPÄTER</button>
+        </div>
+      </section>
+
+      <section id="screen-dash-diff" class="screen hidden">
+        <div class="panel diff-panel dash-diff-panel">
+          <p class="eyebrow">SCHWIERIGKEIT</p>
+          <h2>WIE HART?</h2>
+          <p class="tagline diff-hint">Tempo und Dichte steigen mit der Strecke. Oben ist Schluss, damit es lesbar bleibt.</p>
+          <div id="dash-diff-options" class="diff-options" role="radiogroup" aria-label="Schwierigkeit">
+            <button type="button" class="diff-chip" data-dash-diff="einfach" aria-pressed="false">
+              <span class="diff-label">Einfach</span>
+              <span class="diff-blurb">Langsam · weite Lücken · wenige Doppelwände</span>
+            </button>
+            <button type="button" class="diff-chip" data-dash-diff="mittel" aria-pressed="true">
+              <span class="diff-label">Mittel</span>
+              <span class="diff-blurb">Schneller · dichtere Bahn · mehr Kisten</span>
+            </button>
+            <button type="button" class="diff-chip" data-dash-diff="schwer" aria-pressed="false">
+              <span class="diff-label">Schwer</span>
+              <span class="diff-blurb">Hohes Tempo · enge Lücken · viele Wände</span>
+            </button>
+            <button type="button" class="diff-chip baba" data-dash-diff="baba" aria-pressed="false">
+              <span class="diff-label">Baba</span>
+              <span class="diff-blurb">⚠ Extrem · kaum Luft · Doppelwände</span>
+            </button>
+          </div>
+          <p id="dash-diff-best" class="best-line muted">Rekord auf Mittel: <strong id="dash-diff-best-val">—</strong></p>
+          <button type="button" id="btn-dash-diff-start" class="btn primary pulse">START</button>
+          <button type="button" id="btn-dash-diff-back" class="btn ghost">ZURÜCK</button>
         </div>
       </section>
 

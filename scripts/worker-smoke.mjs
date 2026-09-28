@@ -464,7 +464,7 @@ try {
     ip: '203.0.113.92',
     body: { name: 'BadGame', score: computeScore(1000, 0, 0, 0), survivalMs: 1000, orbs: 0, game: 'puzzle' },
   });
-  assert(badGamePost.status === 400 && badGamePost.data.error === 'Invalid game (rush|mirror|drift|pulse|jet)', 'invalid game post');
+  assert(badGamePost.status === 400 && badGamePost.data.error === 'Invalid game (rush|mirror|drift|pulse|jet|dash)', 'invalid game post');
 
   const driftScore = computeScore(8000, 3, 100, 2);
   const driftPost = await api('/api/scores', {
@@ -582,6 +582,30 @@ try {
   assert(jetBoard.data.scores.some((s) => s.name === 'JetPilot'), 'jet difficulty filter includes schwer');
   const rushAfterJet = await api('/api/scores?game=rush', { ip: '203.0.113.115' });
   assert(!rushAfterJet.data.scores.some((s) => s.name === 'JetPilot'), 'jet score stays off rush');
+
+  const dashScore = computeScore(4000, 2, 50, 1);
+  const dashPost = await api('/api/scores', {
+    method: 'POST',
+    ip: '203.0.113.116',
+    body: {
+      name: 'DashPilot',
+      score: dashScore,
+      survivalMs: 4000,
+      orbs: 2,
+      comboBonus: 50,
+      nearMisses: 1,
+      difficulty: 'einfach',
+      game: 'dash',
+    },
+  });
+  assert(dashPost.status === 200, `dash post ${JSON.stringify(dashPost.data)}`);
+  assert(dashPost.data.scores.every((s) => s.game === 'dash'), 'dash response is the dash board');
+  assert(dashPost.data.scores.some((s) => s.name === 'DashPilot'), 'dash pilot listed');
+  const dashBoard = await api('/api/scores?game=dash&difficulty=einfach', { ip: '203.0.113.117' });
+  assert(dashBoard.status === 200 && dashBoard.data.game === 'dash', 'dash filter names the board');
+  assert(dashBoard.data.scores.some((s) => s.name === 'DashPilot'), 'dash difficulty filter includes einfach');
+  const rushAfterDash = await api('/api/scores?game=rush', { ip: '203.0.113.117' });
+  assert(!rushAfterDash.data.scores.some((s) => s.name === 'DashPilot'), 'dash score stays off rush');
 
   const notAScore = await api('/api/scores', {
     method: 'POST',
