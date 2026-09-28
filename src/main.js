@@ -11,6 +11,7 @@ import {
   preloadPulseManifest,
 } from './pulse.js';
 import { JetGame, getJetDifficulty } from './jet.js';
+import { DashGame, getDashDifficulty } from './dash.js';
 import { mountAerger } from './aerger-ui.js';
 import { mountDuel } from './duel-ui.js';
 import {
@@ -64,6 +65,9 @@ const LS_PULSE_ONBOARD = 'orbit-pulse-onboard-v1';
 const LS_JET_BEST_PREFIX = 'orbit-jet-best-';
 const LS_JET_DIFF = 'orbit-jet-difficulty';
 const LS_JET_ONBOARD = 'orbit-jet-onboard-v1';
+const LS_DASH_BEST_PREFIX = 'orbit-dash-best-';
+const LS_DASH_DIFF = 'orbit-dash-difficulty';
+const LS_DASH_ONBOARD = 'orbit-dash-onboard-v1';
 const SHARE_NOTE = '(Orbit Rush — play locally / LiveCodes)';
 
 const canvas = /** @type {HTMLCanvasElement} */ ($('game'));
@@ -90,6 +94,9 @@ const screens = {
   jet: $('screen-jet'),
   jetOnboard: $('screen-jet-onboard'),
   jetDiff: $('screen-jet-diff'),
+  dash: $('screen-dash'),
+  dashOnboard: $('screen-dash-onboard'),
+  dashDiff: $('screen-dash-diff'),
   aerger: $('screen-aerger'),
   duel: $('screen-duel'),
 };
@@ -113,13 +120,13 @@ const toastEl = $('toast');
 let lastResult = null;
 let lbBackTo = 'title';
 let lbFilter = 'all';
-/** @type {'hub'|'rush'|'mirror'|'aerger'|'duel'|'drift'|'pulse'|'jet'} */
+/** @type {'hub'|'rush'|'mirror'|'aerger'|'duel'|'drift'|'pulse'|'jet'|'dash'} */
 let activeGame = 'hub';
 /** @type {() => void} */
 let pauseAerger = () => {};
 /** @type {() => void} */
 let pauseDuel = () => {};
-/** @type {'rush'|'mirror'|'drift'|'pulse'|'jet'} */
+/** @type {'rush'|'mirror'|'drift'|'pulse'|'jet'|'dash'} */
 let lbGame = 'rush';
 let submitting = false;
 let runSeq = 0;
@@ -138,6 +145,8 @@ let driftDifficulty = loadDriftDifficulty();
 let pulseDifficulty = loadPulseDifficulty();
 /** @type {import('./difficulty.js').DifficultyId} */
 let jetDifficulty = loadJetDifficulty();
+/** @type {import('./difficulty.js').DifficultyId} */
+let dashDifficulty = loadDashDifficulty();
 /** @type {string} */
 let selectedSkin = normalizeSkin(loadSavedSkin());
 
@@ -416,6 +425,69 @@ function markJetOnboard() {
   }
 }
 
+function loadDashDifficulty() {
+  try {
+    return normalizeDifficulty(localStorage.getItem(LS_DASH_DIFF) || DEFAULT_DIFFICULTY);
+  } catch {
+    return DEFAULT_DIFFICULTY;
+  }
+}
+
+function saveDashDifficulty(id) {
+  const d = normalizeDifficulty(id);
+  dashDifficulty = d;
+  try {
+    localStorage.setItem(LS_DASH_DIFF, d);
+  } catch {
+    /* ignore */
+  }
+}
+
+function getDashBest(id = dashDifficulty) {
+  const d = normalizeDifficulty(id);
+  try {
+    return Math.max(0, Math.floor(Number(localStorage.getItem(LS_DASH_BEST_PREFIX + d)) || 0));
+  } catch {
+    return 0;
+  }
+}
+
+function setDashBest(score, id = dashDifficulty) {
+  const d = normalizeDifficulty(id);
+  try {
+    localStorage.setItem(LS_DASH_BEST_PREFIX + d, String(Math.floor(score)));
+  } catch {
+    /* ignore */
+  }
+}
+
+function refreshDashMenu() {
+  const best = getDashBest(dashDifficulty);
+  const label = getDashDifficulty(dashDifficulty).label;
+  const bestEl = $('dash-best-val');
+  const line = $('dash-best');
+  if (line?.childNodes[0]?.nodeType === 3) {
+    line.childNodes[0].textContent = `Rekord (${label}): `;
+  }
+  if (bestEl) bestEl.textContent = best > 0 ? String(best) : '—';
+}
+
+function dashOnboardDone() {
+  try {
+    return localStorage.getItem(LS_DASH_ONBOARD) === '1';
+  } catch {
+    return true;
+  }
+}
+
+function markDashOnboard() {
+  try {
+    localStorage.setItem(LS_DASH_ONBOARD, '1');
+  } catch {
+    /* ignore */
+  }
+}
+
 function loadPulseDifficulty() {
   try {
     return normalizeDifficulty(localStorage.getItem(LS_PULSE_DIFF) || DEFAULT_DIFFICULTY);
@@ -541,7 +613,8 @@ function resultGame(result) {
     result?.game === 'mirror' ||
     result?.game === 'drift' ||
     result?.game === 'pulse' ||
-    result?.game === 'jet'
+    result?.game === 'jet' ||
+    result?.game === 'dash'
   ) {
     return result.game;
   }
@@ -552,15 +625,21 @@ function setHudChrome(mode) {
   const drift = mode === 'drift';
   const pulse = mode === 'pulse';
   const jetMode = mode === 'jet';
+  const dashMode = mode === 'dash';
   const scoreLabel = $('hud-score-label');
   const orbsLabel = $('hud-orbs-label');
   const timeLabel = $('hud-time-label');
-  if (scoreLabel) scoreLabel.textContent = drift || pulse || jetMode ? 'PUNKTE' : 'SCORE';
-  if (orbsLabel) orbsLabel.textContent = jetMode ? 'LEBEN' : pulse ? 'TREFFER' : drift ? 'RINGE' : 'ORBS';
-  if (timeLabel) timeLabel.textContent = jetMode ? 'STUFE' : pulse ? 'TAKT' : drift ? 'KM' : 'TIME';
+  if (scoreLabel) scoreLabel.textContent = drift || pulse || jetMode || dashMode ? 'PUNKTE' : 'SCORE';
+  if (orbsLabel) {
+    orbsLabel.textContent = jetMode ? 'LEBEN' : pulse ? 'TREFFER' : drift || dashMode ? 'RINGE' : 'ORBS';
+  }
+  if (timeLabel) {
+    timeLabel.textContent = jetMode ? 'STUFE' : pulse ? 'TAKT' : dashMode ? 'METER' : drift ? 'KM' : 'TIME';
+  }
   hud.classList.toggle('drift-mode', drift);
   hud.classList.toggle('pulse-mode', pulse);
   hud.classList.toggle('jet-mode', jetMode);
+  hud.classList.toggle('dash-mode', dashMode);
   hud.classList.toggle('mirror-mode', mode === 'mirror');
   if (!jetMode) {
     $('pwr-overdrive')?.classList.add('hidden');
@@ -848,6 +927,12 @@ function setOverDiffBadge(result) {
     badge.className = `diff-badge ${d}`;
     return;
   }
+  if (result.game === 'dash') {
+    const d = normalizeDifficulty(result.difficulty || dashDifficulty);
+    badge.textContent = getDashDifficulty(d).label;
+    badge.className = `diff-badge ${d}`;
+    return;
+  }
   if (result.game === 'pulse') {
     if (result.daily) {
       badge.textContent = `Daily · ${result.dailyDate || utcDateString()}`;
@@ -976,6 +1061,11 @@ function buildShareText(result) {
     const bosses = Math.max(0, Math.floor(result.bossesCleared || 0));
     return `Orbit Jet [${tag}] — ${score} Punkte — ${bosses} Bosse — ${result.stageName || 'Neon City'} — schlag mich!`;
   }
+  if (result?.game === 'dash') {
+    const tag = getDashDifficulty(result.difficulty || dashDifficulty).label;
+    const meters = Math.max(0, Math.floor(result.distanceM || 0));
+    return `Orbit Dash [${tag}] — ${score} Punkte — ${meters} m — schlag mich!`;
+  }
   if (result?.game === 'pulse') {
     const tag = result.daily
       ? `Daily · ${result.dailyDate || utcDateString()}`
@@ -999,7 +1089,13 @@ async function shareScore() {
   audio.click();
   try {
     if (navigator.share) {
-      const titles = { mirror: 'Orbit Mirror', drift: 'Orbit Drift', pulse: 'Orbit Pulse', jet: 'Orbit Jet' };
+      const titles = {
+        mirror: 'Orbit Mirror',
+        drift: 'Orbit Drift',
+        pulse: 'Orbit Pulse',
+        jet: 'Orbit Jet',
+        dash: 'Orbit Dash',
+      };
       await navigator.share({ title: titles[lastResult?.game] || 'Orbit Rush', text });
       $('submit-status').textContent = 'Shared!';
       $('submit-status').classList.remove('error');
@@ -1060,47 +1156,50 @@ function showGameOver(result) {
   const driftRun = result.game === 'drift';
   const pulseRun = result.game === 'pulse';
   const jetRun = result.game === 'jet';
+  const dashRun = result.game === 'dash';
   const hint = $('name-hint');
   if (hint) {
     hint.textContent =
-      driftRun || pulseRun || jetRun
+      driftRun || pulseRun || jetRun || dashRun
         ? 'Ein Name, einmal. Spätere Runs speichern automatisch.'
         : 'Enter a name once. Later runs save automatically.';
   }
   const cause = $('over-cause');
   if (cause) {
-    const reason = jetRun ? result.hitReason || '' : '';
+    const reason = jetRun || dashRun ? result.hitReason || '' : '';
     cause.textContent = reason;
     cause.classList.toggle('hidden', !reason);
   }
-  $('over-title').textContent = jetRun
-    ? 'ABGESCHOSSEN'
-    : pulseRun
-      ? result.cleared
-        ? !result.daily && result.stageCount > 1
-          ? 'RUN GESCHAFFT'
-          : 'FLOW GEHALTEN'
-        : 'AUS DEM TAKT'
-      : driftRun
-        ? 'BAHN VERLASSEN'
-        : mirrorRun
-          ? 'SPIEGEL BRICHT'
-          : 'ORBIT LOST';
+  $('over-title').textContent = dashRun
+    ? 'LAUF BEENDET'
+    : jetRun
+      ? 'ABGESCHOSSEN'
+      : pulseRun
+        ? result.cleared
+          ? !result.daily && result.stageCount > 1
+            ? 'RUN GESCHAFFT'
+            : 'FLOW GEHALTEN'
+          : 'AUS DEM TAKT'
+        : driftRun
+          ? 'BAHN VERLASSEN'
+          : mirrorRun
+            ? 'SPIEGEL BRICHT'
+            : 'ORBIT LOST';
   const retry = $('btn-retry');
-  if (retry) retry.textContent = pulseRun || jetRun ? 'NOCHMAL' : 'PLAY AGAIN';
-  $('over-streak').classList.toggle('hidden', !mirrorRun && !driftRun && !pulseRun && !jetRun);
+  if (retry) retry.textContent = pulseRun || jetRun || dashRun ? 'NOCHMAL' : 'PLAY AGAIN';
+  $('over-streak').classList.toggle('hidden', !mirrorRun && !driftRun && !pulseRun && !jetRun && !dashRun);
   const streakLine = $('over-streak');
   if (streakLine?.childNodes[0]?.nodeType === 3) {
     streakLine.childNodes[0].textContent = jetRun
       ? 'Bosse: '
       : pulseRun
         ? 'Treffer: '
-        : driftRun
+        : driftRun || dashRun
           ? 'Strecke: '
           : 'Clean streak: ';
   }
 
-  if (!mirrorRun && !driftRun && !pulseRun && !jetRun) processAchievements(result);
+  if (!mirrorRun && !driftRun && !pulseRun && !jetRun && !dashRun) processAchievements(result);
 
   let isNew = false;
   let best = 0;
@@ -1137,6 +1236,18 @@ function showGameOver(result) {
     const ob = $('over-best');
     if (ob.childNodes[0] && ob.childNodes[0].nodeType === 3) {
       ob.childNodes[0].textContent = `Rekord (${getJetDifficulty(diff).label}): `;
+    }
+  } else if (dashRun) {
+    const diff = normalizeDifficulty(result.difficulty || dashDifficulty);
+    const prev = getDashBest(diff);
+    isNew = result.score > prev;
+    if (isNew) setDashBest(result.score, diff);
+    best = Math.max(prev, result.score);
+    const meters = Math.max(0, Math.floor(result.distanceM || 0));
+    $('over-streak-val').textContent = `${meters} m`;
+    const ob = $('over-best');
+    if (ob.childNodes[0] && ob.childNodes[0].nodeType === 3) {
+      ob.childNodes[0].textContent = `Rekord (${getDashDifficulty(diff).label}): `;
     }
   } else if (driftRun) {
     const diff = normalizeDifficulty(result.difficulty || driftDifficulty);
@@ -1199,7 +1310,8 @@ function showGameOver(result) {
       result.nearMisses,
       result.score
     );
-  $('over-new-best').textContent = driftRun || pulseRun || jetRun ? '★ NEUER REKORD ★' : '★ NEW PERSONAL BEST ★';
+  $('over-new-best').textContent =
+    driftRun || pulseRun || jetRun || dashRun ? '★ NEUER REKORD ★' : '★ NEW PERSONAL BEST ★';
   $('btn-jet-bomb')?.classList.add('hidden');
   $('over-new-best').classList.toggle('hidden', !isNew || result.score <= 0);
   $('over-best').classList.toggle('hidden', best <= 0);
@@ -1210,6 +1322,7 @@ function showGameOver(result) {
   refreshDriftMenu();
   refreshPulseMenu();
   refreshJetMenu();
+  refreshDashMenu();
   refreshHub();
   presentGameOverIdentity(result);
   showScreen('over');
@@ -1348,11 +1461,40 @@ const jet = new JetGame(canvas, {
   },
 });
 
+const dash = new DashGame(canvas, {
+  audio,
+  onHud({ score, orbs, meters, combo, showHint }) {
+    hudScore.textContent = String(score);
+    hudOrbs.textContent = String(orbs);
+    hudTime.textContent = String(Math.max(0, Math.floor(meters || 0)));
+    $('hud-combo-label').textContent = 'KETTE';
+    if (combo > 1) {
+      hudCombo.classList.remove('hidden');
+      hudComboVal.textContent = `x${combo}`;
+      hudCombo.classList.toggle('hot', combo >= 4);
+    } else {
+      hudCombo.classList.add('hidden');
+      hudCombo.classList.remove('hot');
+    }
+    pwrShield.classList.add('hidden');
+    pwrSlow.classList.add('hidden');
+    pwrMagnet.classList.add('hidden');
+    const grade = getDashDifficulty(dash.difficultyId).label.toUpperCase();
+    hudMode.textContent = grade;
+    hudMode.classList.remove('hidden');
+    touchHint.classList.toggle('hidden', !showHint);
+  },
+  onGameOver(result) {
+    showGameOver(result);
+  },
+});
+
 function liveGame() {
   if (activeGame === 'mirror') return mirror;
   if (activeGame === 'drift') return drift;
   if (activeGame === 'pulse') return pulse;
   if (activeGame === 'jet') return jet;
+  if (activeGame === 'dash') return dash;
   return game;
 }
 
@@ -1363,6 +1505,7 @@ function showHub() {
   if (drift.running) drift.stop();
   if (pulse.running) pulse.stop();
   if (jet.running) jet.stop();
+  if (dash.running) dash.stop();
   audio.stopMusic();
   audio.stopClip();
   hud.classList.add('hidden');
@@ -1378,6 +1521,7 @@ function openRushMenu() {
   if (drift.running) drift.stop();
   if (pulse.running) pulse.stop();
   if (jet.running) jet.stop();
+  if (dash.running) dash.stop();
   audio.stopMusic();
   audio.stopClip();
   hud.classList.add('hidden');
@@ -1394,6 +1538,7 @@ function openMirrorMenu() {
   if (drift.running) drift.stop();
   if (pulse.running) pulse.stop();
   if (jet.running) jet.stop();
+  if (dash.running) dash.stop();
   audio.stopMusic();
   audio.stopClip();
   hud.classList.add('hidden');
@@ -1409,6 +1554,7 @@ function openDriftMenu() {
   if (drift.running) drift.stop();
   if (pulse.running) pulse.stop();
   if (jet.running) jet.stop();
+  if (dash.running) dash.stop();
   audio.stopMusic();
   audio.stopClip();
   hud.classList.add('hidden');
@@ -1423,6 +1569,7 @@ function beginMirror() {
   if (drift.running) drift.stop();
   if (pulse.running) pulse.stop();
   if (jet.running) jet.stop();
+  if (dash.running) dash.stop();
   audio.resume();
   audio.startMusic();
   hideAllScreens();
@@ -1460,6 +1607,7 @@ function beginDrift() {
   if (mirror.running) mirror.stop();
   if (pulse.running) pulse.stop();
   if (jet.running) jet.stop();
+  if (dash.running) dash.stop();
   audio.resume();
   audio.startMusic();
   hideAllScreens();
@@ -1499,6 +1647,7 @@ function openPulseMenu() {
   if (drift.running) drift.stop();
   if (pulse.running) pulse.stop();
   if (jet.running) jet.stop();
+  if (dash.running) dash.stop();
   audio.stopMusic();
   audio.stopClip();
   hud.classList.add('hidden');
@@ -1545,6 +1694,7 @@ function beginPulse(opts = {}) {
   if (mirror.running) mirror.stop();
   if (drift.running) drift.stop();
   if (jet.running) jet.stop();
+  if (dash.running) dash.stop();
   audio.resume();
   audio.stopMusic();
   hideAllScreens();
@@ -1651,6 +1801,7 @@ function openJetMenu() {
   if (drift.running) drift.stop();
   if (pulse.running) pulse.stop();
   if (jet.running) jet.stop();
+  if (dash.running) dash.stop();
   audio.stopMusic();
   audio.stopClip();
   hud.classList.add('hidden');
@@ -1665,6 +1816,7 @@ function beginJet() {
   if (mirror.running) mirror.stop();
   if (drift.running) drift.stop();
   if (pulse.running) pulse.stop();
+  if (dash.running) dash.stop();
   audio.resume();
   audio.startMusic();
   hideAllScreens();
@@ -1700,12 +1852,106 @@ function startJet() {
   openJetDifficulty();
 }
 
+function syncDashDiffChips() {
+  document.querySelectorAll('#dash-diff-options .diff-chip').forEach((btn) => {
+    const id = btn.getAttribute('data-dash-diff');
+    btn.setAttribute('aria-pressed', id === dashDifficulty ? 'true' : 'false');
+  });
+  const best = getDashBest(dashDifficulty);
+  const label = getDashDifficulty(dashDifficulty).label;
+  const line = $('dash-diff-best');
+  if (line?.childNodes[0]?.nodeType === 3) {
+    line.childNodes[0].textContent = `Rekord auf ${label}: `;
+  }
+  const val = $('dash-diff-best-val');
+  if (val) val.textContent = best > 0 ? String(best) : '—';
+  const startBtn = $('btn-dash-diff-start');
+  if (startBtn) {
+    if (dashDifficulty === 'baba') {
+      startBtn.textContent = 'BABA STARTEN';
+      startBtn.classList.add('baba-start');
+    } else {
+      startBtn.textContent = 'START';
+      startBtn.classList.remove('baba-start');
+    }
+  }
+  if (!dash.running) {
+    dash.setDifficulty(dashDifficulty);
+    dash.resetState();
+  }
+}
+
+function openDashDifficulty() {
+  activeGame = 'dash';
+  syncDashDiffChips();
+  showScreen('dashDiff');
+}
+
+function openDashMenu() {
+  activeGame = 'dash';
+  if (game.running) game.stop();
+  if (mirror.running) mirror.stop();
+  if (drift.running) drift.stop();
+  if (pulse.running) pulse.stop();
+  if (jet.running) jet.stop();
+  if (dash.running) dash.stop();
+  audio.stopMusic();
+  audio.stopClip();
+  hud.classList.add('hidden');
+  setHudChrome('rush');
+  refreshDashMenu();
+  showScreen('dash');
+}
+
+function beginDash() {
+  activeGame = 'dash';
+  if (game.running) game.stop();
+  if (mirror.running) mirror.stop();
+  if (drift.running) drift.stop();
+  if (pulse.running) pulse.stop();
+  if (jet.running) jet.stop();
+  audio.resume();
+  audio.startMusic();
+  hideAllScreens();
+  hud.classList.remove('hidden');
+  setHudChrome('dash');
+  $('hud-combo-label').textContent = 'KETTE';
+  hudCombo.classList.add('hidden');
+  pwrShield.classList.add('hidden');
+  pwrSlow.classList.add('hidden');
+  pwrMagnet.classList.add('hidden');
+  $('pwr-overdrive')?.classList.add('hidden');
+  $('pwr-drone')?.classList.add('hidden');
+  $('btn-jet-bomb')?.classList.add('hidden');
+  const grade = getDashDifficulty(dashDifficulty).label.toUpperCase();
+  hudMode.textContent = grade;
+  hudMode.classList.remove('hidden');
+  touchHint.textContent = 'Links/rechts wischen';
+  touchHint.classList.add('hidden');
+  touchHint.classList.remove('fade-fast');
+  void touchHint.offsetWidth;
+  touchHint.classList.remove('hidden');
+  dash.start(dashDifficulty);
+}
+
+function startDash() {
+  activeGame = 'dash';
+  audio.resume();
+  audio.click();
+  if (!dashOnboardDone()) {
+    showScreen('dashOnboard');
+    return;
+  }
+  openDashDifficulty();
+}
+
 function beginRun(opts = {}) {
   activeGame = 'rush';
   if (mirror.running) mirror.stop();
   if (drift.running) drift.stop();
   if (pulse.running) pulse.stop();
   if (jet.running) jet.stop();
+  if (dash.running) dash.stop();
   setHudChrome('rush');
   $('hud-combo-label').textContent = 'COMBO';
   touchHint.textContent = 'Drag left / right to change orbit';
@@ -1775,13 +2021,17 @@ function startDaily() {
 function openLeaderboard(from, gameId = 'rush') {
   lbBackTo = from;
   lbGame =
-    gameId === 'mirror' || gameId === 'drift' || gameId === 'pulse' || gameId === 'jet' ? gameId : 'rush';
+    gameId === 'mirror' || gameId === 'drift' || gameId === 'pulse' || gameId === 'jet' || gameId === 'dash'
+      ? gameId
+      : 'rush';
   if (lbGame === 'rush') {
     lbFilter = runMode === 'daily' ? 'daily' : selectedDifficulty || 'all';
   } else if (lbGame === 'drift') {
     lbFilter = driftDifficulty || 'all';
   } else if (lbGame === 'jet') {
     lbFilter = jetDifficulty || 'all';
+  } else if (lbGame === 'dash') {
+    lbFilter = dashDifficulty || 'all';
   } else if (lbGame === 'pulse') {
     lbFilter =
       from === 'over' && lastResult?.game === 'pulse' && lastResult?.daily
@@ -1798,7 +2048,10 @@ function syncLbFilters() {
     const filter = btn.getAttribute('data-filter');
     btn.classList.toggle('hidden', filter === 'daily' && lbGame !== 'rush' && lbGame !== 'pulse');
     btn.classList.toggle('active', filter === lbFilter);
-    if (filter === 'all') btn.textContent = lbGame === 'drift' || lbGame === 'pulse' || lbGame === 'jet' ? 'Alle' : 'All';
+    if (filter === 'all') {
+      btn.textContent =
+        lbGame === 'drift' || lbGame === 'pulse' || lbGame === 'jet' || lbGame === 'dash' ? 'Alle' : 'All';
+    }
   });
 }
 
@@ -1826,6 +2079,11 @@ async function renderLeaderboard() {
     if (lbFilter === 'daily') lbFilter = jetDifficulty || 'all';
     filters?.classList.remove('hidden');
     syncLbFilters();
+  } else if (lbGame === 'dash') {
+    if (heading) heading.textContent = 'DASH TOP 50';
+    if (lbFilter === 'daily') lbFilter = dashDifficulty || 'all';
+    filters?.classList.remove('hidden');
+    syncLbFilters();
   } else {
     if (heading) heading.textContent = 'GLOBAL TOP 50';
     filters?.classList.remove('hidden');
@@ -1846,6 +2104,11 @@ async function renderLeaderboard() {
     } else if (lbGame === 'jet') {
       const filter = !lbFilter || lbFilter === 'all' ? undefined : lbFilter;
       const res = await fetchScores(filter ? { difficulty: filter, game: 'jet' } : { game: 'jet' });
+      scores = res.scores;
+      source = res.source;
+    } else if (lbGame === 'dash') {
+      const filter = !lbFilter || lbFilter === 'all' ? undefined : lbFilter;
+      const res = await fetchScores(filter ? { difficulty: filter, game: 'dash' } : { game: 'dash' });
       scores = res.scores;
       source = res.source;
     } else if (lbGame === 'pulse' && lbFilter === 'daily') {
@@ -1871,7 +2134,7 @@ async function renderLeaderboard() {
     list.innerHTML = '';
     if (!scores.length) {
       empty.classList.remove('hidden');
-      if (lbGame === 'drift' || lbGame === 'pulse' || lbGame === 'jet') {
+      if (lbGame === 'drift' || lbGame === 'pulse' || lbGame === 'jet' || lbGame === 'dash') {
         empty.textContent =
           source === 'local'
             ? 'Noch keine Punkte (lokal). Sei der Erste.'
@@ -1937,6 +2200,7 @@ $('btn-retry').addEventListener('click', () => {
     if (lastResult.daily) startPulseDaily();
     else startPulse();
   } else if (lastResult?.game === 'jet') startJet();
+  else if (lastResult?.game === 'dash') startDash();
   else if (lastResult?.daily || runMode === 'daily') startDaily();
   else startRun();
 });
@@ -2004,6 +2268,9 @@ $('btn-quit').addEventListener('click', () => {
   } else if (leaving === 'jet') {
     refreshJetMenu();
     showScreen('jet');
+  } else if (leaving === 'dash') {
+    refreshDashMenu();
+    showScreen('dash');
   } else {
     refreshTitleBest();
     showScreen('title');
@@ -2032,6 +2299,9 @@ $('btn-lb-back').addEventListener('click', () => {
   } else if (lbBackTo === 'jet') {
     refreshJetMenu();
     showScreen('jet');
+  } else if (lbBackTo === 'dash') {
+    refreshDashMenu();
+    showScreen('dash');
   } else {
     refreshTitleBest();
     showScreen('title');
@@ -2124,11 +2394,13 @@ function onResize() {
   drift.resize();
   pulse.resize();
   jet.resize();
-  if (game.running || mirror.running || drift.running || pulse.running || jet.running) return;
+  dash.resize();
+  if (game.running || mirror.running || drift.running || pulse.running || jet.running || dash.running) return;
   if (activeGame === 'mirror') mirror.draw();
   else if (activeGame === 'drift') drift.draw();
   else if (activeGame === 'pulse') pulse.draw();
   else if (activeGame === 'jet') jet.draw();
+  else if (activeGame === 'dash') dash.draw();
   else {
     if (typeof game.seedStars === 'function') game.seedStars();
     game.draw();
@@ -2138,11 +2410,12 @@ window.addEventListener('resize', onResize);
 window.addEventListener('orientationchange', () => setTimeout(onResize, 120));
 
 function idleDraw() {
-  if (!game.running && !mirror.running && !drift.running && !pulse.running && !jet.running) {
+  if (!game.running && !mirror.running && !drift.running && !pulse.running && !jet.running && !dash.running) {
     if (activeGame === 'mirror') mirror.drawIdle();
     else if (activeGame === 'drift') drift.drawIdle();
     else if (activeGame === 'pulse') pulse.drawIdle();
     else if (activeGame === 'jet') jet.drawIdle();
+    else if (activeGame === 'dash') dash.drawIdle();
     else {
       game.angle += 0.004;
       game.draw();
@@ -2167,6 +2440,7 @@ function openAerger() {
   if (drift.running) drift.stop();
   if (pulse.running) pulse.stop();
   if (jet.running) jet.stop();
+  if (dash.running) dash.stop();
   audio.stopMusic();
   audio.stopClip();
   hud.classList.add('hidden');
@@ -2198,6 +2472,7 @@ function openDuel() {
   if (drift.running) drift.stop();
   if (pulse.running) pulse.stop();
   if (jet.running) jet.stop();
+  if (dash.running) dash.stop();
   audio.stopMusic();
   audio.stopClip();
   hud.classList.add('hidden');
@@ -2237,6 +2512,11 @@ $('btn-hub-jet').addEventListener('click', () => {
   audio.resume();
   audio.click();
   openJetMenu();
+});
+$('btn-hub-dash').addEventListener('click', () => {
+  audio.resume();
+  audio.click();
+  openDashMenu();
 });
 $('btn-title-hub').addEventListener('click', () => {
   audio.click();
@@ -2358,6 +2638,41 @@ $('btn-jet-diff-back').addEventListener('click', () => {
   refreshJetMenu();
   showScreen('jet');
 });
+$('btn-dash-play').addEventListener('click', startDash);
+$('btn-dash-lb').addEventListener('click', () => {
+  audio.click();
+  openLeaderboard('dash', 'dash');
+});
+$('btn-dash-hub').addEventListener('click', () => {
+  audio.click();
+  showHub();
+});
+$('btn-dash-onboard').addEventListener('click', () => {
+  audio.click();
+  markDashOnboard();
+  openDashDifficulty();
+});
+$('btn-dash-onboard-skip').addEventListener('click', () => {
+  audio.click();
+  markDashOnboard();
+  openDashDifficulty();
+});
+document.querySelectorAll('#dash-diff-options .diff-chip').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    audio.click();
+    dashDifficulty = normalizeDifficulty(btn.getAttribute('data-dash-diff'));
+    syncDashDiffChips();
+  });
+});
+$('btn-dash-diff-start').addEventListener('click', () => {
+  saveDashDifficulty(dashDifficulty);
+  beginDash();
+});
+$('btn-dash-diff-back').addEventListener('click', () => {
+  audio.click();
+  refreshDashMenu();
+  showScreen('dash');
+});
 $('btn-jet-bomb').addEventListener('click', (e) => {
   e.stopPropagation();
   e.preventDefault();
@@ -2382,6 +2697,8 @@ pulse.setDifficulty(pulseDifficulty);
 pulse.resize();
 jet.setDifficulty(jetDifficulty);
 jet.resize();
+dash.setDifficulty(dashDifficulty);
+dash.resize();
 preloadPulseManifest().catch(() => {});
 if (typeof game.seedStars === 'function') game.seedStars();
 idleDraw();
@@ -2392,6 +2709,7 @@ window.__ORBIT_RUSH__ = {
   drift,
   pulse,
   jet,
+  dash,
   computeScore,
   formatFormula,
   NEAR_MISS_POINTS,
@@ -2414,6 +2732,9 @@ window.__ORBIT_RUSH__ = {
   startJet,
   beginJet,
   openJetDifficulty,
+  startDash,
+  beginDash,
+  openDashDifficulty,
   showHub,
   beginRun,
   openDifficultyPicker,
@@ -2453,6 +2774,13 @@ window.__ORBIT_RUSH__ = {
   },
   get jetDifficulty() {
     return jetDifficulty;
+  },
+  setDashDifficulty(id) {
+    saveDashDifficulty(id);
+    syncDashDiffChips();
+  },
+  get dashDifficulty() {
+    return dashDifficulty;
   },
   setSkin(id) {
     if (!skinIsUnlocked(id)) return false;
