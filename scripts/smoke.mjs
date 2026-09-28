@@ -1079,12 +1079,20 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
   const {
     DashGame,
     DASH_LANES,
+    DASH_LANES_4,
+    DASH_STAGES,
     LANE_PITCH,
     planDashRow,
     dashSpeed,
+    dashSpeedKmh,
     dashHitsLane,
+    dashLaneWorld,
+    dashBlockCount,
+    dashJumpClears,
+    pickDashKind,
     getDashDifficulty,
     formatDashFormula,
+    JUMP_SEC,
   } = await import(path.join(root, 'src', 'dash.js'));
 
   function makeDash() {
@@ -1120,13 +1128,52 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
     prev = plan.safe;
   }
 
+  let widePrev = null;
+  let wideSeed = 91;
+  const wideRnd = () => {
+    wideSeed = (wideSeed * 16807) % 2147483647;
+    return (wideSeed - 1) / 2147483646;
+  };
+  let sawOne = false;
+  let sawThree = false;
+  for (let i = 0; i < 240; i++) {
+    const plan = planDashRow(wideRnd, widePrev, i / 240, 4);
+    assert(plan.blocked.length >= 1 && plan.blocked.length <= 3, 'a 4-lane row blocks one to three lanes');
+    assert(plan.blocked.length < DASH_LANES_4.length, 'a 4-lane row never seals every lane');
+    assert(!plan.blocked.includes(plan.safe), 'the 4-lane safe lane is open');
+    assert(DASH_LANES_4.includes(plan.safe), 'the safe lane is one of the four');
+    for (const lane of plan.blocked) assert(DASH_LANES_4.includes(lane), 'blocked lanes stay on the four-lane road');
+    if (widePrev != null) assert(Math.abs(plan.safe - widePrev) <= 1, 'the 4-lane opening stays one swipe away');
+    if (plan.blocked.length === 1) sawOne = true;
+    if (plan.blocked.length === 3) sawThree = true;
+    widePrev = plan.safe;
+  }
+  assert(sawOne && sawThree, '4-lane rows use both a single block and a triple block');
+  assert(dashBlockCount(0, () => 0, 4) === 1, 'a calm 4-lane roll blocks one lane');
+  assert(dashBlockCount(1, () => 0.99, 4) === 3, 'a dense 4-lane roll blocks three lanes');
+  assert(dashBlockCount(1, () => 0, 3) === 2, 'a full 3-lane density still blocks two');
+
   const einfach = getDashDifficulty('einfach');
+  const mittel = getDashDifficulty('mittel');
+  const schwer = getDashDifficulty('schwer');
   const baba = getDashDifficulty('baba');
+  assert(einfach.lanes === 3 && mittel.lanes === 3, 'einfach and mittel stay on three lanes');
+  assert(schwer.lanes === 4 && baba.lanes === 4, 'schwer and baba use four lanes');
+  assert(einfach.speedBase === 12 && einfach.speedCap === 20, 'einfach runs 12→20 m/s');
+  assert(mittel.speedBase === 18 && mittel.speedCap === 31, 'mittel runs 18→31 m/s');
+  assert(schwer.speedBase === 22 && schwer.speedCap === 38, 'schwer runs 22→38 m/s');
+  assert(baba.speedBase === 26 && baba.speedCap === 46, 'baba runs 26→46 m/s');
   assert(einfach.speedBase < baba.speedBase, 'baba starts faster than einfach');
   assert(dashSpeed(einfach, 0, 0) === einfach.speedBase, 'opening speed is the preset base');
   assert(dashSpeed(baba, 100000, 100000) === baba.speedCap, 'speed ramp stops at the cap');
   assert(dashSpeed(einfach, 100000, 100000) <= einfach.speedCap, 'einfach cap holds');
-  assert(einfach.speedCap < getDashDifficulty('mittel').speedCap, 'caps climb with the grade');
+  assert(einfach.speedCap < mittel.speedCap && mittel.speedCap < schwer.speedCap && schwer.speedCap < baba.speedCap, 'caps climb with the grade');
+  assert(dashSpeedKmh(20) === 72 && dashSpeedKmh(0) === 0, 'HUD speed is km/h');
+  assert(DASH_STAGES.map((stage) => stage.name).join('|') === 'Neonstadt|Leerentunnel|Cyber-Gasse', 'stages run city, void, alley');
+  assert(pickDashKind(() => 0, DASH_STAGES[1], einfach) === 'low', 'the void tunnel can spawn a low wall');
+  assert(pickDashKind(() => 0.999, DASH_STAGES[2], baba) === 'crate', 'the alley can spawn a crate');
+  assert(dashJumpClears(JUMP_SEC / 2) === true, 'the jump apex clears a low wall');
+  assert(dashJumpClears(0) === false && dashJumpClears(JUMP_SEC) === false, 'standing and takeoff do not clear');
   assert(!dashHitsLane(0, 1), 'a centered runner does not touch the side lane');
   assert(dashHitsLane(0, 0), 'a centered runner hits a center blocker');
 
@@ -1134,12 +1181,24 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
   swipe.running = true;
   swipe.alive = true;
   swipe.paused = false;
-  assert(swipe.handleSwipe(0, 80) === false && swipe.lane === 0, 'a vertical swipe does not change lane');
+  assert(swipe.handleSwipe(0, 80) === false && swipe.lane === 0 && swipe.jumpT === 0, 'a downward swipe does nothing');
   assert(swipe.handleSwipe(20, 0) === false && swipe.lane === 0, 'a short swipe is ignored');
   assert(swipe.handleSwipe(40, 12) === true && swipe.lane === 1, 'one horizontal swipe steps one lane');
   assert(swipe.handleSwipe(48, 4) === false && swipe.lane === 1, 'a second swipe at the edge stays put');
   assert(swipe.nudge(-1) === true && swipe.lane === 0, 'A/D style step moves back one lane');
   assert(swipe.nudge(-1) === true && swipe.nudge(-1) === false && swipe.lane === -1, 'two steps reach the far lane and stop');
+  assert(swipe.handleSwipe(0, -40) === true && swipe.jumpT > 0, 'an upward swipe jumps');
+  assert(swipe.handleSwipe(0, -48) === false, 'a second jump while airborne does nothing');
+
+  const wide = makeDash();
+  wide.setDifficulty('schwer');
+  wide.resetState();
+  wide.running = true;
+  wide.alive = true;
+  assert(wide.laneList.length === 4 && wide.lane === -0.5, 'schwer starts on a middle lane of four');
+  assert(wide.nudge(1) && wide.lane === 0.5, 'one swipe still moves a single lane on four');
+  assert(wide.nudge(1) && wide.lane === 1.5 && wide.nudge(1) === false, 'the outer lane is the end of the road');
+  wide.stop();
 
   const crash = makeDash();
   crash.running = true;
@@ -1165,6 +1224,132 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
   crash.update(0.02);
   assert(crash.alive === false, 'a blocker in the current lane ends the run');
   crash.stop();
+
+  const hop = makeDash();
+  hop.running = true;
+  hop.alive = true;
+  hop.grace = 0;
+  hop.distance = 40;
+  hop.lane = 0;
+  hop.x = 0;
+  hop.jumpT = JUMP_SEC / 2 + 0.02;
+  hop.nextZ = 1e9;
+  hop.rows = [
+    {
+      id: 3,
+      z: 40.3,
+      blocked: [0],
+      safe: 1,
+      kind: 'low',
+      jumpable: true,
+      depth: 0.95,
+      ring: false,
+      ringTaken: false,
+      resolved: false,
+    },
+  ];
+  hop.update(0.02);
+  assert(hop.alive === true, 'a jump clears a low wall in the current lane');
+  hop.stop();
+
+  const stumble = makeDash();
+  stumble.running = true;
+  stumble.alive = true;
+  stumble.grace = 0;
+  stumble.distance = 40;
+  stumble.lane = 0;
+  stumble.x = 0;
+  stumble.jumpT = 0;
+  stumble.nextZ = 1e9;
+  stumble.rows = [
+    {
+      id: 4,
+      z: 40.3,
+      blocked: [0],
+      safe: 1,
+      kind: 'low',
+      jumpable: true,
+      depth: 0.95,
+      ring: false,
+      ringTaken: false,
+      resolved: false,
+    },
+  ];
+  stumble.update(0.02);
+  assert(stumble.alive === false && stumble.hitReason === 'Niedrige Wand', 'a low wall kills a runner who stays down');
+  stumble.stop();
+
+  const tall = makeDash();
+  tall.running = true;
+  tall.alive = true;
+  tall.grace = 0;
+  tall.distance = 40;
+  tall.lane = 0;
+  tall.x = 0;
+  tall.jumpT = JUMP_SEC / 2 + 0.02;
+  tall.nextZ = 1e9;
+  tall.rows = [
+    {
+      id: 5,
+      z: 40.3,
+      blocked: [0],
+      safe: -1,
+      kind: 'high',
+      jumpable: false,
+      depth: 1.25,
+      ring: false,
+      ringTaken: false,
+      resolved: false,
+    },
+  ];
+  tall.update(0.02);
+  assert(tall.alive === false && tall.hitReason === 'Hohe Barriere', 'a jump does not clear a high barrier');
+  tall.stop();
+
+  const box = makeDash();
+  box.running = true;
+  box.alive = true;
+  box.grace = 0;
+  box.distance = 40;
+  box.lane = 0;
+  box.x = 0;
+  box.jumpT = JUMP_SEC / 2 + 0.02;
+  box.nextZ = 1e9;
+  box.rows = [
+    {
+      id: 6,
+      z: 40.3,
+      blocked: [0],
+      safe: 1,
+      kind: 'crate',
+      jumpable: false,
+      depth: 1.15,
+      ring: false,
+      ringTaken: false,
+      resolved: false,
+    },
+  ];
+  box.update(0.02);
+  assert(box.alive === false && box.hitReason === 'Kiste', 'a jump does not clear a crate');
+  box.stop();
+
+  const staged = makeDash();
+  staged.setDifficulty('einfach');
+  staged.resetState();
+  staged.running = true;
+  staged.alive = true;
+  staged.grace = 30;
+  staged.nextZ = 1e9;
+  staged.rows = [];
+  staged.distance = staged.diff.stageLen - 0.2;
+  staged.stageNumber = 1;
+  staged.step(0.05);
+  assert(staged.stageNumber === 2 && staged.currentStage().id === 'void', 'distance opens the void tunnel');
+  assert(staged.bannerT > 1, 'a stage change flashes the German title');
+  staged.distance = staged.diff.stageLen * 3 + 5;
+  staged.step(0.02);
+  assert(staged.stageNumber === 4 && staged.currentStage().id === 'neon', 'stages loop back to the city');
+  staged.stop();
 
   const slip = makeDash();
   slip.running = true;
@@ -1230,7 +1415,7 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
       });
       if (row) {
         run.lane = row.safe;
-        run.x = row.safe * LANE_PITCH;
+        run.x = dashLaneWorld(row.safe, run.laneCount);
       }
       run.update(0.02);
       assert(run.speed <= run.diff.speedCap + 1e-6, `${id} speed stays under the cap`);
@@ -1238,10 +1423,14 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
     }
     assert(run.alive, `${id} survives when each row's open lane is taken`);
     assert(run.distance > 40, `${id} run moves forward`);
+    const maxBlocked = run.laneCount >= 4 ? 3 : 2;
     let previous = null;
     for (const row of run.rows) {
-      assert(!row.blocked.includes(row.safe) && row.blocked.length >= 1 && row.blocked.length <= 2, `${id} row leaves a lane`);
-      if (previous != null) assert(Math.abs(row.safe - previous) <= 1, `${id} safe lanes stay adjacent`);
+      assert(
+        !row.blocked.includes(row.safe) && row.blocked.length >= 1 && row.blocked.length <= maxBlocked,
+        `${id} row leaves a lane`
+      );
+      if (previous != null) assert(Math.abs(row.safe - previous) <= 1 + 1e-6, `${id} safe lanes stay adjacent`);
       previous = row.safe;
     }
     run.stop();

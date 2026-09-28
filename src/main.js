@@ -67,7 +67,7 @@ const LS_JET_DIFF = 'orbit-jet-difficulty';
 const LS_JET_ONBOARD = 'orbit-jet-onboard-v1';
 const LS_DASH_BEST_PREFIX = 'orbit-dash-best-';
 const LS_DASH_DIFF = 'orbit-dash-difficulty';
-const LS_DASH_ONBOARD = 'orbit-dash-onboard-v1';
+const LS_DASH_ONBOARD = 'orbit-dash-onboard-v2';
 const SHARE_NOTE = '(Orbit Rush — play locally / LiveCodes)';
 
 const canvas = /** @type {HTMLCanvasElement} */ ($('game'));
@@ -641,6 +641,7 @@ function setHudChrome(mode) {
   hud.classList.toggle('jet-mode', jetMode);
   hud.classList.toggle('dash-mode', dashMode);
   hud.classList.toggle('mirror-mode', mode === 'mirror');
+  $('hud-tempo')?.classList.toggle('hidden', !dashMode);
   if (!jetMode) {
     $('pwr-overdrive')?.classList.add('hidden');
     $('pwr-drone')?.classList.add('hidden');
@@ -1463,7 +1464,7 @@ const jet = new JetGame(canvas, {
 
 const dash = new DashGame(canvas, {
   audio,
-  onHud({ score, orbs, meters, combo, showHint }) {
+  onHud({ score, orbs, meters, combo, showHint, speedKmh, stageName }) {
     hudScore.textContent = String(score);
     hudOrbs.textContent = String(orbs);
     hudTime.textContent = String(Math.max(0, Math.floor(meters || 0)));
@@ -1479,9 +1480,16 @@ const dash = new DashGame(canvas, {
     pwrShield.classList.add('hidden');
     pwrSlow.classList.add('hidden');
     pwrMagnet.classList.add('hidden');
-    const grade = getDashDifficulty(dash.difficultyId).label.toUpperCase();
-    hudMode.textContent = grade;
+    const grade = getDashDifficulty(dash.difficultyId).label;
+    const stage = stageName || 'Neonstadt';
+    const tempo = Math.max(0, Math.round(Number(speedKmh) || 0));
+    hudMode.textContent = `${grade} · ${stage}`;
     hudMode.classList.remove('hidden');
+    const tempoEl = $('hud-tempo');
+    if (tempoEl) {
+      tempoEl.textContent = `Tempo ${tempo} km/h`;
+      tempoEl.classList.remove('hidden');
+    }
     touchHint.classList.toggle('hidden', !showHint);
   },
   onGameOver(result) {
@@ -1926,7 +1934,7 @@ function beginDash() {
   const grade = getDashDifficulty(dashDifficulty).label.toUpperCase();
   hudMode.textContent = grade;
   hudMode.classList.remove('hidden');
-  touchHint.textContent = 'Links/rechts wischen';
+  touchHint.textContent = 'Links/rechts Bahn · Hochwischen springt';
   touchHint.classList.add('hidden');
   touchHint.classList.remove('fade-fast');
   void touchHint.offsetWidth;

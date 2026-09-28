@@ -26,6 +26,7 @@
         </div>
         <div class="hud-mid">
           <div id="hud-mode" class="hud-mode hidden" aria-live="polite"></div>
+          <div id="hud-tempo" class="hud-tempo hidden" aria-hidden="true">Tempo 0 km/h</div>
           <div id="hud-powers" class="power-icons" aria-live="polite">
             <span id="pwr-shield" class="pwr hidden" title="Shield">🛡</span>
             <span id="pwr-slow" class="pwr hidden" title="Slow-mo">⏱</span>
@@ -158,7 +159,7 @@
               </svg>
               <span class="hub-copy">
                 <strong>ORBIT DASH</strong>
-                <span>Drei Bahnen. Links oder rechts wischen.</span>
+                <span>Bahnen wechseln. Hochwischen springt.</span>
               </span>
             </button>
           </div>
@@ -534,8 +535,8 @@
         <div class="panel dash-panel">
           <p class="eyebrow">ENDLESS RUNNER</p>
           <h1 class="logo">ORBIT<span>DASH</span></h1>
-          <p class="tagline">Drei Bahnen. Links oder rechts wischen.</p>
-          <p class="tagline">Du läufst von selbst. Barrieren, Kisten und niedrige Wände stoppen den Lauf.</p>
+          <p class="tagline">Links oder rechts eine Bahn. Hochwischen springt.</p>
+          <p class="tagline">Niedrige Wände springst du. Hohe Barrieren und Kisten stoppen den Lauf.</p>
           <p id="dash-best" class="best-line">
             Rekord (Mittel): <strong id="dash-best-val">—</strong>
           </p>
@@ -546,13 +547,16 @@
       </section>
 
       <section id="screen-dash-onboard" class="screen hidden">
-        <div class="panel onboard-panel">
-          <p class="eyebrow">BAHN WECHSELN</p>
-          <h2>Links/rechts wischen</h2>
+        <div class="panel onboard-panel dash-onboard-panel">
+          <p class="eyebrow">BAHN UND SPRUNG</p>
+          <h2>Wischen und springen</h2>
           <p class="tagline">
-            Ein Wisch schiebt dich genau eine Bahn weiter. Pfeile oder A und D machen dasselbe.
-            Du läufst von selbst. Barrieren, Kisten und niedrige Wände in deiner Bahn beenden den Lauf.
-            Mindestens eine Bahn bleibt frei. Ringe geben Extra-Punkte.
+            Ein Wisch nach links oder rechts schiebt dich genau eine Bahn weiter.
+            Hochwischen springt — niedrige Wände gehst du so aus dem Weg.
+            Hohe Barrieren und Kisten treffen dich auch in der Luft.
+            Pfeile oder A und D wechseln die Bahn. Hoch, W oder Leertaste springt.
+            Mindestens eine Bahn bleibt frei. Einfach und Mittel haben drei Bahnen, Schwer und Baba vier.
+            Ringe geben Extra-Punkte.
           </p>
           <button type="button" id="btn-dash-onboard" class="btn primary">VERSTANDEN</button>
           <button type="button" id="btn-dash-onboard-skip" class="btn ghost">SPÄTER</button>
@@ -563,23 +567,23 @@
         <div class="panel diff-panel dash-diff-panel">
           <p class="eyebrow">SCHWIERIGKEIT</p>
           <h2>WIE HART?</h2>
-          <p class="tagline diff-hint">Tempo und Dichte steigen mit der Strecke. Oben ist Schluss, damit es lesbar bleibt.</p>
+          <p class="tagline diff-hint">Tempo steigt mit der Strecke. Ab Schwer sind es vier Bahnen. Die Umgebung wechselt von selbst.</p>
           <div id="dash-diff-options" class="diff-options" role="radiogroup" aria-label="Schwierigkeit">
             <button type="button" class="diff-chip" data-dash-diff="einfach" aria-pressed="false">
               <span class="diff-label">Einfach</span>
-              <span class="diff-blurb">Langsam · weite Lücken · wenige Doppelwände</span>
+              <span class="diff-blurb">Ruhiger Start · 3 Bahnen · weite Lücken</span>
             </button>
             <button type="button" class="diff-chip" data-dash-diff="mittel" aria-pressed="true">
               <span class="diff-label">Mittel</span>
-              <span class="diff-blurb">Schneller · dichtere Bahn · mehr Kisten</span>
+              <span class="diff-blurb">Schneller · 3 Bahnen · dichtere Bahn</span>
             </button>
             <button type="button" class="diff-chip" data-dash-diff="schwer" aria-pressed="false">
               <span class="diff-label">Schwer</span>
-              <span class="diff-blurb">Hohes Tempo · enge Lücken · viele Wände</span>
+              <span class="diff-blurb">Hohes Tempo · 4 Bahnen · enge Lücken</span>
             </button>
             <button type="button" class="diff-chip baba" data-dash-diff="baba" aria-pressed="false">
               <span class="diff-label">Baba</span>
-              <span class="diff-blurb">⚠ Extrem · kaum Luft · Doppelwände</span>
+              <span class="diff-blurb">⚠ Extrem · 4 Bahnen · kaum Luft</span>
             </button>
           </div>
           <p id="dash-diff-best" class="best-line muted">Rekord auf Mittel: <strong id="dash-diff-best-val">—</strong></p>
