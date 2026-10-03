@@ -78,9 +78,33 @@ const aergerMod = await import(path.join(root, 'shared', 'aerger.js'));
 aergerMod.selfCheck();
 const paintMod = await import(path.join(root, 'src', 'paint.js'));
 assert(paintMod.selfCheck() === true, 'orbit paint rules');
-assert(paintMod.PICTURES.length >= 8 && paintMod.PICTURES.length <= 12, 'paint gallery size');
+assert(paintMod.PICTURES.length >= 20 && paintMod.PICTURES.length <= 24, 'paint gallery size');
+const paintCats = new Set(paintMod.PICTURES.map((picture) => picture.category));
+assert(
+  paintCats.has('mandala') && paintCats.has('manga') && paintCats.has('maerchen') && paintCats.has('fee'),
+  'paint categories'
+);
+assert(paintMod.PICTURES.filter((picture) => picture.category === 'fee').length >= 7, 'princess category');
+assert(paintMod.CATEGORIES[0]?.id === 'fee', 'princess category leads the gallery');
+for (const picture of paintMod.PICTURES) {
+  const json = JSON.parse(fs.readFileSync(path.join(root, 'public', 'paint', `${picture.id}.json`), 'utf8'));
+  const minRegions = picture.category === 'mandala' ? 80 : 150;
+  assert(json.regions.length === picture.regionCount, `${picture.id} region count`);
+  assert(json.regions.length >= minRegions && json.regions.length <= 450, `${picture.id} region range`);
+  assert(json.colors.length === picture.colorCount, `${picture.id} colors`);
+  const thumb = String(picture.thumb || `/paint/thumbs/${picture.id}.svg`).replace(/^\//, '');
+  assert(fs.existsSync(path.join(root, 'public', thumb.replace(/^public\//, ''))), `${picture.id} thumb`);
+  if (picture.category !== 'mandala') {
+    assert(picture.reveal && picture.ink, `${picture.id} reveal`);
+    const revealPath = path.join(root, 'public', String(picture.reveal).replace(/^\//, ''));
+    assert(fs.existsSync(revealPath), `${picture.id} reveal file`);
+    const revealSize = fs.statSync(revealPath).size;
+    assert(revealSize >= 90_000 && revealSize <= 210_000, `${picture.id} reveal size ${revealSize}`);
+  }
+}
 const paintHtml = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 assert(paintHtml.includes('btn-hub-paint') && paintHtml.includes('id="screen-paint"'), 'paint is on the hub');
+assert(paintHtml.includes('id="paint-svg"'), 'paint board is svg');
 const duelMod = await import(path.join(root, 'shared', 'duel.js'));
 duelMod.selfCheck();
 const diceMod = await import(path.join(root, 'src', 'aerger-dice.js'));

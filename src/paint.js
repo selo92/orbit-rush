@@ -1,23 +1,16 @@
 /**
- * Orbit Paint — paint-by-number pictures and rules.
- * Grids are original pixel art authored for this game (no external assets).
- * A cell's digit is its palette number (1-based). Filling only sticks when
- * the selected number matches. Progress is a 0/1 mask the UI stores locally.
+ * Orbit Paint — region paint-by-number.
+ * Pictures are original shaped regions (SVG paths), lazy-loaded from /paint.
+ * A region's number is its palette index (1-based). Filling sticks only when
+ * the selected number matches. Progress is a 0/1 mask stored locally.
  */
 import { dailyRng } from './rng.js';
+import { CATEGORIES, PICTURES } from './paint-manifest.js';
 
-/**
- * @typedef {{ hex: string, name: string }} PaintColor
- * @typedef {{
- *   id: string,
- *   title: string,
- *   difficulty: 'leicht' | 'mittel' | 'schwer',
- *   colors: PaintColor[],
- *   cols: number,
- *   rows: number,
- *   cells: Uint8Array,
- * }} PaintPicture
- */
+export { CATEGORIES, PICTURES };
+
+export const STORAGE_KEY = 'orbit-paint-v2';
+export const LEGACY_KEY = 'orbit-paint-v1';
 
 const DIFFICULTY = {
   leicht: 'Leicht',
@@ -25,407 +18,12 @@ const DIFFICULTY = {
   schwer: 'Schwer',
 };
 
-/**
- * @param {{ id: string, title: string, difficulty: 'leicht'|'mittel'|'schwer', colors: PaintColor[], rows: string[] }} spec
- * @returns {PaintPicture}
- */
-function definePicture(spec) {
-  const rows = spec.rows;
-  if (!rows.length) throw new Error(`${spec.id} has no rows`);
-  const cols = rows[0].length;
-  if (cols < 8 || rows.length < 8) throw new Error(`${spec.id} is too small`);
-  const cells = new Uint8Array(cols * rows.length);
-  for (let y = 0; y < rows.length; y++) {
-    const row = rows[y];
-    if (row.length !== cols) {
-      throw new Error(`${spec.id} row ${y} is ${row.length}, expected ${cols}`);
-    }
-    for (let x = 0; x < cols; x++) {
-      const n = row.charCodeAt(x) - 48;
-      if (n < 1 || n > spec.colors.length) {
-        throw new Error(`${spec.id} bad color '${row[x]}' at ${x},${y}`);
-      }
-      cells[y * cols + x] = n;
-    }
-  }
-  const used = new Set(cells);
-  for (let n = 1; n <= spec.colors.length; n++) {
-    if (!used.has(n)) throw new Error(`${spec.id} never uses color ${n}`);
-  }
-  for (const color of spec.colors) {
-    if (!/^#[0-9a-fA-F]{6}$/.test(color.hex)) {
-      throw new Error(`${spec.id} bad hex ${color.hex}`);
-    }
-  }
-  if (!DIFFICULTY[spec.difficulty]) throw new Error(`${spec.id} bad difficulty`);
-  return Object.freeze({
-    id: spec.id,
-    title: spec.title,
-    difficulty: spec.difficulty,
-    colors: Object.freeze(spec.colors.map((color) => Object.freeze({ ...color }))),
-    cols,
-    rows: rows.length,
-    cells,
-  });
-}
-
-/** @type {PaintPicture[]} */
-export const PICTURES = Object.freeze([
-  definePicture({
-    id: 'herz',
-    title: 'Herz',
-    difficulty: 'leicht',
-    colors: [
-      { hex: '#140818', name: 'Nacht' },
-      { hex: '#ff2b6a', name: 'Herz' },
-      { hex: '#ffd0e4', name: 'Glanz' },
-    ],
-    rows: [
-      '111111111111',
-      '112211112211',
-      '122321222221',
-      '122222222221',
-      '122222222221',
-      '112222222211',
-      '111222222111',
-      '111122221111',
-      '111112211111',
-      '111111211111',
-      '111111111111',
-      '111111111111',
-    ],
-  }),
-  definePicture({
-    id: 'mond',
-    title: 'Mond',
-    difficulty: 'leicht',
-    colors: [
-      { hex: '#070714', name: 'All' },
-      { hex: '#d8e8ff', name: 'Stern' },
-      { hex: '#6e6e9a', name: 'Schatten' },
-      { hex: '#f4f1ff', name: 'Mond' },
-    ],
-    rows: [
-      '111111111111',
-      '111144441111',
-      '111444444211',
-      '114444433311',
-      '144444333111',
-      '144443331111',
-      '144444333111',
-      '114444433311',
-      '111444444111',
-      '111144441111',
-      '111111211111',
-      '111111111111',
-    ],
-  }),
-  definePicture({
-    id: 'pilz',
-    title: 'Pilz',
-    difficulty: 'leicht',
-    colors: [
-      { hex: '#1a1030', name: 'Himmel' },
-      { hex: '#1e8a45', name: 'Wiese' },
-      { hex: '#f3e2c4', name: 'Stiel' },
-      { hex: '#e23a4a', name: 'Hut' },
-      { hex: '#fff4ea', name: 'Tupfen' },
-    ],
-    rows: [
-      '111111111111',
-      '111144444111',
-      '111445544411',
-      '114455445541',
-      '144444444441',
-      '144444444441',
-      '111444444111',
-      '111113331111',
-      '111113331111',
-      '111113331111',
-      '111113331111',
-      '112222222211',
-      '122222222221',
-      '222222222222',
-    ],
-  }),
-  definePicture({
-    id: 'sonne',
-    title: 'Sonne',
-    difficulty: 'leicht',
-    colors: [
-      { hex: '#100818', name: 'All' },
-      { hex: '#ff7a32', name: 'Strahlen' },
-      { hex: '#ffd24a', name: 'Sonne' },
-      { hex: '#fff3b0', name: 'Kern' },
-    ],
-    rows: [
-      '1111111111111111',
-      '1111111212111111',
-      '1111112222111111',
-      '1111123333211111',
-      '1121233443321211',
-      '1112334444332111',
-      '1223344444433221',
-      '1123344444433211',
-      '1112334444332111',
-      '1121233443321211',
-      '1111123333211111',
-      '1111112222111111',
-      '1111111212111111',
-      '1111111111111111',
-      '1111111111111111',
-      '1111111111111111',
-    ],
-  }),
-  definePicture({
-    id: 'rakete',
-    title: 'Rakete',
-    difficulty: 'mittel',
-    colors: [
-      { hex: '#12082a', name: 'Himmel' },
-      { hex: '#ffb15a', name: 'Flamme' },
-      { hex: '#fff1a8', name: 'Feuer' },
-      { hex: '#e8eef8', name: 'Rumpf' },
-      { hex: '#3ec8ff', name: 'Fenster' },
-      { hex: '#ff2bd6', name: 'Flosse' },
-    ],
-    rows: [
-      '111111111111',
-      '111111441111',
-      '111114444111',
-      '111144444411',
-      '111145544111',
-      '111145544111',
-      '111144444411',
-      '111144444411',
-      '111144444411',
-      '116644444661',
-      '166444444661',
-      '111144444111',
-      '111113333111',
-      '111112222111',
-      '111111221111',
-      '111111111111',
-    ],
-  }),
-  definePicture({
-    id: 'fisch',
-    title: 'Fisch',
-    difficulty: 'mittel',
-    colors: [
-      { hex: '#062033', name: 'Wasser' },
-      { hex: '#1a6a8a', name: 'Schimmer' },
-      { hex: '#ff8a3a', name: 'Körper' },
-      { hex: '#ffe0a8', name: 'Bauch' },
-      { hex: '#ff4d9a', name: 'Flosse' },
-      { hex: '#141018', name: 'Auge' },
-    ],
-    rows: [
-      '1111111111111111',
-      '1121111111111211',
-      '1111115533331111',
-      '1111153333333111',
-      '1115333336333311',
-      '1153333333334411',
-      '1133333333344411',
-      '1115333333333111',
-      '1111153333331111',
-      '1111111551111111',
-      '1121111111111211',
-      '2222222222222222',
-    ],
-  }),
-  definePicture({
-    id: 'komet',
-    title: 'Komet',
-    difficulty: 'mittel',
-    colors: [
-      { hex: '#080818', name: 'All' },
-      { hex: '#9ad7ff', name: 'Stern' },
-      { hex: '#3a2068', name: 'Schweif' },
-      { hex: '#c9b6ff', name: 'Licht' },
-      { hex: '#fff6c8', name: 'Kern' },
-    ],
-    rows: [
-      '1111111111111111',
-      '1111111111111411',
-      '1111111111114411',
-      '1111111111144411',
-      '1111111111444111',
-      '1111111133444111',
-      '1111113344451111',
-      '1111334445111111',
-      '1113344411111111',
-      '1133441111112111',
-      '1334111111111111',
-      '1341111111111111',
-      '1111111111111111',
-      '1112111111111211',
-    ],
-  }),
-  definePicture({
-    id: 'orbit',
-    title: 'Orbit',
-    difficulty: 'mittel',
-    colors: [
-      { hex: '#070714', name: 'All' },
-      { hex: '#c9e7ff', name: 'Stern' },
-      { hex: '#4a2078', name: 'Schatten' },
-      { hex: '#c44bff', name: 'Planet' },
-      { hex: '#ffb0f0', name: 'Glanz' },
-      { hex: '#5cefff', name: 'Ring' },
-    ],
-    rows: [
-      '111111111111111111',
-      '111111111211111111',
-      '111111666666111111',
-      '111166666666661111',
-      '111663344443366111',
-      '116664455544466611',
-      '166644555554446661',
-      '166644444444446661',
-      '116664444444466611',
-      '111663344443366111',
-      '111166666666661111',
-      '111111666666111111',
-      '111111111111111111',
-      '111211111111111211',
-    ],
-  }),
-  definePicture({
-    id: 'blume',
-    title: 'Blume',
-    difficulty: 'mittel',
-    colors: [
-      { hex: '#140818', name: 'Nacht' },
-      { hex: '#3dff9a', name: 'Blatt' },
-      { hex: '#1f8a4a', name: 'Stiel' },
-      { hex: '#ff4fa3', name: 'Blüte' },
-      { hex: '#ffd0ea', name: 'Hell' },
-      { hex: '#ffe566', name: 'Mitte' },
-    ],
-    rows: [
-      '1111111111111111',
-      '1111114444111111',
-      '1111144554411111',
-      '1111445555441111',
-      '1111446666441111',
-      '1144446666444411',
-      '1455446666445541',
-      '1455444444445541',
-      '1144444333444411',
-      '1111144333441111',
-      '1111114334111111',
-      '1111112332111111',
-      '1111122222211111',
-      '1111221111221111',
-      '1112211111122111',
-      '1122111111112211',
-    ],
-  }),
-  definePicture({
-    id: 'alien',
-    title: 'Alien',
-    difficulty: 'mittel',
-    colors: [
-      { hex: '#090614', name: 'All' },
-      { hex: '#7dff6a', name: 'Haut' },
-      { hex: '#24963a', name: 'Schatten' },
-      { hex: '#f4fff0', name: 'Auge' },
-      { hex: '#140818', name: 'Pupille' },
-      { hex: '#ff4ad8', name: 'Fühler' },
-      { hex: '#1a1028', name: 'Mund' },
-    ],
-    rows: [
-      '1111111111111111',
-      '1111116161111111',
-      '1111116261111111',
-      '1111112221111111',
-      '1111122222111111',
-      '1111222222211111',
-      '1112244224422111',
-      '1112255225522111',
-      '1111222222211111',
-      '1111222772211111',
-      '1111122222211111',
-      '1111122222211111',
-      '1111112222111111',
-      '1111132222311111',
-      '1111111111111111',
-      '1111111111111111',
-    ],
-  }),
-  definePicture({
-    id: 'katze',
-    title: 'Katze',
-    difficulty: 'schwer',
-    colors: [
-      { hex: '#160818', name: 'Nacht' },
-      { hex: '#ffb15a', name: 'Fell' },
-      { hex: '#c46a22', name: 'Streifen' },
-      { hex: '#ff6a8a', name: 'Ohr' },
-      { hex: '#1a1020', name: 'Auge' },
-      { hex: '#fff6d0', name: 'Glanz' },
-      { hex: '#ff4d6d', name: 'Nase' },
-      { hex: '#ffe6c4', name: 'Brust' },
-    ],
-    rows: [
-      '11111111111111111111',
-      '11112211111111122111',
-      '11114221111111242111',
-      '11112221111111222111',
-      '11112222222222222111',
-      '11112225622265222111',
-      '11112222277222222111',
-      '11112222222222222111',
-      '11112228888822222111',
-      '11111222222222221111',
-      '11111223333332221111',
-      '11111122333322211111',
-      '11111112222222111111',
-      '11111112211222111111',
-      '11111113311331111111',
-      '11111111111111111111',
-    ],
-  }),
-  definePicture({
-    id: 'station',
-    title: 'Station',
-    difficulty: 'schwer',
-    colors: [
-      { hex: '#070714', name: 'All' },
-      { hex: '#c9dcff', name: 'Stern' },
-      { hex: '#5c6c80', name: 'Rumpf' },
-      { hex: '#d5e2ee', name: 'Hülle' },
-      { hex: '#3ad7ff', name: 'Fenster' },
-      { hex: '#ffd24a', name: 'Solar' },
-      { hex: '#ff2bd6', name: 'Bake' },
-    ],
-    rows: [
-      '11111111111111111111',
-      '11111111117111111111',
-      '11111111114111111111',
-      '11666611144411166661',
-      '16666644444444666611',
-      '11111114455441111111',
-      '11111114444441111111',
-      '11111111444411111111',
-      '11111111333311111111',
-      '11111111141111111111',
-      '11121111111111111211',
-      '11111111111111111111',
-      '11111111111111111111',
-      '11111111112111111111',
-      '11111111111111111111',
-      '11111111111111111111',
-    ],
-  }),
-]);
-
-export const STORAGE_KEY = 'orbit-paint-v1';
-
 export function difficultyLabel(id) {
   return DIFFICULTY[id] || id;
+}
+
+export function categoryLabel(id) {
+  return CATEGORIES.find((entry) => entry.id === id)?.title || id;
 }
 
 /** @param {string} id */
@@ -433,10 +31,16 @@ export function pictureById(id) {
   return PICTURES.find((picture) => picture.id === id) || null;
 }
 
+/** @param {{ regions?: unknown[], regionCount?: number }} picture */
+export function regionCountOf(picture) {
+  if (picture?.regions) return picture.regions.length;
+  return picture?.regionCount || 0;
+}
+
 /**
  * Bild des Tages: stable pick from the built-in gallery for a UTC date.
  * @param {string} dateStr YYYY-MM-DD
- * @param {readonly PaintPicture[]} [list]
+ * @param {readonly {id: string}[]} [list]
  */
 export function dailyPicture(dateStr, list = PICTURES) {
   const rng = dailyRng(`orbit-paint:${dateStr}`);
@@ -464,120 +68,57 @@ export function formatDuration(ms) {
 }
 
 /**
- * Faster than a relaxed par (0.8s per cell) scores above 1000.
+ * Faster than a relaxed par (0.8s per region) scores above 1000.
  * @param {number} elapsedMs
- * @param {number} cells
+ * @param {number} regions
  */
-export function completionScore(elapsedMs, cells) {
+export function completionScore(elapsedMs, regions) {
   const ms = Math.max(1000, Math.floor(Number(elapsedMs) || 0));
-  const par = Math.max(1, Math.floor(cells)) * 800;
+  const par = Math.max(1, Math.floor(regions)) * 800;
   return Math.max(50, Math.min(9999, Math.round((par / ms) * 1000)));
 }
 
 /**
- * @param {number} x0
- * @param {number} y0
- * @param {number} x1
- * @param {number} y1
- */
-export function lineCells(x0, y0, x1, y1) {
-  /** @type {{x:number,y:number}[]} */
-  const cells = [];
-  let x = x0 | 0;
-  let y = y0 | 0;
-  const tx = x1 | 0;
-  const ty = y1 | 0;
-  const dx = Math.abs(tx - x);
-  const dy = Math.abs(ty - y);
-  const sx = x < tx ? 1 : -1;
-  const sy = y < ty ? 1 : -1;
-  let err = dx - dy;
-  for (;;) {
-    cells.push({ x, y });
-    if (x === tx && y === ty) break;
-    const e2 = 2 * err;
-    if (e2 > -dy) {
-      err -= dy;
-      x += sx;
-    }
-    if (e2 < dx) {
-      err += dx;
-      y += sy;
-    }
-    if (cells.length > 4096) break;
-  }
-  return cells;
-}
-
-/**
- * @param {PaintPicture} picture
+ * @param {{ regions: { n: number }[] }} picture
  * @param {Uint8Array} filled
- * @param {number} x
- * @param {number} y
+ * @param {number} index
  * @param {number} color
  * @returns {'painted'|'filled'|'wrong'|'out'}
  */
-export function paintCell(picture, filled, x, y, color) {
-  if (x < 0 || y < 0 || x >= picture.cols || y >= picture.rows) return 'out';
-  const i = y * picture.cols + x;
-  if (filled[i]) return 'filled';
-  if (picture.cells[i] !== color) return 'wrong';
-  filled[i] = 1;
+export function paintRegion(picture, filled, index, color) {
+  if (!picture?.regions || index < 0 || index >= picture.regions.length) return 'out';
+  if (filled[index]) return 'filled';
+  if (picture.regions[index].n !== color) return 'wrong';
+  filled[index] = 1;
   return 'painted';
 }
 
-/**
- * @param {PaintPicture} picture
- * @param {Uint8Array} filled
- * @param {number} x0
- * @param {number} y0
- * @param {number} x1
- * @param {number} y1
- * @param {number} color
- */
-export function applyStroke(picture, filled, x0, y0, x1, y1, color) {
-  let painted = 0;
-  let wrong = 0;
-  /** @type {{x:number,y:number}[]} */
-  const wrongCells = [];
-  for (const cell of lineCells(x0, y0, x1, y1)) {
-    const result = paintCell(picture, filled, cell.x, cell.y, color);
-    if (result === 'painted') painted += 1;
-    else if (result === 'wrong') {
-      wrong += 1;
-      wrongCells.push(cell);
-    }
+/** @param {{ regions: { n: number }[] }} picture @param {Uint8Array} filled @param {number} color */
+export function colorDone(picture, filled, color) {
+  let any = false;
+  for (let i = 0; i < picture.regions.length; i++) {
+    if (picture.regions[i].n !== color) continue;
+    any = true;
+    if (!filled[i]) return false;
   }
-  return {
-    painted,
-    wrong,
-    wrongCells,
-    colorDone: colorDone(picture, filled, color),
-    pictureDone: isComplete(picture, filled),
-  };
+  return any;
 }
 
-/** @param {PaintPicture} picture @param {Uint8Array} filled @param {number} color */
-export function colorDone(picture, filled, color) {
-  for (let i = 0; i < picture.cells.length; i++) {
-    if (picture.cells[i] === color && !filled[i]) return false;
-  }
+/** @param {{ regions?: { n: number }[], regionCount?: number }} picture @param {Uint8Array} filled */
+export function isComplete(picture, filled) {
+  const len = regionCountOf(picture);
+  if (!filled || filled.length !== len || !len) return false;
+  for (let i = 0; i < len; i++) if (!filled[i]) return false;
   return true;
 }
 
-/** @param {PaintPicture} picture @param {Uint8Array} filled */
-export function isComplete(picture, filled) {
-  if (!filled || filled.length !== picture.cells.length) return false;
-  for (let i = 0; i < filled.length; i++) if (!filled[i]) return false;
-  return picture.cells.length > 0;
-}
-
-/** @param {PaintPicture} picture @param {Uint8Array} filled */
+/** @param {{ colors: { hex: string, name: string }[], regions: { n: number }[] }} picture @param {Uint8Array} filled */
 export function colorProgress(picture, filled) {
   const totals = new Uint16Array(picture.colors.length);
   const done = new Uint16Array(picture.colors.length);
-  for (let i = 0; i < picture.cells.length; i++) {
-    const k = picture.cells[i] - 1;
+  for (let i = 0; i < picture.regions.length; i++) {
+    const k = picture.regions[i].n - 1;
+    if (k < 0 || k >= totals.length) continue;
     totals[k] += 1;
     if (filled[i]) done[k] += 1;
   }
@@ -591,17 +132,17 @@ export function colorProgress(picture, filled) {
   }));
 }
 
-/** @param {PaintPicture} picture @param {Uint8Array} filled */
+/** @param {{ regions?: unknown[], regionCount?: number }} picture @param {Uint8Array} filled */
 export function filledCount(picture, filled) {
   let n = 0;
-  const len = Math.min(picture.cells.length, filled.length);
+  const len = Math.min(regionCountOf(picture), filled?.length || 0);
   for (let i = 0; i < len; i++) if (filled[i]) n += 1;
   return n;
 }
 
 /**
- * Next hint cell for a color, in reading order, wrapping after `after`.
- * @param {PaintPicture} picture
+ * Next open region of a color, in picture order, wrapping after `after`.
+ * @param {{ regions: { n: number, x: number, y: number }[] }} picture
  * @param {Uint8Array} filled
  * @param {number} color
  * @param {number} [after]
@@ -609,20 +150,17 @@ export function filledCount(picture, filled) {
 export function hintTarget(picture, filled, color, after = -1) {
   /** @type {number[]} */
   const open = [];
-  for (let i = 0; i < picture.cells.length; i++) {
-    if (picture.cells[i] === color && !filled[i]) open.push(i);
+  for (let i = 0; i < picture.regions.length; i++) {
+    if (picture.regions[i].n === color && !filled[i]) open.push(i);
   }
   if (!open.length) return null;
   const next = open.find((i) => i > after);
   const index = next == null ? open[0] : next;
-  return {
-    index,
-    x: index % picture.cols,
-    y: Math.floor(index / picture.cols),
-  };
+  const region = picture.regions[index];
+  return { index, x: region.x, y: region.y };
 }
 
-/** @param {PaintPicture} picture @param {Uint8Array} filled @param {number} [prefer] */
+/** @param {{ colors: { hex: string, name: string }[], regions: { n: number }[] }} picture @param {Uint8Array} filled @param {number} [prefer] */
 export function firstOpenColor(picture, filled, prefer = 0) {
   const progress = colorProgress(picture, filled);
   if (prefer) {
@@ -653,30 +191,41 @@ export function stringToMask(str, length) {
 }
 
 export function emptyStore() {
-  return { v: 1, pics: {} };
+  return { v: 2, pics: {} };
 }
 
-/** @param {string | null | undefined} raw */
+/** v1 tile masks are a different picture model and are ignored. */
 export function parseStore(raw) {
   if (!raw || typeof raw !== 'string') return emptyStore();
   try {
     const data = JSON.parse(raw);
-    if (!data || typeof data !== 'object' || !data.pics || typeof data.pics !== 'object') {
-      return emptyStore();
-    }
-    return { v: 1, pics: data.pics };
+    if (!data || data.v !== 2 || !data.pics || typeof data.pics !== 'object') return emptyStore();
+    return { v: 2, pics: data.pics };
   } catch {
     return emptyStore();
   }
 }
 
+/** True when the retired tile save actually painted something. */
+export function legacyHasProgress(raw) {
+  if (!raw || typeof raw !== 'string') return false;
+  try {
+    const data = JSON.parse(raw);
+    const pics = data?.pics;
+    if (!pics || typeof pics !== 'object') return false;
+    return Object.values(pics).some((slot) => typeof slot?.mask === 'string' && slot.mask.includes('1'));
+  } catch {
+    return false;
+  }
+}
+
 /**
  * @param {ReturnType<typeof emptyStore>} store
- * @param {PaintPicture} picture
+ * @param {{ id: string, regions?: unknown[], regionCount?: number }} picture
  */
 export function readPictureState(store, picture) {
   const slot = store?.pics?.[picture.id];
-  const len = picture.cols * picture.rows;
+  const len = regionCountOf(picture);
   const mask = stringToMask(slot?.mask, len) || new Uint8Array(len);
   const elapsedMs = Math.max(0, Math.floor(Number(slot?.elapsedMs) || 0));
   const bestMs = slot?.bestMs == null ? null : Math.max(0, Math.floor(Number(slot.bestMs)));
@@ -692,12 +241,12 @@ export function readPictureState(store, picture) {
 
 /**
  * @param {ReturnType<typeof emptyStore>} store
- * @param {PaintPicture} picture
+ * @param {{ id: string }} picture
  * @param {{ mask: Uint8Array, elapsedMs: number, bestMs: number | null, bestScore: number | null }} state
  */
 export function writePictureState(store, picture, state) {
   return {
-    v: 1,
+    v: 2,
     pics: {
       ...store.pics,
       [picture.id]: {
@@ -712,11 +261,11 @@ export function writePictureState(store, picture, state) {
 
 /**
  * @param {{ elapsedMs: number, bestMs: number | null, bestScore: number | null }} state
- * @param {PaintPicture} picture
+ * @param {{ regions?: unknown[], regionCount?: number }} picture
  */
 export function finishState(state, picture) {
   const elapsedMs = Math.max(0, Math.floor(state.elapsedMs || 0));
-  const score = completionScore(elapsedMs, picture.cols * picture.rows);
+  const score = completionScore(elapsedMs, regionCountOf(picture));
   const previous = state.bestMs;
   const isBest = previous == null || elapsedMs <= previous;
   const bestMs = previous == null ? elapsedMs : Math.min(previous, elapsedMs);
@@ -724,81 +273,91 @@ export function finishState(state, picture) {
   return { elapsedMs, score, bestMs, bestScore, isBest };
 }
 
+function probePicture() {
+  return {
+    id: 'probe',
+    title: 'Probe',
+    category: 'mandala',
+    difficulty: 'leicht',
+    regionCount: 4,
+    colors: [
+      { hex: '#112233', name: 'A' },
+      { hex: '#445566', name: 'B' },
+    ],
+    regions: [
+      { n: 1, d: 'M0 0 Z', x: 10, y: 12, r: 8 },
+      { n: 1, d: 'M1 0 Z', x: 30, y: 12, r: 8 },
+      { n: 2, d: 'M2 0 Z', x: 50, y: 12, r: 8 },
+      { n: 1, d: 'M3 0 Z', x: 70, y: 12, r: 8 },
+    ],
+  };
+}
+
 export function selfCheck() {
-  if (PICTURES.length < 8 || PICTURES.length > 12) {
-    throw new Error(`expected 8–12 pictures, got ${PICTURES.length}`);
+  if (PICTURES.length < 20 || PICTURES.length > 24) {
+    throw new Error(`expected 20–24 pictures, got ${PICTURES.length}`);
   }
   const ids = new Set();
+  const cats = new Set();
   for (const picture of PICTURES) {
     if (ids.has(picture.id)) throw new Error(`duplicate ${picture.id}`);
     ids.add(picture.id);
-    if (picture.cells.length !== picture.cols * picture.rows) {
-      throw new Error(`${picture.id} cell count`);
+    cats.add(picture.category);
+    if (!DIFFICULTY[picture.difficulty]) throw new Error(`${picture.id} difficulty`);
+    const minRegions = picture.category === 'mandala' ? 80 : 150;
+    if (picture.regionCount < minRegions || picture.regionCount > 450) {
+      throw new Error(`${picture.id} region count ${picture.regionCount}`);
     }
-    const progress = colorProgress(picture, new Uint8Array(picture.cells.length));
-    if (progress.some((entry) => entry.done !== 0 || entry.total < 1)) {
-      throw new Error(`${picture.id} empty color`);
+    if (!picture.thumb) throw new Error(`${picture.id} thumb`);
+    if (picture.category !== 'mandala' && !picture.reveal) {
+      throw new Error(`${picture.id} reveal`);
     }
+    if (picture.colorCount < 6) throw new Error(`${picture.id} palette`);
+    const box = String(picture.viewBox).split(/[\s,]+/).map(Number);
+    if (!(box[2] > 0) || !(box[3] > 0)) throw new Error(`${picture.id} viewBox`);
+  }
+  if (!cats.has('mandala') || !cats.has('manga') || !cats.has('maerchen') || !cats.has('fee')) {
+    throw new Error('missing a picture category');
   }
 
-  const herz = pictureById('herz');
-  if (!herz) throw new Error('missing herz');
-  const filled = new Uint8Array(herz.cells.length);
-  const bg = herz.cells[0];
-  let other = -1;
-  let otherAt = 0;
-  for (let i = 0; i < herz.cells.length; i++) {
-    if (herz.cells[i] !== bg) {
-      other = herz.cells[i];
-      otherAt = i;
-      break;
-    }
-  }
-  const ox = otherAt % herz.cols;
-  const oy = Math.floor(otherAt / herz.cols);
-  if (paintCell(herz, filled, ox, oy, bg) !== 'wrong') throw new Error('wrong number must not fill');
-  if (filled[otherAt] !== 0) throw new Error('wrong fill stuck');
-  if (paintCell(herz, filled, ox, oy, other) !== 'painted') throw new Error('matching number fills');
-  if (paintCell(herz, filled, ox, oy, other) !== 'filled') throw new Error('second tap stays filled');
-  if (paintCell(herz, filled, -1, 0, bg) !== 'out') throw new Error('outside is out');
+  const probe = probePicture();
+  const filled = new Uint8Array(probe.regions.length);
+  if (paintRegion(probe, filled, 2, 1) !== 'wrong') throw new Error('wrong number must not fill');
+  if (filled[2] !== 0) throw new Error('wrong fill stuck');
+  if (paintRegion(probe, filled, 2, 2) !== 'painted') throw new Error('matching number fills');
+  if (paintRegion(probe, filled, 2, 2) !== 'filled') throw new Error('second tap stays filled');
+  if (paintRegion(probe, filled, -1, 1) !== 'out') throw new Error('outside is out');
+  if (paintRegion(probe, filled, 99, 1) !== 'out') throw new Error('high index is out');
 
-  const run = new Uint8Array(herz.cells.length);
-  const stroke = applyStroke(herz, run, 0, 0, herz.cols - 1, 0, herz.cells[0]);
-  if (stroke.painted < 2) throw new Error('drag paints a run of the selected number');
-  if (run.some((bit, i) => bit && herz.cells[i] !== herz.cells[0])) {
-    throw new Error('stroke leaked into another number');
+  const run = new Uint8Array(probe.regions.length);
+  if (paintRegion(probe, run, 0, 1) !== 'painted') throw new Error('drag start');
+  if (paintRegion(probe, run, 1, 1) !== 'painted') throw new Error('drag continues on the same number');
+  if (paintRegion(probe, run, 2, 1) !== 'wrong') throw new Error('drag does not leak');
+  if (!colorDone(probe, run, 1)) {
+    if (paintRegion(probe, run, 3, 1) !== 'painted') throw new Error('last cell of a color');
   }
+  if (!colorDone(probe, run, 1)) throw new Error('color completes');
+  if (colorDone(probe, run, 2)) throw new Error('other color still open');
 
-  const all = new Uint8Array(herz.cells.length);
+  const all = new Uint8Array(probe.regions.length);
   for (let i = 0; i < all.length; i++) {
-    const x = i % herz.cols;
-    const y = Math.floor(i / herz.cols);
-    if (paintCell(herz, all, x, y, herz.cells[i]) !== 'painted') throw new Error('full fill');
+    if (paintRegion(probe, all, i, probe.regions[i].n) !== 'painted') throw new Error('full fill');
   }
-  if (!isComplete(herz, all)) throw new Error('complete picture');
-  const doneProg = colorProgress(herz, all);
-  if (!doneProg.every((entry) => entry.complete)) throw new Error('every color completes');
+  if (!isComplete(probe, all)) throw new Error('complete picture');
+  if (!colorProgress(probe, all).every((entry) => entry.complete)) throw new Error('every color completes');
 
-  const partial = new Uint8Array(herz.cells.length);
-  const hintA = hintTarget(herz, partial, 1, -1);
-  const hintB = hintTarget(herz, partial, 1, hintA.index);
+  const partial = new Uint8Array(probe.regions.length);
+  const hintA = hintTarget(probe, partial, 1, -1);
+  const hintB = hintTarget(probe, partial, 1, hintA.index);
   if (!hintA || !hintB || hintB.index <= hintA.index) throw new Error('hint walks forward');
+  if (hintA.x !== probe.regions[hintA.index].x) throw new Error('hint uses the region label');
   partial[hintA.index] = 1;
-  const hintC = hintTarget(herz, partial, 1, hintA.index);
-  if (!hintC || hintC.index === hintA.index) throw new Error('hint skips filled cells');
-  if (firstOpenColor(herz, all, 1) !== 1 && colorDone(herz, all, 1)) {
-    /* color 1 is done; first open falls through to color 1 only if none remain */
-  }
-  if (firstOpenColor(herz, all) !== 1) throw new Error('finished picture keeps a color');
-  const fresh = new Uint8Array(herz.cells.length);
+  const hintC = hintTarget(probe, partial, 1, hintA.index);
+  if (!hintC || hintC.index === hintA.index) throw new Error('hint skips filled regions');
+  if (firstOpenColor(probe, all) !== 1) throw new Error('finished picture keeps a color');
+  const fresh = new Uint8Array(probe.regions.length);
   fresh[0] = 1;
-  if (colorDone(herz, fresh, herz.cells[0])) {
-    /* only if color 0's cell count is 1, which it is not */
-    throw new Error('one cell does not finish a color');
-  }
-
-  if (lineCells(0, 0, 2, 0).length !== 3) throw new Error('horizontal line');
-  if (lineCells(0, 0, 0, 0).length !== 1) throw new Error('point line');
+  if (colorDone(probe, fresh, 1)) throw new Error('one region does not finish a color');
 
   const fast = completionScore(20_000, 100);
   const slow = completionScore(60_000, 100);
@@ -818,22 +377,29 @@ export function selfCheck() {
   if (stringToMask('2'.repeat(all.length), all.length) !== null) throw new Error('bad mask rejected');
 
   let store = emptyStore();
-  store = writePictureState(store, herz, {
+  store = writePictureState(store, probe, {
     mask: all,
     elapsedMs: 12_000,
     bestMs: 12_000,
-    bestScore: completionScore(12_000, herz.cells.length),
+    bestScore: completionScore(12_000, probe.regions.length),
   });
-  const read = readPictureState(store, herz);
+  const read = readPictureState(store, probe);
   if (!read.done || read.elapsedMs !== 12_000 || read.bestMs !== 12_000) throw new Error('state roundtrip');
-  const finished = finishState({ elapsedMs: 20_000, bestMs: 12_000, bestScore: 100 }, herz);
+  const finished = finishState({ elapsedMs: 20_000, bestMs: 12_000, bestScore: 100 }, probe);
   if (finished.isBest || finished.bestMs !== 12_000) throw new Error('slower run keeps the best time');
-  const better = finishState({ elapsedMs: 9_000, bestMs: 12_000, bestScore: 100 }, herz);
+  const better = finishState({ elapsedMs: 9_000, bestMs: 12_000, bestScore: 100 }, probe);
   if (!better.isBest || better.bestMs !== 9_000 || !(better.score > 100)) throw new Error('faster run is a best');
-  if (readPictureState(parseStore('{'), herz).done) throw new Error('bad json is an empty picture');
-  if (readPictureState(parseStore('{"pics":{"herz":{"mask":"nope"}}}'), herz).mask[0] !== 0) {
+  if (readPictureState(parseStore('{'), probe).done) throw new Error('bad json is an empty picture');
+  if (readPictureState(parseStore('{"v":2,"pics":{"probe":{"mask":"nope"}}}'), probe).mask[0] !== 0) {
     throw new Error('corrupt mask is ignored');
   }
+  const v1 = '{"v":1,"pics":{"herz":{"mask":"1111","elapsedMs":9}}}';
+  if (readPictureState(parseStore(v1), probe).mask.some((bit) => bit)) {
+    throw new Error('v1 tile progress is not imported');
+  }
+  if (!legacyHasProgress(v1)) throw new Error('v1 progress is detectable');
+  if (legacyHasProgress('{"v":1,"pics":{"herz":{"mask":"0000"}}}')) throw new Error('blank v1 is not progress');
+  if (legacyHasProgress('{')) throw new Error('broken legacy is ignored');
 
   return true;
 }
