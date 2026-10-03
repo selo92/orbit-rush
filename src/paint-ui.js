@@ -92,6 +92,7 @@ export function mountPaint({ onHub, audio }) {
       /** @type {{x:number,y:number} | null} */
       last: null,
       wrongNoted: false,
+      advanced: false,
     };
   }
 
@@ -277,7 +278,10 @@ export function mountPaint({ onHub, audio }) {
       requestDraw();
     }
     if (result.pictureDone) celebrate();
-    else if (result.painted > 0) requestDraw();
+    else if (result.colorDone && result.painted > 0 && !gesture.advanced) {
+      gesture.advanced = true;
+      selectNext();
+    } else if (result.painted > 0 || result.wrong > 0) requestDraw();
   }
 
   function selectColor(n, userPick) {
@@ -353,7 +357,13 @@ export function mountPaint({ onHub, audio }) {
     if (name) name.textContent = picture.title;
     const open = colorProgress(picture, filled).find((entry) => entry.n === selected);
     const left = open ? open.total - open.done : 0;
-    if (meta) meta.textContent = doneFlag ? 'Fertig' : `${pct}% · noch ${left}`;
+    if (meta) {
+      meta.textContent = doneFlag
+        ? 'Fertig'
+        : left === 0
+          ? `${pct}% · Farbe ${selected} fertig`
+          : `${pct}% · Farbe ${selected} noch ${left}`;
+    }
     if (time) time.textContent = formatDuration(displayMs());
     canvas.setAttribute('aria-label', `${picture.title}, Malen nach Zahlen`);
   }
@@ -449,7 +459,7 @@ export function mountPaint({ onHub, audio }) {
         const hex = picture.colors[n - 1].hex;
         const on = clean || filled[i] === 1;
         if (on) ctx.fillStyle = hex;
-        else if (n === selected) ctx.fillStyle = hexToRgba(hex, 0.5);
+        else if (n === selected) ctx.fillStyle = lighten(hex, 0.62);
         else ctx.fillStyle = PAPER;
         ctx.fillRect(ox + x * cell, oy + y * cell, cell + 0.4, cell + 0.4);
         const flash = flashes.get(i);
@@ -478,13 +488,13 @@ export function mountPaint({ onHub, audio }) {
     }
 
     if (!clean) {
-      ctx.lineWidth = Math.max(1.5, cell * 0.07);
+      ctx.lineWidth = Math.max(2, cell * 0.09);
+      ctx.strokeStyle = '#ffe566';
       for (let y = 0; y < picture.rows; y++) {
         for (let x = 0; x < picture.cols; x++) {
           const i = y * picture.cols + x;
           if (filled[i] || picture.cells[i] !== selected) continue;
-          ctx.strokeStyle = picture.colors[selected - 1].hex;
-          ctx.strokeRect(ox + x * cell + 1.2, oy + y * cell + 1.2, cell - 2.4, cell - 2.4);
+          ctx.strokeRect(ox + x * cell + 1.5, oy + y * cell + 1.5, cell - 3, cell - 3);
         }
       }
     }
@@ -919,10 +929,15 @@ export function mountPaint({ onHub, audio }) {
     if (pointers.size > 0) return;
     const color = gesture.color;
     const wasPainting = gesture.painting;
+    const advanced = gesture.advanced;
     gesture = blankGesture();
     if (!picture || doneFlag) return;
     if (wasPainting && isComplete(picture, filled)) celebrate();
-    else if (wasPainting && colorProgress(picture, filled).find((entry) => entry.n === color)?.complete) {
+    else if (
+      wasPainting &&
+      !advanced &&
+      colorProgress(picture, filled).find((entry) => entry.n === color)?.complete
+    ) {
       selectNext();
     }
     saveNow();
@@ -1085,8 +1100,15 @@ export function mountPaint({ onHub, audio }) {
       done: doneFlag,
       filled: picture ? filledCount(picture, filled) : 0,
       total: picture?.cells.length || 0,
+      cols: picture?.cols || 0,
+      rows: picture?.rows || 0,
       panMode,
       gallery: gallery ? !gallery.classList.contains('hidden') : true,
+      cell: view.cell,
+      ox: view.ox,
+      oy: view.oy,
+      doneText: $('paint-done-score')?.textContent || '',
+      meta: $('paint-meta')?.textContent || '',
     };
   }
 
@@ -1155,9 +1177,10 @@ function makeStars(id) {
   return stars;
 }
 
-function hexToRgba(hex, alpha) {
+function lighten(hex, whiteMix) {
   const r = parseInt(hex.slice(1, 3), 16);
   const g = parseInt(hex.slice(3, 5), 16);
   const b = parseInt(hex.slice(5, 7), 16);
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  const mix = (channel) => Math.round(channel * (1 - whiteMix) + 255 * whiteMix);
+  return `rgb(${mix(r)}, ${mix(g)}, ${mix(b)})`;
 }
