@@ -2182,8 +2182,26 @@ h2 {
   pointer-events: fill;
 }
 
+.paint-svg.is-ink .paint-region {
+  stroke: #140c12;
+  stroke-width: 1.8;
+}
+
+.paint-reveal {
+  opacity: 0;
+  pointer-events: none;
+}
+
 .paint-svg.is-done .paint-region {
   stroke: transparent;
+}
+
+.paint-svg.is-done.has-reveal .paint-region {
+  opacity: 0;
+}
+
+.paint-svg.is-done.has-reveal .paint-reveal {
+  opacity: 1;
 }
 
 .paint-region.is-hot {

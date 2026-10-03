@@ -270,6 +270,8 @@ export function mountPaint({ onHub, audio }) {
   function styleAll() {
     for (let i = 0; i < paths.length; i++) styleRegion(i);
     svg.classList.toggle('is-done', doneFlag);
+    svg.classList.toggle('is-ink', Boolean(picture?.ink));
+    svg.classList.toggle('has-reveal', Boolean(picture?.reveal));
     syncLabels();
   }
 
@@ -468,6 +470,7 @@ export function mountPaint({ onHub, audio }) {
       path.setAttribute('d', region.d);
       path.setAttribute('data-i', String(i));
       path.setAttribute('class', 'paint-region');
+      path.setAttribute('fill-rule', 'evenodd');
       world.append(path);
       paths.push(path);
     }
@@ -480,6 +483,17 @@ export function mountPaint({ onHub, audio }) {
       text.textContent = String(region.n);
       world.append(text);
       labels.push(text);
+    }
+    if (picture.reveal) {
+      const image = document.createElementNS(SVG_NS, 'image');
+      image.setAttribute('class', 'paint-reveal');
+      image.setAttribute('href', picture.reveal);
+      image.setAttribute('x', '0');
+      image.setAttribute('y', '0');
+      image.setAttribute('width', String(picture.w));
+      image.setAttribute('height', String(picture.h));
+      image.setAttribute('preserveAspectRatio', 'xMidYMid slice');
+      world.append(image);
     }
     svg.append(world);
     styleAll();
@@ -647,6 +661,8 @@ export function mountPaint({ onHub, audio }) {
       regions: json.regions,
       w: box[2],
       h: box[3],
+      reveal: json.reveal || meta.reveal || '',
+      ink: Boolean(json.ink || meta.ink),
     };
   }
 
@@ -819,7 +835,7 @@ export function mountPaint({ onHub, audio }) {
     const thumb = document.createElement('img');
     thumb.className = 'paint-thumb';
     thumb.alt = '';
-    thumb.src = `/paint/thumbs/${daily.id}.svg`;
+    thumb.src = daily.thumb || `/paint/thumbs/${daily.id}.svg`;
     dailyBtn.append(
       thumb,
       Object.assign(document.createElement('span'), { className: 'paint-kicker', textContent: 'BILD DES TAGES' }),
@@ -846,7 +862,7 @@ export function mountPaint({ onHub, audio }) {
         img.className = 'paint-thumb';
         img.alt = '';
         img.loading = 'lazy';
-        img.src = `/paint/thumbs/${entry.id}.svg`;
+        img.src = entry.thumb || `/paint/thumbs/${entry.id}.svg`;
         const name = document.createElement('strong');
         name.textContent = entry.title;
         const meta = document.createElement('span');

@@ -294,8 +294,8 @@ function probePicture() {
 }
 
 export function selfCheck() {
-  if (PICTURES.length < 12 || PICTURES.length > 16) {
-    throw new Error(`expected 12–16 pictures, got ${PICTURES.length}`);
+  if (PICTURES.length < 20 || PICTURES.length > 24) {
+    throw new Error(`expected 20–24 pictures, got ${PICTURES.length}`);
   }
   const ids = new Set();
   const cats = new Set();
@@ -304,14 +304,19 @@ export function selfCheck() {
     ids.add(picture.id);
     cats.add(picture.category);
     if (!DIFFICULTY[picture.difficulty]) throw new Error(`${picture.id} difficulty`);
-    if (picture.regionCount < 80 || picture.regionCount > 400) {
+    const minRegions = picture.category === 'mandala' ? 80 : 150;
+    if (picture.regionCount < minRegions || picture.regionCount > 450) {
       throw new Error(`${picture.id} region count ${picture.regionCount}`);
+    }
+    if (!picture.thumb) throw new Error(`${picture.id} thumb`);
+    if (picture.category !== 'mandala' && !picture.reveal) {
+      throw new Error(`${picture.id} reveal`);
     }
     if (picture.colorCount < 6) throw new Error(`${picture.id} palette`);
     const box = String(picture.viewBox).split(/[\s,]+/).map(Number);
     if (!(box[2] > 0) || !(box[3] > 0)) throw new Error(`${picture.id} viewBox`);
   }
-  if (!cats.has('mandala') || !cats.has('manga') || !cats.has('maerchen')) {
+  if (!cats.has('mandala') || !cats.has('manga') || !cats.has('maerchen') || !cats.has('fee')) {
     throw new Error('missing a picture category');
   }
 
