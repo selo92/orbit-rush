@@ -78,9 +78,19 @@ const aergerMod = await import(path.join(root, 'shared', 'aerger.js'));
 aergerMod.selfCheck();
 const paintMod = await import(path.join(root, 'src', 'paint.js'));
 assert(paintMod.selfCheck() === true, 'orbit paint rules');
-assert(paintMod.PICTURES.length >= 8 && paintMod.PICTURES.length <= 12, 'paint gallery size');
+assert(paintMod.PICTURES.length >= 12 && paintMod.PICTURES.length <= 16, 'paint gallery size');
+const paintCats = new Set(paintMod.PICTURES.map((picture) => picture.category));
+assert(paintCats.has('mandala') && paintCats.has('manga') && paintCats.has('maerchen'), 'paint categories');
+for (const picture of paintMod.PICTURES) {
+  const json = JSON.parse(fs.readFileSync(path.join(root, 'public', 'paint', `${picture.id}.json`), 'utf8'));
+  assert(json.regions.length === picture.regionCount, `${picture.id} region count`);
+  assert(json.regions.length >= 80 && json.regions.length <= 400, `${picture.id} region range`);
+  assert(json.colors.length === picture.colorCount, `${picture.id} colors`);
+  assert(fs.existsSync(path.join(root, 'public', 'paint', 'thumbs', `${picture.id}.svg`)), `${picture.id} thumb`);
+}
 const paintHtml = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 assert(paintHtml.includes('btn-hub-paint') && paintHtml.includes('id="screen-paint"'), 'paint is on the hub');
+assert(paintHtml.includes('id="paint-svg"'), 'paint board is svg');
 const duelMod = await import(path.join(root, 'shared', 'duel.js'));
 duelMod.selfCheck();
 const diceMod = await import(path.join(root, 'src', 'aerger-dice.js'));

@@ -14,6 +14,7 @@
     "smoke": "node scripts/smoke.mjs",
     "smoke:worker": "node scripts/worker-smoke.mjs",
     "playtest": "node scripts/playtest.mjs",
+    "paint:art": "node scripts/paint/build.mjs",
     "deploy": "node scripts/cf-deploy.mjs"
   },
   "dependencies": {
