@@ -12,6 +12,7 @@ import {
 } from './pulse.js';
 import { JetGame, getJetDifficulty } from './jet.js';
 import { DashGame, getDashDifficulty } from './dash.js';
+import { mountPaint } from './paint-ui.js';
 import { mountAerger } from './aerger-ui.js';
 import { mountDuel } from './duel-ui.js';
 import {
@@ -99,6 +100,7 @@ const screens = {
   dashDiff: $('screen-dash-diff'),
   aerger: $('screen-aerger'),
   duel: $('screen-duel'),
+  paint: $('screen-paint'),
 };
 
 const hud = $('hud');
@@ -120,12 +122,14 @@ const toastEl = $('toast');
 let lastResult = null;
 let lbBackTo = 'title';
 let lbFilter = 'all';
-/** @type {'hub'|'rush'|'mirror'|'aerger'|'duel'|'drift'|'pulse'|'jet'|'dash'} */
+/** @type {'hub'|'rush'|'mirror'|'aerger'|'duel'|'drift'|'pulse'|'jet'|'dash'|'paint'} */
 let activeGame = 'hub';
 /** @type {() => void} */
 let pauseAerger = () => {};
 /** @type {() => void} */
 let pauseDuel = () => {};
+/** @type {() => void} */
+let pausePaint = () => {};
 /** @type {'rush'|'mirror'|'drift'|'pulse'|'jet'|'dash'} */
 let lbGame = 'rush';
 let submitting = false;
@@ -652,6 +656,7 @@ function setHudChrome(mode) {
 function showScreen(name) {
   if (name !== 'aerger') pauseAerger();
   if (name !== 'duel') pauseDuel();
+  if (name !== 'paint') pausePaint();
   for (const [k, el] of Object.entries(screens)) {
     if (!el) continue;
     el.classList.toggle('hidden', k !== name);
@@ -2526,6 +2531,35 @@ $('btn-hub-dash').addEventListener('click', () => {
   audio.click();
   openDashMenu();
 });
+
+const paint = mountPaint({
+  onHub: () => showHub(),
+  audio,
+});
+pausePaint = () => paint.pause();
+
+function openPaint() {
+  activeGame = 'paint';
+  if (game.running) game.stop();
+  if (mirror.running) mirror.stop();
+  if (drift.running) drift.stop();
+  if (pulse.running) pulse.stop();
+  if (jet.running) jet.stop();
+  if (dash.running) dash.stop();
+  audio.stopMusic();
+  audio.stopClip();
+  hud.classList.add('hidden');
+  setHudChrome('rush');
+  hudMode.classList.add('hidden');
+  showScreen('paint');
+  paint.open();
+}
+
+$('btn-hub-paint').addEventListener('click', () => {
+  audio.resume();
+  audio.click();
+  openPaint();
+});
 $('btn-title-hub').addEventListener('click', () => {
   audio.click();
   showHub();
@@ -2718,6 +2752,7 @@ window.__ORBIT_RUSH__ = {
   pulse,
   jet,
   dash,
+  paint,
   computeScore,
   formatFormula,
   NEAR_MISS_POINTS,
