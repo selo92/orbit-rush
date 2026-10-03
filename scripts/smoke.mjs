@@ -76,6 +76,11 @@ assert(rngMod.utcDateString(new Date(Date.UTC(2026, 8, 22))).startsWith('2026-09
 
 const aergerMod = await import(path.join(root, 'shared', 'aerger.js'));
 aergerMod.selfCheck();
+const paintMod = await import(path.join(root, 'src', 'paint.js'));
+assert(paintMod.selfCheck() === true, 'orbit paint rules');
+assert(paintMod.PICTURES.length >= 8 && paintMod.PICTURES.length <= 12, 'paint gallery size');
+const paintHtml = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+assert(paintHtml.includes('btn-hub-paint') && paintHtml.includes('id="screen-paint"'), 'paint is on the hub');
 const duelMod = await import(path.join(root, 'shared', 'duel.js'));
 duelMod.selfCheck();
 const diceMod = await import(path.join(root, 'src', 'aerger-dice.js'));
