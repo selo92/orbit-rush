@@ -1588,6 +1588,49 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
   pan.cam = 220;
   pan.step(0.3);
   assert(pan.cam < 220, 'the view pans when the crosshair sits on the edge');
+
+  const popIn = makeHunt();
+  const planted = popIn.makeBird('mid', 120);
+  assert(planted.pop === 1 && planted.entrance === 'live', 'a placed puffling is ready to hit');
+  const born = popIn.surpriseBird('near');
+  assert(born.pop === 0 && born.entrance !== 'live', 'a spawned puffling pops in');
+  assert(
+    ['hill', 'hay', 'tree', 'wind', 'drop', 'grass', 'dash', 'peek'].includes(born.entrance),
+    'spawn uses a surprise entrance'
+  );
+  popIn.birds = [born];
+  popIn.running = true;
+  popIn.alive = true;
+  popIn.hitStop = 0;
+  popIn.step(0.2);
+  assert(born.pop > 0.5, 'the pop-in is snappy');
+
+  const juice = makeHunt();
+  juice.running = true;
+  juice.alive = true;
+  const golden = juice.makeBird('gold', 200);
+  golden.y = 180;
+  golden.vx = 0;
+  juice.cam = 0;
+  juice.birds = [golden];
+  const goldAim = juice.birdScreen(golden);
+  juice.aim = { x: goldAim.x, y: goldAim.y };
+  juice.shoot();
+  assert(juice.hitStop >= 0.06 && juice.hitStop <= 0.08, 'a hit freezes for a short beat');
+  assert(golden.flash === 1 && golden.falling === true, 'a hit flashes the puffling and knocks it down');
+  assert(juice.feathers.length >= 18, 'a hit throws a feather burst');
+  assert(juice.rings.length >= 1, 'a hit leaves an impact ring');
+  assert(juice.sparks.some((s) => s.star), 'a golden hit throws sparkles');
+  assert(juice.recoil > 0 && juice.muzzle > 0, 'a shot kicks the crosshair');
+  juice.step(0.05);
+  assert(juice.hitStop > 0 && golden.y === 180, 'the freeze holds the bird');
+  juice.hitStop = 0;
+  golden.y = juice.h * 0.7;
+  golden.vy = 500;
+  golden.falling = true;
+  golden.bounces = 0;
+  juice.step(0.16);
+  assert(golden.bounces >= 1, 'a falling puffling bounces on the ground');
 }
 
 {

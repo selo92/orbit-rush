@@ -167,11 +167,13 @@ export class HuntGame {
     this.feathers = [];
     this.floats = [];
     this.sparks = [];
+    this.rings = [];
+    this.dusts = [];
     this.props = [];
     this.popup = null;
-    this.popupGap = 2.4;
-    this.spawnT = 0.35;
-    this.goldT = 7.5;
+    this.popupGap = 1.4 + Math.random() * 2.2;
+    this.spawnT = 0.18 + Math.random() * 0.55;
+    this.goldT = 4.5 + Math.random() * 3;
     this.cam = 0;
     this.maxCam = 0;
     this.worldW = 0;
@@ -180,6 +182,8 @@ export class HuntGame {
     this.pointerInside = false;
     this.shake = 0;
     this.muzzle = 0;
+    this.recoil = 0;
+    this.hitStop = 0;
     this.bannerT = 2.6;
     this._settled = null;
     this.drag = null;
@@ -454,6 +458,10 @@ export class HuntGame {
         this.audio.cock?.();
       }
     }
+    if (this.hitStop > 0) {
+      this.hitStop = Math.max(0, this.hitStop - dt);
+      return;
+    }
     if (this.pointerKind === 'mouse' && this.pointerInside && !this.ending) {
       const edge = this.w * 0.16;
       let push = 0;
@@ -475,24 +483,29 @@ export class HuntGame {
     this.spawnT -= dt;
     this.goldT -= dt;
     this.popupGap -= dt;
-    const alive = this.birds.filter((b) => !b.falling).length;
-    if (this.spawnT <= 0 && alive < 8) {
-      this.spawnT = 0.72 + Math.random() * 0.55;
-      const roll = Math.random();
-      const kind = roll < 0.34 ? 'near' : roll < 0.68 ? 'mid' : 'far';
-      this.birds.push(this.makeBird(kind));
+    const alive = this.birds.filter((b) => !b.falling && !b.leaving).length;
+    if (this.spawnT <= 0 && alive < 7) {
+      let gap = 0.22 + Math.random() * Math.random() * 1.15;
+      if (Math.random() < 0.16) gap += 0.4 + Math.random() * 0.7;
+      this.spawnT = gap;
+      const burst = Math.random() < 0.2 && alive < 5 ? 2 : 1;
+      for (let i = 0; i < burst; i++) {
+        const roll = Math.random();
+        const kind = roll < 0.34 ? 'near' : roll < 0.68 ? 'mid' : 'far';
+        this.birds.push(this.surpriseBird(kind));
+      }
     }
     if (this.goldT <= 0) {
-      this.goldT = 8.5 + Math.random() * 4;
+      this.goldT = 6.2 + Math.random() * 5.5;
       if (!this.birds.some((b) => b.kind === 'gold' && !b.falling)) {
-        this.birds.push(this.makeBird('gold'));
+        this.birds.push(this.surpriseBird('gold'));
       }
     }
     if (this.popupGap <= 0 && !this.popup) {
-      this.popupGap = 5.5 + Math.random() * 2.5;
+      this.popupGap = 2.6 + Math.random() * 4.8;
       const hosts = this.props.filter((p) => p.kind === 'windmill' || p.kind === 'tree' || p.kind === 'hay');
       const host = hosts[Math.floor(Math.random() * hosts.length)];
-      if (host) this.popup = { id: host.id, t: 0, dur: 1.35 };
+      if (host) this.popup = { id: host.id, t: 0, dur: 0.72 + Math.random() * 0.22 };
     }
     if (this.popup) {
       this.popup.t += dt;
@@ -502,57 +515,173 @@ export class HuntGame {
 
   makeBird(kind, x) {
     const flight = KIND_FLIGHT[kind] || KIND_FLIGHT.mid;
+    const planted = x != null;
     const dir = Math.random() < 0.5 ? -1 : 1;
-    const scale = clamp(this.h / 780, 0.72, 1.15);
-    const x0 = x == null ? (dir < 0 ? this.worldW + 30 : -30) : x;
+    const scale = clamp((this.h || 780) / 780, 0.72, 1.15);
+    const y = (this.h || 780) * flight.y;
     return {
       kind,
-      x: x0,
-      y: this.h * flight.y + (Math.random() - 0.5) * this.h * 0.03,
+      x: planted ? x : 0,
+      y,
+      flightY: y,
+      hideY: null,
       vx: dir * flight.speed * (0.88 + Math.random() * 0.28),
       depth: flight.depth,
       r: flight.r * scale,
       falling: false,
       vy: 0,
       rot: 0,
+      spin: 0,
       flap: Math.random() * 6,
       bob: Math.random() * 6,
+      pop: planted ? 1 : 0,
+      intro: planted ? 0 : 0.15,
+      entrance: planted ? 'live' : 'hill',
+      peekLife: 0,
+      leaving: false,
+      flash: 0,
+      bounces: 0,
+      rest: 0,
     };
+  }
+
+  propOnScreen(id) {
+    const prop = this.props.find((p) => p.id === id);
+    if (!prop || !this.w) return null;
+    const sx = prop.x - this.cam * prop.depth;
+    if (sx < this.w * 0.06 || sx > this.w * 0.94) return null;
+    return prop;
+  }
+
+  /** A puffling that pops into the current view instead of drifting in from off-screen. */
+  surpriseBird(kind) {
+    const bird = this.makeBird(kind);
+    const flight = KIND_FLIGHT[kind] || KIND_FLIGHT.mid;
+    const wind = this.propOnScreen('wind');
+    const tree = this.propOnScreen('tree');
+    const hay = this.propOnScreen('hay');
+    const options = ['hill', 'grass', 'drop', 'dash', 'peek'];
+    if (wind) options.push('wind', 'wind');
+    if (tree) options.push('tree', 'tree');
+    if (hay) options.push('hay', 'hay');
+    if (kind === 'gold') options.push('dash', 'drop', 'drop');
+    const entrance = options[(Math.random() * options.length) | 0];
+    bird.entrance = entrance;
+    bird.intro = 0.12 + Math.random() * 0.07;
+    bird.pop = 0;
+    bird.flightY = bird.y + (Math.random() - 0.5) * this.h * 0.035;
+    const sx = this.w * (0.16 + Math.random() * 0.68);
+    const place = (screenX) => {
+      bird.x = screenX + this.cam * bird.depth;
+    };
+    if (entrance === 'dash') {
+      const fromLeft = Math.random() < 0.5;
+      const edge = fromLeft ? -(22 + Math.random() * 18) : this.w + 22 + Math.random() * 18;
+      place(edge);
+      const kick = kind === 'gold' ? 1.45 : 2.05 + Math.random() * 0.35;
+      bird.vx = (fromLeft ? 1 : -1) * flight.speed * kick;
+      bird.y = bird.flightY;
+      this.burstDust(fromLeft ? 10 : this.w - 10, bird.y, 7);
+    } else if (entrance === 'drop') {
+      place(sx);
+      bird.hideY = -bird.r - 6;
+      bird.y = bird.hideY;
+      bird.vx *= 0.35;
+      this.burstDust(sx, 8, 6);
+    } else if (entrance === 'peek') {
+      place(sx);
+      bird.y = bird.flightY;
+      bird.peekLife = 0.68 + Math.random() * 0.42;
+      bird.vx *= 0.12;
+      this.burstDust(sx, bird.y + bird.r * 0.2, 8);
+    } else if (entrance === 'wind' || entrance === 'tree' || entrance === 'hay') {
+      const prop = entrance === 'wind' ? wind : entrance === 'tree' ? tree : hay;
+      const psx = prop.x - this.cam * prop.depth + (prop.peekX || 0) * 0.15;
+      bird.depth = Math.max(0.28, prop.depth - 0.05);
+      bird.x = psx + this.cam * bird.depth;
+      bird.hideY = prop.y - prop.h * (entrance === 'hay' ? 0.2 : 0.42);
+      bird.y = bird.hideY;
+      bird.vx *= 0.18;
+      this.burstDust(psx, bird.hideY, 8);
+    } else if (entrance === 'grass') {
+      place(sx);
+      bird.hideY = this.h * 0.7;
+      bird.y = bird.hideY;
+      bird.vx *= 0.22;
+      this.burstDust(sx, bird.hideY, 8);
+    } else {
+      place(sx);
+      bird.hideY = Math.max(this.h * 0.54, bird.flightY + this.h * 0.11);
+      bird.y = bird.hideY;
+      bird.vx *= 0.28;
+      this.burstDust(sx, bird.hideY, 8);
+    }
+    return bird;
   }
 
   seedFlock() {
     this.birds = [];
-    const spots = [
-      ['near', 0.14, 1],
-      ['mid', 0.3, -1],
-      ['far', 0.42, 1],
-      ['mid', 0.56, 1],
-      ['far', 0.68, -1],
-      ['near', 0.84, -1],
-    ];
-    for (const [kind, u, dir] of spots) {
-      const bird = this.makeBird(kind, this.worldW * u);
-      bird.vx = dir * Math.abs(bird.vx);
+    for (const kind of ['near', 'mid', 'far']) {
+      const bird = this.surpriseBird(kind);
+      bird.pop = 0.08 + Math.random() * 0.2;
       this.birds.push(bird);
     }
   }
 
   advanceBirds(dt) {
+    const ground = this.h * 0.78;
     for (const bird of this.birds) {
       bird.flap += dt * (bird.kind === 'gold' ? 16 : 9);
+      if (bird.flash > 0) bird.flash = Math.max(0, bird.flash - dt * 7);
       if (bird.falling) {
-        bird.vy += 980 * dt;
+        bird.vy += 1400 * dt;
         bird.y += bird.vy * dt;
         bird.x += bird.vx * dt;
-        bird.rot += dt * 7;
+        bird.rot += dt * (bird.spin || 11);
+        if (bird.y >= ground && bird.vy > 0) {
+          bird.y = ground;
+          bird.bounces = (bird.bounces || 0) + 1;
+          const sx = bird.x - this.cam * bird.depth;
+          if (bird.bounces >= 3 || bird.vy < 220) {
+            bird.vy = 0;
+            bird.vx *= 0.35;
+          } else {
+            bird.vy = -bird.vy * 0.4;
+            bird.vx *= 0.62;
+            bird.spin *= 0.55;
+            this.burstDust(sx, ground, 5);
+          }
+        }
+        if (bird.vy === 0 && bird.bounces > 0) {
+          bird.y = ground;
+          bird.rest += dt;
+        }
+      } else if (bird.pop < 1) {
+        bird.pop = Math.min(1, bird.pop + dt / Math.max(0.08, bird.intro || 0.15));
+        if (bird.hideY != null) {
+          const e = 1 - (1 - bird.pop) * (1 - bird.pop);
+          bird.y = bird.hideY + (bird.flightY - bird.hideY) * e;
+        }
+        const cruise = bird.entrance === 'dash' ? bird.vx : bird.vx * 0.35;
+        bird.x += cruise * dt;
+      } else if (bird.leaving) {
+        bird.pop = Math.max(0, bird.pop - dt * 5.2);
       } else {
+        if (bird.entrance === 'peek') {
+          bird.peekLife -= dt;
+          if (bird.peekLife <= 0) bird.leaving = true;
+        }
         bird.bob += dt * (bird.kind === 'gold' ? 11 : 6);
         bird.x += bird.vx * dt;
       }
     }
     this.birds = this.birds.filter((bird) => {
-      if (bird.falling) return bird.y < this.h + bird.r + 40;
-      return bird.x > -180 && bird.x < this.worldW + 180;
+      if (bird.leaving && bird.pop <= 0.02) return false;
+      if (bird.falling) {
+        if ((bird.rest || 0) > 1.05) return false;
+        return bird.y < this.h + bird.r + 80;
+      }
+      return bird.x > -240 && bird.x < this.worldW + 240;
     });
   }
 
@@ -590,7 +719,8 @@ export class HuntGame {
     this.ammo -= 1;
     this.shots += 1;
     this.muzzle = 1;
-    this.shake = Math.min(1, this.shake + 0.55);
+    this.recoil = 1;
+    this.shake = Math.min(1.15, this.shake + 0.34);
     this.audio.shot?.();
     const hit = this.pick(this.aim.x, this.aim.y);
     if (!hit) return true;
@@ -599,7 +729,8 @@ export class HuntGame {
   }
 
   birdScreen(bird) {
-    const bob = bird.falling ? 0 : Math.sin(bird.bob) * bird.r * 0.22;
+    const rising = bird.pop != null && bird.pop < 1;
+    const bob = bird.falling || rising ? 0 : Math.sin(bird.bob) * bird.r * 0.22;
     return {
       x: bird.x - this.cam * bird.depth,
       y: bird.y + bob,
@@ -636,7 +767,8 @@ export class HuntGame {
     /** @type {Array<{kind: string, depth: number, d: number, bird?: object, prop?: object}>} */
     const hits = [];
     for (const bird of this.birds) {
-      if (bird.falling) continue;
+      if (bird.falling || bird.leaving) continue;
+      if ((bird.pop ?? 1) < 0.52) continue;
       const p = this.birdScreen(bird);
       const d = Math.hypot(p.x - sx, p.y - sy);
       if (d <= p.r * 1.06) hits.push({ kind: 'bird', depth: bird.depth, d, bird });
@@ -671,26 +803,48 @@ export class HuntGame {
     if (hit.kind === 'bird' && hit.bird) {
       const bird = hit.bird;
       const p = this.birdScreen(bird);
+      const gold = bird.kind === 'gold';
       bird.falling = true;
-      bird.vy = 20;
-      bird.vx *= 0.25;
+      bird.leaving = false;
+      bird.pop = 1;
+      bird.vy = -130;
+      bird.vx *= 0.18;
+      bird.spin = (Math.random() < 0.5 ? -1 : 1) * (11 + Math.random() * 6);
+      bird.flash = 1;
+      bird.bounces = 0;
+      bird.rest = 0;
+      bird.rot = (Math.random() - 0.5) * 0.6;
       const gain = this.award(bird.kind);
-      this.puff(p.x, p.y, KIND_LOOK[bird.kind]?.body || '#fff', bird.kind === 'gold' ? 16 : 10);
-      this.floatText(gain >= 0 ? `+${gain}` : `${gain}`, p.x, p.y - bird.r, bird.kind === 'gold' ? '#ffe566' : '#fff');
-      if (bird.kind === 'gold') this.audio.sparkle?.();
-      else this.audio.fluff?.();
+      const mult = Math.min(COMBO_MAX, this.comboCount);
+      this.hitStop = 0.072;
+      this.shake = Math.min(1.25, this.shake + 0.78);
+      this.puff(p.x, p.y, KIND_LOOK[bird.kind]?.body || '#fff', gold ? 34 : 26);
+      this.impact(p.x, p.y, gold ? '#ffe566' : '#fffaf0');
+      if (gold) this.sparkleBurst(p.x, p.y);
+      this.floatText(
+        gain >= 0 ? `+${gain}` : `${gain}`,
+        p.x,
+        p.y - bird.r,
+        gold ? '#ffe566' : '#fff',
+        mult > 1 ? 1.25 + (mult - 1) * 0.22 : 1
+      );
+      this.audio.squawk?.();
+      if (gold) this.audio.sparkle?.();
       return;
     }
     if (hit.kind === 'hidden' && hit.prop) {
       const p = this.popupPoint(hit.prop);
       this.popup = null;
-      this.popupGap = 4.2;
+      this.popupGap = 3.2 + Math.random() * 2;
       const gain = this.award('hidden');
       if (p) {
-        this.puff(p.x, p.y, '#9ef0c8', 12);
-        this.floatText(`+${gain}`, p.x, p.y - 20, '#d8ffe8');
+        this.puff(p.x, p.y, '#9ef0c8', 18);
+        this.impact(p.x, p.y, '#d8ffe8');
+        this.floatText(`+${gain}`, p.x, p.y - 20, '#d8ffe8', 1.15);
       }
-      this.audio.fluff?.();
+      this.hitStop = 0.06;
+      this.shake = Math.min(1.2, this.shake + 0.55);
+      this.audio.squawk?.();
       return;
     }
     if (hit.kind === 'sign' && hit.prop) {
@@ -699,17 +853,21 @@ export class HuntGame {
       hit.prop.respawn = 8;
       const p = this.signPoint(hit.prop);
       const gain = this.award('sign');
-      this.floatText(`+${gain}`, p.x, p.y, '#ffe7b0');
-      this.audio.fluff?.();
+      this.impact(p.x, p.y, '#ffe7b0');
+      this.floatText(`+${gain}`, p.x, p.y, '#ffe7b0', 1.1);
+      this.hitStop = 0.05;
+      this.shake = Math.min(1.1, this.shake + 0.4);
+      this.audio.squawk?.();
       return;
     }
     if (hit.kind === 'penalty' && hit.prop) {
       hit.prop.cool = 2.4;
       const p = this.penaltyPoint(hit.prop);
       const delta = this.penalize();
-      this.floatText(`${delta}`, p.x, p.y - 16, '#ff4d6d');
+      this.impact(p.x, p.y, '#ff4d6d');
+      this.floatText(`${delta}`, p.x, p.y - 16, '#ff4d6d', 1.15);
       this.audio.penalty?.();
-      this.shake = Math.min(1, this.shake + 0.35);
+      this.shake = Math.min(1.15, this.shake + 0.5);
     }
   }
 
@@ -744,40 +902,114 @@ export class HuntGame {
   }
 
   puff(x, y, color, n) {
-    for (let i = 0; i < n && this.feathers.length < 90; i++) {
+    for (let i = 0; i < n && this.feathers.length < 110; i++) {
       const a = Math.random() * TWO_PI;
-      const s = 30 + Math.random() * 150;
+      const s = 90 + Math.random() * 260;
       this.feathers.push({
         x,
         y,
         vx: Math.cos(a) * s,
-        vy: Math.sin(a) * s - 50,
-        life: 0.4 + Math.random() * 0.35,
-        max: 0.75,
+        vy: Math.sin(a) * s - 140,
+        life: 0.95 + Math.random() * 0.75,
+        max: 1.7,
         rot: Math.random() * 6,
-        vr: (Math.random() - 0.5) * 9,
+        vr: (Math.random() - 0.5) * 16,
         color,
-        s: 3 + Math.random() * 4,
+        s: 4 + Math.random() * 7,
       });
     }
   }
 
-  floatText(text, x, y, color) {
-    this.floats.push({ text, x, y, color, life: 0.75, vy: -42 });
-    if (this.floats.length > 14) this.floats.shift();
+  impact(x, y, color) {
+    this.rings.push({ x, y, life: 0.32, max: 0.32, color });
+    if (this.rings.length > 8) this.rings.shift();
+    for (let i = 0; i < 8 && this.sparks.length < 48; i++) {
+      const a = Math.random() * TWO_PI;
+      const s = 110 + Math.random() * 170;
+      this.sparks.push({
+        x,
+        y,
+        vx: Math.cos(a) * s,
+        vy: Math.sin(a) * s,
+        life: 0.22,
+        max: 0.22,
+        color: '#fffef8',
+        star: false,
+      });
+    }
+  }
+
+  sparkleBurst(x, y) {
+    for (let i = 0; i < 14 && this.sparks.length < 48; i++) {
+      const a = (i / 14) * TWO_PI + Math.random() * 0.2;
+      const s = 80 + Math.random() * 190;
+      this.sparks.push({
+        x,
+        y,
+        vx: Math.cos(a) * s,
+        vy: Math.sin(a) * s - 30,
+        life: 0.48,
+        max: 0.48,
+        color: i % 2 ? '#ffe566' : '#fff',
+        star: true,
+      });
+    }
+  }
+
+  burstDust(x, y, n) {
+    for (let i = 0; i < n && this.dusts.length < 70; i++) {
+      const leaf = Math.random() < 0.45;
+      this.dusts.push({
+        x,
+        y,
+        vx: (Math.random() - 0.5) * 160,
+        vy: -30 - Math.random() * 110,
+        life: 0.28 + Math.random() * 0.22,
+        max: 0.5,
+        s: 2 + Math.random() * 3.2,
+        color: leaf ? '#7fbf55' : '#c4a574',
+        leaf,
+        rot: Math.random() * 6,
+        vr: (Math.random() - 0.5) * 10,
+      });
+    }
+  }
+
+  floatText(text, x, y, color, scale = 1) {
+    this.floats.push({ text, x, y, color, life: 0.85, max: 0.85, vy: -52, scale });
+    if (this.floats.length > 12) this.floats.shift();
   }
 
   fadeFx(dt) {
-    this.shake = Math.max(0, this.shake - dt * 2.4);
-    this.muzzle = Math.max(0, this.muzzle - dt * 6);
+    this.shake = Math.max(0, this.shake - dt * 2.6);
+    this.muzzle = Math.max(0, this.muzzle - dt * 7.5);
+    this.recoil = Math.max(0, this.recoil - dt * 8);
     for (const f of this.feathers) {
       f.life -= dt;
+      f.vx *= 1 - dt * 0.55;
       f.x += f.vx * dt;
       f.y += f.vy * dt;
-      f.vy += 280 * dt;
+      f.vy += 460 * dt;
       f.rot += f.vr * dt;
     }
     this.feathers = this.feathers.filter((f) => f.life > 0);
+    for (const s of this.sparks) {
+      s.life -= dt;
+      s.x += s.vx * dt;
+      s.y += s.vy * dt;
+      s.vy += 160 * dt;
+    }
+    this.sparks = this.sparks.filter((s) => s.life > 0);
+    for (const ring of this.rings) ring.life -= dt;
+    this.rings = this.rings.filter((ring) => ring.life > 0);
+    for (const d of this.dusts) {
+      d.life -= dt;
+      d.x += d.vx * dt;
+      d.y += d.vy * dt;
+      d.vy += 240 * dt;
+      d.rot += d.vr * dt;
+    }
+    this.dusts = this.dusts.filter((d) => d.life > 0);
     for (const f of this.floats) {
       f.life -= dt;
       f.y += f.vy * dt;
@@ -887,8 +1119,10 @@ export class HuntGame {
     }
     layers.sort((a, b) => a.depth - b.depth);
     for (const layer of layers) layer.draw();
-    this.drawFeathers(ctx);
     this.drawForeground(ctx);
+    this.drawDust(ctx);
+    this.drawFeathers(ctx);
+    this.drawImpacts(ctx);
     this.drawFloats(ctx);
     this.drawCrosshair(ctx);
     this.drawAmmo(ctx);
@@ -1205,13 +1439,43 @@ export class HuntGame {
     this.drawFluff(ctx, p.x, p.y, p.r, { ...KIND_LOOK.hidden, flap: this.clock * 8 });
   }
 
+  popScale(bird) {
+    const t = bird.pop == null ? 1 : bird.pop;
+    const dash = bird.entrance === 'dash' && !bird.falling;
+    if (t >= 1) return dash ? [1.12, 0.9] : [1, 1];
+    let sx;
+    let sy;
+    if (t < 0.4) {
+      const u = t / 0.4;
+      sx = 0.12 + u * 1.18;
+      sy = 0.12 + u * 0.55;
+    } else if (t < 0.72) {
+      const u = (t - 0.4) / 0.32;
+      sx = 1.3 - u * 0.5;
+      sy = 0.67 + u * 0.58;
+    } else {
+      const u = (t - 0.72) / 0.28;
+      sx = 0.8 + u * 0.2;
+      sy = 1.25 - u * 0.25;
+    }
+    if (dash) {
+      sx *= 1.16;
+      sy *= 0.84;
+    }
+    return [sx, sy];
+  }
+
   drawBird(ctx, bird) {
+    const pop = bird.pop == null ? 1 : bird.pop;
+    if (pop <= 0.02) return;
     const p = this.birdScreen(bird);
-    if (p.x < -80 || p.x > this.w + 80) return;
+    if (p.x < -90 || p.x > this.w + 90) return;
     const look = KIND_LOOK[bird.kind] || KIND_LOOK.mid;
+    const [sx, sy] = this.popScale(bird);
     ctx.save();
     ctx.translate(p.x, p.y);
     if (bird.falling) ctx.rotate(bird.rot);
+    ctx.scale(sx, sy);
     if (bird.kind === 'gold' && !bird.falling) {
       ctx.fillStyle = 'rgba(255, 214, 90, 0.85)';
       for (let i = 1; i <= 3; i++) {
@@ -1225,6 +1489,13 @@ export class HuntGame {
       flap: bird.flap,
       face: bird.falling ? 'hit' : 'fly',
     });
+    if (bird.flash > 0.04) {
+      ctx.globalAlpha = Math.min(0.92, bird.flash);
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.ellipse(0, 0, p.r * 0.98, p.r * 0.86, 0, 0, TWO_PI);
+      ctx.fill();
+    }
     ctx.restore();
   }
 
@@ -1273,16 +1544,33 @@ export class HuntGame {
     const eyeY = -r * 0.08;
     if (look.face === 'hit') {
       ctx.strokeStyle = '#3a2a22';
-      ctx.lineWidth = Math.max(1.5, r * 0.08);
+      ctx.lineWidth = Math.max(1.6, r * 0.09);
+      ctx.lineCap = 'round';
       ctx.beginPath();
-      ctx.moveTo(-r * 0.42, eyeY - r * 0.12);
-      ctx.lineTo(-r * 0.18, eyeY + r * 0.08);
-      ctx.moveTo(-r * 0.18, eyeY - r * 0.12);
-      ctx.lineTo(-r * 0.42, eyeY + r * 0.08);
-      ctx.moveTo(r * 0.18, eyeY - r * 0.12);
-      ctx.lineTo(r * 0.42, eyeY + r * 0.08);
-      ctx.moveTo(r * 0.42, eyeY - r * 0.12);
-      ctx.lineTo(r * 0.18, eyeY + r * 0.08);
+      ctx.moveTo(-r * 0.44, eyeY - r * 0.14);
+      ctx.lineTo(-r * 0.16, eyeY + r * 0.1);
+      ctx.moveTo(-r * 0.16, eyeY - r * 0.14);
+      ctx.lineTo(-r * 0.44, eyeY + r * 0.1);
+      ctx.moveTo(r * 0.16, eyeY - r * 0.14);
+      ctx.lineTo(r * 0.44, eyeY + r * 0.1);
+      ctx.moveTo(r * 0.44, eyeY - r * 0.14);
+      ctx.lineTo(r * 0.16, eyeY + r * 0.1);
+      ctx.stroke();
+      ctx.fillStyle = '#5a3038';
+      ctx.beginPath();
+      ctx.ellipse(0, r * 0.24, r * 0.2, r * 0.24, 0, 0, TWO_PI);
+      ctx.fill();
+      ctx.stroke();
+      ctx.strokeStyle = '#ffd0c8';
+      ctx.beginPath();
+      ctx.arc(0, r * 0.22, r * 0.08, 0.15 * Math.PI, 0.85 * Math.PI);
+      ctx.stroke();
+      ctx.strokeStyle = '#3a2a22';
+      ctx.beginPath();
+      ctx.arc(r * 0.62, -r * 0.92, r * 0.18, 0.4, 5.4);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(r * 0.78, -r * 1.02, r * 0.08, 0, TWO_PI);
       ctx.stroke();
     } else {
       ctx.fillStyle = '#fff';
@@ -1301,12 +1589,14 @@ export class HuntGame {
       ctx.arc(r * 0.28, eyeY - r * 0.04, r * 0.04, 0, TWO_PI);
       ctx.fill();
     }
-    ctx.fillStyle = look.beak;
-    ctx.beginPath();
-    ctx.moveTo(0, r * 0.08);
-    ctx.quadraticCurveTo(r * 0.16, r * 0.2, 0, r * 0.28);
-    ctx.quadraticCurveTo(-r * 0.16, r * 0.2, 0, r * 0.08);
-    ctx.fill();
+    if (look.face !== 'hit') {
+      ctx.fillStyle = look.beak;
+      ctx.beginPath();
+      ctx.moveTo(0, r * 0.08);
+      ctx.quadraticCurveTo(r * 0.16, r * 0.2, 0, r * 0.28);
+      ctx.quadraticCurveTo(-r * 0.16, r * 0.2, 0, r * 0.08);
+      ctx.fill();
+    }
     ctx.fillStyle = 'rgba(255, 120, 140, 0.45)';
     ctx.beginPath();
     ctx.ellipse(-r * 0.46, r * 0.16, r * 0.12, r * 0.08, 0, 0, TWO_PI);
@@ -1330,14 +1620,68 @@ export class HuntGame {
     ctx.globalAlpha = 1;
   }
 
+  drawDust(ctx) {
+    for (const d of this.dusts) {
+      ctx.save();
+      ctx.translate(d.x, d.y);
+      ctx.rotate(d.rot);
+      ctx.globalAlpha = clamp(d.life / d.max, 0, 0.9);
+      ctx.fillStyle = d.color;
+      ctx.beginPath();
+      if (d.leaf) ctx.ellipse(0, 0, d.s * 1.5, d.s * 0.7, 0, 0, TWO_PI);
+      else ctx.arc(0, 0, d.s, 0, TWO_PI);
+      ctx.fill();
+      ctx.restore();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  drawImpacts(ctx) {
+    for (const ring of this.rings) {
+      const u = 1 - ring.life / ring.max;
+      ctx.globalAlpha = clamp(ring.life / ring.max, 0, 1);
+      ctx.strokeStyle = ring.color;
+      ctx.lineWidth = Math.max(1, 4 * (1 - u));
+      ctx.beginPath();
+      ctx.arc(ring.x, ring.y, 8 + u * 52, 0, TWO_PI);
+      ctx.stroke();
+    }
+    for (const s of this.sparks) {
+      ctx.globalAlpha = clamp(s.life / s.max, 0, 1);
+      ctx.fillStyle = s.color;
+      if (s.star) this.drawStar(ctx, s.x, s.y, 4.2);
+      else {
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, 2.3, 0, TWO_PI);
+        ctx.fill();
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  drawStar(ctx, x, y, r) {
+    ctx.beginPath();
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * TWO_PI - Math.PI / 2;
+      const rad = i % 2 ? r * 0.4 : r;
+      const px = x + Math.cos(a) * rad;
+      const py = y + Math.sin(a) * rad;
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    ctx.fill();
+  }
+
   drawFloats(ctx) {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.font = '800 18px Segoe UI, sans-serif';
     for (const f of this.floats) {
-      ctx.globalAlpha = clamp(f.life / 0.75, 0, 1);
-      ctx.lineWidth = 4;
-      ctx.strokeStyle = 'rgba(40, 24, 16, 0.45)';
+      const size = Math.round(18 * (f.scale || 1));
+      ctx.font = `800 ${size}px Segoe UI, sans-serif`;
+      ctx.globalAlpha = clamp(f.life / (f.max || 0.85), 0, 1);
+      ctx.lineWidth = Math.max(3, size * 0.18);
+      ctx.strokeStyle = 'rgba(40, 24, 16, 0.5)';
       ctx.strokeText(f.text, f.x, f.y);
       ctx.fillStyle = f.color;
       ctx.fillText(f.text, f.x, f.y);
@@ -1349,8 +1693,9 @@ export class HuntGame {
     const x = this.aim?.x ?? this.w * 0.5;
     const y = this.aim?.y ?? this.h * 0.4;
     const reloading = this.reloadT > 0;
+    const kick = (this.recoil || 0) * 18;
     ctx.save();
-    ctx.translate(x, y);
+    ctx.translate(x, y - kick);
     ctx.strokeStyle = reloading ? '#ffb15a' : '#ffffff';
     ctx.lineWidth = 2;
     ctx.beginPath();
@@ -1372,9 +1717,21 @@ export class HuntGame {
     ctx.arc(0, 0, 16, 0, TWO_PI);
     ctx.stroke();
     if (this.muzzle > 0) {
-      ctx.fillStyle = `rgba(255, 244, 210, ${this.muzzle * 0.7})`;
+      const m = this.muzzle;
+      ctx.fillStyle = `rgba(255, 248, 220, ${m * 0.92})`;
       ctx.beginPath();
-      ctx.arc(0, 0, 8 + (1 - this.muzzle) * 16, 0, TWO_PI);
+      ctx.arc(0, 0, 8 + (1 - m) * 20, 0, TWO_PI);
+      ctx.fill();
+      ctx.fillStyle = `rgba(255, 186, 64, ${m * 0.8})`;
+      ctx.beginPath();
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * TWO_PI;
+        const inner = 5;
+        const outer = 18 + (1 - m) * 16;
+        ctx.lineTo(Math.cos(a) * inner, Math.sin(a) * inner);
+        ctx.lineTo(Math.cos(a + 0.22) * outer, Math.sin(a + 0.22) * outer);
+      }
+      ctx.closePath();
       ctx.fill();
     }
     ctx.restore();
