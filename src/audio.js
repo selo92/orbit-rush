@@ -245,4 +245,77 @@ export class AudioBus {
       this._musicTimer = null;
     }
   }
+
+  /** Short noise burst for Orbit Hunt shots. Cached so a magazine stays cheap. */
+  noiseBuffer() {
+    this.ensure();
+    if (!this.ctx) return null;
+    if (this._noise) return this._noise;
+    const n = Math.floor(this.ctx.sampleRate * 0.12);
+    const buf = this.ctx.createBuffer(1, n, this.ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) data[i] = Math.random() * 2 - 1;
+    this._noise = buf;
+    return buf;
+  }
+
+  noiseBurst(dur = 0.06, gain = 0.35, freq = 1400) {
+    if (this.muted) return;
+    this.ensure();
+    const buf = this.noiseBuffer();
+    if (!this.ctx || !this._master || !buf) return;
+    const t0 = this.ctx.currentTime;
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(freq, t0);
+    filter.Q.value = 0.7;
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(gain, t0 + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    src.connect(filter);
+    filter.connect(g);
+    g.connect(this._master);
+    src.start(t0);
+    src.stop(t0 + dur + 0.02);
+  }
+
+  /** Cartoon shotgun pop for Orbit Hunt. Synthesized, no samples. */
+  shot() {
+    this.noiseBurst(0.07, 0.42, 1800);
+    this.tone(160, 0.09, 'sine', 0.28, 70);
+    this.tone(420, 0.04, 'triangle', 0.12, 180);
+  }
+
+  reload() {
+    this.tone(220, 0.05, 'square', 0.16, 140);
+    this.tone(90, 0.08, 'triangle', 0.14);
+  }
+
+  cock() {
+    this.tone(540, 0.04, 'square', 0.12);
+    this.tone(720, 0.05, 'triangle', 0.1);
+  }
+
+  dry() {
+    this.tone(180, 0.04, 'square', 0.1);
+  }
+
+  fluff() {
+    this.tone(620, 0.06, 'triangle', 0.22, 280);
+    this.tone(880, 0.08, 'sine', 0.12);
+  }
+
+  sparkle() {
+    this.tone(880, 0.06, 'sine', 0.2);
+    this.tone(1320, 0.08, 'triangle', 0.16);
+    this.tone(1760, 0.1, 'sine', 0.1);
+  }
+
+  penalty() {
+    this.tone(240, 0.12, 'sawtooth', 0.18, 90);
+    this.tone(140, 0.16, 'square', 0.1);
+  }
 }
