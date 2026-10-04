@@ -12,6 +12,7 @@ import {
 } from './pulse.js';
 import { JetGame, getJetDifficulty } from './jet.js';
 import { DashGame, getDashDifficulty } from './dash.js';
+import { HuntGame } from './hunt.js';
 import { mountPaint } from './paint-ui.js';
 import { mountAerger } from './aerger-ui.js';
 import { mountDuel } from './duel-ui.js';
@@ -69,6 +70,8 @@ const LS_JET_ONBOARD = 'orbit-jet-onboard-v1';
 const LS_DASH_BEST_PREFIX = 'orbit-dash-best-';
 const LS_DASH_DIFF = 'orbit-dash-difficulty';
 const LS_DASH_ONBOARD = 'orbit-dash-onboard-v2';
+const LS_HUNT_BEST = 'orbit-hunt-best';
+const LS_HUNT_ONBOARD = 'orbit-hunt-onboard-v1';
 const SHARE_NOTE = '(Orbit Rush — play locally / LiveCodes)';
 
 const canvas = /** @type {HTMLCanvasElement} */ ($('game'));
@@ -98,6 +101,8 @@ const screens = {
   dash: $('screen-dash'),
   dashOnboard: $('screen-dash-onboard'),
   dashDiff: $('screen-dash-diff'),
+  hunt: $('screen-hunt'),
+  huntOnboard: $('screen-hunt-onboard'),
   aerger: $('screen-aerger'),
   duel: $('screen-duel'),
   paint: $('screen-paint'),
@@ -122,7 +127,7 @@ const toastEl = $('toast');
 let lastResult = null;
 let lbBackTo = 'title';
 let lbFilter = 'all';
-/** @type {'hub'|'rush'|'mirror'|'aerger'|'duel'|'drift'|'pulse'|'jet'|'dash'|'paint'} */
+/** @type {'hub'|'rush'|'mirror'|'aerger'|'duel'|'drift'|'pulse'|'jet'|'dash'|'hunt'|'paint'} */
 let activeGame = 'hub';
 /** @type {() => void} */
 let pauseAerger = () => {};
@@ -130,7 +135,7 @@ let pauseAerger = () => {};
 let pauseDuel = () => {};
 /** @type {() => void} */
 let pausePaint = () => {};
-/** @type {'rush'|'mirror'|'drift'|'pulse'|'jet'|'dash'} */
+/** @type {'rush'|'mirror'|'drift'|'pulse'|'jet'|'dash'|'hunt'} */
 let lbGame = 'rush';
 let submitting = false;
 let runSeq = 0;
@@ -492,6 +497,44 @@ function markDashOnboard() {
   }
 }
 
+function getHuntBest() {
+  try {
+    return Math.max(0, Math.floor(Number(localStorage.getItem(LS_HUNT_BEST)) || 0));
+  } catch {
+    return 0;
+  }
+}
+
+function setHuntBest(score) {
+  try {
+    localStorage.setItem(LS_HUNT_BEST, String(Math.floor(score)));
+  } catch {
+    /* ignore */
+  }
+}
+
+function refreshHuntMenu() {
+  const best = getHuntBest();
+  const bestEl = $('hunt-best-val');
+  if (bestEl) bestEl.textContent = best > 0 ? String(best) : '—';
+}
+
+function huntOnboardDone() {
+  try {
+    return localStorage.getItem(LS_HUNT_ONBOARD) === '1';
+  } catch {
+    return true;
+  }
+}
+
+function markHuntOnboard() {
+  try {
+    localStorage.setItem(LS_HUNT_ONBOARD, '1');
+  } catch {
+    /* ignore */
+  }
+}
+
 function loadPulseDifficulty() {
   try {
     return normalizeDifficulty(localStorage.getItem(LS_PULSE_DIFF) || DEFAULT_DIFFICULTY);
@@ -618,7 +661,8 @@ function resultGame(result) {
     result?.game === 'drift' ||
     result?.game === 'pulse' ||
     result?.game === 'jet' ||
-    result?.game === 'dash'
+    result?.game === 'dash' ||
+    result?.game === 'hunt'
   ) {
     return result.game;
   }
@@ -630,21 +674,45 @@ function setHudChrome(mode) {
   const pulse = mode === 'pulse';
   const jetMode = mode === 'jet';
   const dashMode = mode === 'dash';
+  const huntMode = mode === 'hunt';
   const scoreLabel = $('hud-score-label');
   const orbsLabel = $('hud-orbs-label');
   const timeLabel = $('hud-time-label');
-  if (scoreLabel) scoreLabel.textContent = drift || pulse || jetMode || dashMode ? 'PUNKTE' : 'SCORE';
+  if (scoreLabel) scoreLabel.textContent = drift || pulse || jetMode || dashMode || huntMode ? 'PUNKTE' : 'SCORE';
   if (orbsLabel) {
-    orbsLabel.textContent = jetMode ? 'LEBEN' : pulse ? 'TREFFER' : drift || dashMode ? 'RINGE' : 'ORBS';
+    orbsLabel.textContent = huntMode
+      ? 'KUGELN'
+      : jetMode
+        ? 'LEBEN'
+        : pulse
+          ? 'TREFFER'
+          : drift || dashMode
+            ? 'RINGE'
+            : 'ORBS';
   }
   if (timeLabel) {
-    timeLabel.textContent = jetMode ? 'STUFE' : pulse ? 'TAKT' : dashMode ? 'METER' : drift ? 'KM' : 'TIME';
+    timeLabel.textContent = huntMode
+      ? 'ZEIT'
+      : jetMode
+        ? 'STUFE'
+        : pulse
+          ? 'TAKT'
+          : dashMode
+            ? 'METER'
+            : drift
+              ? 'KM'
+              : 'TIME';
   }
   hud.classList.toggle('drift-mode', drift);
   hud.classList.toggle('pulse-mode', pulse);
   hud.classList.toggle('jet-mode', jetMode);
   hud.classList.toggle('dash-mode', dashMode);
+  hud.classList.toggle('hunt-mode', huntMode);
   hud.classList.toggle('mirror-mode', mode === 'mirror');
+  if (!huntMode) {
+    hudTime.classList.remove('low');
+    $('btn-hunt-reload')?.classList.add('hidden');
+  }
   $('hud-tempo')?.classList.toggle('hidden', !dashMode);
   if (!jetMode) {
     $('pwr-overdrive')?.classList.add('hidden');
@@ -939,6 +1007,11 @@ function setOverDiffBadge(result) {
     badge.className = `diff-badge ${d}`;
     return;
   }
+  if (result.game === 'hunt') {
+    badge.textContent = '90s';
+    badge.className = 'diff-badge hunt';
+    return;
+  }
   if (result.game === 'pulse') {
     if (result.daily) {
       badge.textContent = `Daily · ${result.dailyDate || utcDateString()}`;
@@ -1072,6 +1145,11 @@ function buildShareText(result) {
     const meters = Math.max(0, Math.floor(result.distanceM || 0));
     return `Orbit Dash [${tag}] — ${score} Punkte — ${meters} m — schlag mich!`;
   }
+  if (result?.game === 'hunt') {
+    const hits = Math.max(0, Math.floor(result.hits || 0));
+    const accuracy = Math.max(0, Math.min(100, Math.round(result.accuracy || 0)));
+    return `Orbit Hunt — ${score} Punkte — ${hits} Treffer — ${accuracy}% — schlag mich!`;
+  }
   if (result?.game === 'pulse') {
     const tag = result.daily
       ? `Daily · ${result.dailyDate || utcDateString()}`
@@ -1101,6 +1179,7 @@ async function shareScore() {
         pulse: 'Orbit Pulse',
         jet: 'Orbit Jet',
         dash: 'Orbit Dash',
+        hunt: 'Orbit Hunt',
       };
       await navigator.share({ title: titles[lastResult?.game] || 'Orbit Rush', text });
       $('submit-status').textContent = 'Shared!';
@@ -1163,20 +1242,28 @@ function showGameOver(result) {
   const pulseRun = result.game === 'pulse';
   const jetRun = result.game === 'jet';
   const dashRun = result.game === 'dash';
+  const huntRun = result.game === 'hunt';
   const hint = $('name-hint');
   if (hint) {
     hint.textContent =
-      driftRun || pulseRun || jetRun || dashRun
+      driftRun || pulseRun || jetRun || dashRun || huntRun
         ? 'Ein Name, einmal. Spätere Runs speichern automatisch.'
         : 'Enter a name once. Later runs save automatically.';
   }
   const cause = $('over-cause');
   if (cause) {
-    const reason = jetRun || dashRun ? result.hitReason || '' : '';
+    const penalties = Math.max(0, Math.floor(result.penalties || 0));
+    const reason = huntRun
+      ? `Kette ×${Math.max(0, Math.floor(result.comboPeak || 0))}${penalties ? ` · ${penalties} Minus` : ''}`
+      : jetRun || dashRun
+        ? result.hitReason || ''
+        : '';
     cause.textContent = reason;
     cause.classList.toggle('hidden', !reason);
   }
-  $('over-title').textContent = dashRun
+  $('over-title').textContent = huntRun
+    ? 'ZEIT UM'
+    : dashRun
     ? 'LAUF BEENDET'
     : jetRun
       ? 'ABGESCHOSSEN'
@@ -1192,11 +1279,13 @@ function showGameOver(result) {
             ? 'SPIEGEL BRICHT'
             : 'ORBIT LOST';
   const retry = $('btn-retry');
-  if (retry) retry.textContent = pulseRun || jetRun || dashRun ? 'NOCHMAL' : 'PLAY AGAIN';
-  $('over-streak').classList.toggle('hidden', !mirrorRun && !driftRun && !pulseRun && !jetRun && !dashRun);
+  if (retry) retry.textContent = pulseRun || jetRun || dashRun || huntRun ? 'NOCHMAL' : 'PLAY AGAIN';
+  $('over-streak').classList.toggle('hidden', !mirrorRun && !driftRun && !pulseRun && !jetRun && !dashRun && !huntRun);
   const streakLine = $('over-streak');
   if (streakLine?.childNodes[0]?.nodeType === 3) {
-    streakLine.childNodes[0].textContent = jetRun
+    streakLine.childNodes[0].textContent = huntRun
+      ? 'Ausbeute: '
+      : jetRun
       ? 'Bosse: '
       : pulseRun
         ? 'Treffer: '
@@ -1205,7 +1294,7 @@ function showGameOver(result) {
           : 'Clean streak: ';
   }
 
-  if (!mirrorRun && !driftRun && !pulseRun && !jetRun && !dashRun) processAchievements(result);
+  if (!mirrorRun && !driftRun && !pulseRun && !jetRun && !dashRun && !huntRun) processAchievements(result);
 
   let isNew = false;
   let best = 0;
@@ -1242,6 +1331,18 @@ function showGameOver(result) {
     const ob = $('over-best');
     if (ob.childNodes[0] && ob.childNodes[0].nodeType === 3) {
       ob.childNodes[0].textContent = `Rekord (${getJetDifficulty(diff).label}): `;
+    }
+  } else if (huntRun) {
+    const prev = getHuntBest();
+    isNew = result.score > prev;
+    if (isNew) setHuntBest(result.score);
+    best = Math.max(prev, result.score);
+    const hits = Math.max(0, Math.floor(result.hits || 0));
+    const accuracy = Math.max(0, Math.min(100, Math.round(result.accuracy || 0)));
+    $('over-streak-val').textContent = `${hits} Treffer · ${accuracy}%`;
+    const ob = $('over-best');
+    if (ob.childNodes[0] && ob.childNodes[0].nodeType === 3) {
+      ob.childNodes[0].textContent = 'Rekord: ';
     }
   } else if (dashRun) {
     const diff = normalizeDifficulty(result.difficulty || dashDifficulty);
@@ -1317,8 +1418,9 @@ function showGameOver(result) {
       result.score
     );
   $('over-new-best').textContent =
-    driftRun || pulseRun || jetRun || dashRun ? '★ NEUER REKORD ★' : '★ NEW PERSONAL BEST ★';
+    driftRun || pulseRun || jetRun || dashRun || huntRun ? '★ NEUER REKORD ★' : '★ NEW PERSONAL BEST ★';
   $('btn-jet-bomb')?.classList.add('hidden');
+  $('btn-hunt-reload')?.classList.add('hidden');
   $('over-new-best').classList.toggle('hidden', !isNew || result.score <= 0);
   $('over-best').classList.toggle('hidden', best <= 0);
   $('over-best-val').textContent = String(best);
@@ -1329,6 +1431,7 @@ function showGameOver(result) {
   refreshPulseMenu();
   refreshJetMenu();
   refreshDashMenu();
+  refreshHuntMenu();
   refreshHub();
   presentGameOverIdentity(result);
   showScreen('over');
@@ -1502,12 +1605,45 @@ const dash = new DashGame(canvas, {
   },
 });
 
+const hunt = new HuntGame(canvas, {
+  audio,
+  onHud({ score, ammo, mag, time, combo, reloading, lowTime }) {
+    hudScore.textContent = String(score);
+    hudOrbs.textContent = reloading ? '…' : `${ammo}/${mag}`;
+    hudTime.textContent = Number(time || 0).toFixed(1);
+    hudTime.classList.toggle('low', !!lowTime);
+    $('hud-combo-label').textContent = 'KETTE';
+    if (combo > 1) {
+      hudCombo.classList.remove('hidden');
+      hudComboVal.textContent = `x${combo}`;
+      hudCombo.classList.toggle('hot', combo >= 4);
+    } else {
+      hudCombo.classList.add('hidden');
+      hudCombo.classList.remove('hot');
+    }
+    pwrShield.classList.add('hidden');
+    pwrSlow.classList.add('hidden');
+    pwrMagnet.classList.add('hidden');
+    hudMode.textContent = 'JAGD';
+    hudMode.classList.remove('hidden');
+    const reloadBtn = $('btn-hunt-reload');
+    if (reloadBtn) {
+      reloadBtn.textContent = reloading ? 'LÄDT…' : 'NACHLADEN';
+      reloadBtn.classList.toggle('is-empty', !reloading && ammo <= 0);
+    }
+  },
+  onGameOver(result) {
+    showGameOver(result);
+  },
+});
+
 function liveGame() {
   if (activeGame === 'mirror') return mirror;
   if (activeGame === 'drift') return drift;
   if (activeGame === 'pulse') return pulse;
   if (activeGame === 'jet') return jet;
   if (activeGame === 'dash') return dash;
+  if (activeGame === 'hunt') return hunt;
   return game;
 }
 
@@ -1519,6 +1655,7 @@ function showHub() {
   if (pulse.running) pulse.stop();
   if (jet.running) jet.stop();
   if (dash.running) dash.stop();
+  if (hunt.running) hunt.stop();
   audio.stopMusic();
   audio.stopClip();
   hud.classList.add('hidden');
@@ -1535,6 +1672,7 @@ function openRushMenu() {
   if (pulse.running) pulse.stop();
   if (jet.running) jet.stop();
   if (dash.running) dash.stop();
+  if (hunt.running) hunt.stop();
   audio.stopMusic();
   audio.stopClip();
   hud.classList.add('hidden');
@@ -1552,6 +1690,7 @@ function openMirrorMenu() {
   if (pulse.running) pulse.stop();
   if (jet.running) jet.stop();
   if (dash.running) dash.stop();
+  if (hunt.running) hunt.stop();
   audio.stopMusic();
   audio.stopClip();
   hud.classList.add('hidden');
@@ -1568,6 +1707,7 @@ function openDriftMenu() {
   if (pulse.running) pulse.stop();
   if (jet.running) jet.stop();
   if (dash.running) dash.stop();
+  if (hunt.running) hunt.stop();
   audio.stopMusic();
   audio.stopClip();
   hud.classList.add('hidden');
@@ -1583,6 +1723,7 @@ function beginMirror() {
   if (pulse.running) pulse.stop();
   if (jet.running) jet.stop();
   if (dash.running) dash.stop();
+  if (hunt.running) hunt.stop();
   audio.resume();
   audio.startMusic();
   hideAllScreens();
@@ -1621,6 +1762,7 @@ function beginDrift() {
   if (pulse.running) pulse.stop();
   if (jet.running) jet.stop();
   if (dash.running) dash.stop();
+  if (hunt.running) hunt.stop();
   audio.resume();
   audio.startMusic();
   hideAllScreens();
@@ -1661,6 +1803,7 @@ function openPulseMenu() {
   if (pulse.running) pulse.stop();
   if (jet.running) jet.stop();
   if (dash.running) dash.stop();
+  if (hunt.running) hunt.stop();
   audio.stopMusic();
   audio.stopClip();
   hud.classList.add('hidden');
@@ -1708,6 +1851,7 @@ function beginPulse(opts = {}) {
   if (drift.running) drift.stop();
   if (jet.running) jet.stop();
   if (dash.running) dash.stop();
+  if (hunt.running) hunt.stop();
   audio.resume();
   audio.stopMusic();
   hideAllScreens();
@@ -1815,6 +1959,7 @@ function openJetMenu() {
   if (pulse.running) pulse.stop();
   if (jet.running) jet.stop();
   if (dash.running) dash.stop();
+  if (hunt.running) hunt.stop();
   audio.stopMusic();
   audio.stopClip();
   hud.classList.add('hidden');
@@ -1830,6 +1975,7 @@ function beginJet() {
   if (drift.running) drift.stop();
   if (pulse.running) pulse.stop();
   if (dash.running) dash.stop();
+  if (hunt.running) hunt.stop();
   audio.resume();
   audio.startMusic();
   hideAllScreens();
@@ -1908,6 +2054,7 @@ function openDashMenu() {
   if (pulse.running) pulse.stop();
   if (jet.running) jet.stop();
   if (dash.running) dash.stop();
+  if (hunt.running) hunt.stop();
   audio.stopMusic();
   audio.stopClip();
   hud.classList.add('hidden');
@@ -1923,6 +2070,7 @@ function beginDash() {
   if (drift.running) drift.stop();
   if (pulse.running) pulse.stop();
   if (jet.running) jet.stop();
+  if (hunt.running) hunt.stop();
   audio.resume();
   audio.startMusic();
   hideAllScreens();
@@ -1958,6 +2106,69 @@ function startDash() {
   openDashDifficulty();
 }
 
+function openHuntMenu() {
+  activeGame = 'hunt';
+  if (game.running) game.stop();
+  if (mirror.running) mirror.stop();
+  if (drift.running) drift.stop();
+  if (pulse.running) pulse.stop();
+  if (jet.running) jet.stop();
+  if (dash.running) dash.stop();
+  if (hunt.running) hunt.stop();
+  audio.stopMusic();
+  audio.stopClip();
+  hud.classList.add('hidden');
+  setHudChrome('rush');
+  refreshHuntMenu();
+  showScreen('hunt');
+}
+
+function beginHunt() {
+  activeGame = 'hunt';
+  if (game.running) game.stop();
+  if (mirror.running) mirror.stop();
+  if (drift.running) drift.stop();
+  if (pulse.running) pulse.stop();
+  if (jet.running) jet.stop();
+  if (dash.running) dash.stop();
+  audio.resume();
+  audio.stopMusic();
+  audio.stopClip();
+  hideAllScreens();
+  hud.classList.remove('hidden');
+  setHudChrome('hunt');
+  $('hud-combo-label').textContent = 'KETTE';
+  hudCombo.classList.add('hidden');
+  pwrShield.classList.add('hidden');
+  pwrSlow.classList.add('hidden');
+  pwrMagnet.classList.add('hidden');
+  $('pwr-overdrive')?.classList.add('hidden');
+  $('pwr-drone')?.classList.add('hidden');
+  $('btn-jet-bomb')?.classList.add('hidden');
+  const reloadBtn = $('btn-hunt-reload');
+  reloadBtn?.classList.remove('hidden');
+  hudMode.textContent = 'JAGD';
+  hudMode.classList.remove('hidden');
+  touchHint.textContent = 'Tippen trifft · Wischen schwenkt';
+  touchHint.classList.add('hidden');
+  touchHint.classList.remove('fade-fast');
+  void touchHint.offsetWidth;
+  touchHint.classList.remove('hidden');
+  canvas.classList.add('hunt-aim');
+  hunt.start();
+}
+
+function startHunt() {
+  activeGame = 'hunt';
+  audio.resume();
+  audio.click();
+  if (!huntOnboardDone()) {
+    showScreen('huntOnboard');
+    return;
+  }
+  beginHunt();
+}
+
 function beginRun(opts = {}) {
   activeGame = 'rush';
   if (mirror.running) mirror.stop();
@@ -1965,6 +2176,7 @@ function beginRun(opts = {}) {
   if (pulse.running) pulse.stop();
   if (jet.running) jet.stop();
   if (dash.running) dash.stop();
+  if (hunt.running) hunt.stop();
   setHudChrome('rush');
   $('hud-combo-label').textContent = 'COMBO';
   touchHint.textContent = 'Drag left / right to change orbit';
@@ -2034,7 +2246,12 @@ function startDaily() {
 function openLeaderboard(from, gameId = 'rush') {
   lbBackTo = from;
   lbGame =
-    gameId === 'mirror' || gameId === 'drift' || gameId === 'pulse' || gameId === 'jet' || gameId === 'dash'
+    gameId === 'mirror' ||
+    gameId === 'drift' ||
+    gameId === 'pulse' ||
+    gameId === 'jet' ||
+    gameId === 'dash' ||
+    gameId === 'hunt'
       ? gameId
       : 'rush';
   if (lbGame === 'rush') {
@@ -2045,6 +2262,8 @@ function openLeaderboard(from, gameId = 'rush') {
     lbFilter = jetDifficulty || 'all';
   } else if (lbGame === 'dash') {
     lbFilter = dashDifficulty || 'all';
+  } else if (lbGame === 'hunt') {
+    lbFilter = 'all';
   } else if (lbGame === 'pulse') {
     lbFilter =
       from === 'over' && lastResult?.game === 'pulse' && lastResult?.daily
@@ -2097,6 +2316,9 @@ async function renderLeaderboard() {
     if (lbFilter === 'daily') lbFilter = dashDifficulty || 'all';
     filters?.classList.remove('hidden');
     syncLbFilters();
+  } else if (lbGame === 'hunt') {
+    if (heading) heading.textContent = 'HUNT TOP 50';
+    filters?.classList.add('hidden');
   } else {
     if (heading) heading.textContent = 'GLOBAL TOP 50';
     filters?.classList.remove('hidden');
@@ -2124,6 +2346,10 @@ async function renderLeaderboard() {
       const res = await fetchScores(filter ? { difficulty: filter, game: 'dash' } : { game: 'dash' });
       scores = res.scores;
       source = res.source;
+    } else if (lbGame === 'hunt') {
+      const res = await fetchScores({ game: 'hunt' });
+      scores = res.scores;
+      source = res.source;
     } else if (lbGame === 'pulse' && lbFilter === 'daily') {
       const res = await fetchScores({ mode: 'daily', dailyDate: utcDateString(), game: 'pulse' });
       scores = res.scores;
@@ -2147,7 +2373,7 @@ async function renderLeaderboard() {
     list.innerHTML = '';
     if (!scores.length) {
       empty.classList.remove('hidden');
-      if (lbGame === 'drift' || lbGame === 'pulse' || lbGame === 'jet' || lbGame === 'dash') {
+      if (lbGame === 'drift' || lbGame === 'pulse' || lbGame === 'jet' || lbGame === 'dash' || lbGame === 'hunt') {
         empty.textContent =
           source === 'local'
             ? 'Noch keine Punkte (lokal). Sei der Erste.'
@@ -2183,6 +2409,9 @@ async function renderLeaderboard() {
       if (lbGame === 'mirror') {
         badge.className = 'diff-badge mirror';
         badge.textContent = 'Mirror';
+      } else if (lbGame === 'hunt') {
+        badge.className = 'diff-badge hunt';
+        badge.textContent = '90s';
       } else if (row.mode === 'daily' || ((lbGame === 'rush' || lbGame === 'pulse') && lbFilter === 'daily')) {
         badge.className = 'diff-badge daily';
         badge.textContent = row.dailyDate ? `Daily ${String(row.dailyDate).slice(5)}` : 'Daily';
@@ -2214,6 +2443,7 @@ $('btn-retry').addEventListener('click', () => {
     else startPulse();
   } else if (lastResult?.game === 'jet') startJet();
   else if (lastResult?.game === 'dash') startDash();
+  else if (lastResult?.game === 'hunt') startHunt();
   else if (lastResult?.daily || runMode === 'daily') startDaily();
   else startRun();
 });
@@ -2257,7 +2487,8 @@ $('btn-resume').addEventListener('click', () => {
   hideAllScreens();
   hud.classList.remove('hidden');
   if (activeGame === 'pulse') audio.resumeClip();
-  else audio.startMusic();
+  else if (activeGame !== 'hunt') audio.startMusic();
+  if (activeGame === 'hunt') $('btn-hunt-reload')?.classList.remove('hidden');
   liveGame().setPaused(false);
 });
 $('btn-quit').addEventListener('click', () => {
@@ -2284,6 +2515,9 @@ $('btn-quit').addEventListener('click', () => {
   } else if (leaving === 'dash') {
     refreshDashMenu();
     showScreen('dash');
+  } else if (leaving === 'hunt') {
+    refreshHuntMenu();
+    showScreen('hunt');
   } else {
     refreshTitleBest();
     showScreen('title');
@@ -2315,6 +2549,9 @@ $('btn-lb-back').addEventListener('click', () => {
   } else if (lbBackTo === 'dash') {
     refreshDashMenu();
     showScreen('dash');
+  } else if (lbBackTo === 'hunt') {
+    refreshHuntMenu();
+    showScreen('hunt');
   } else {
     refreshTitleBest();
     showScreen('title');
@@ -2364,6 +2601,7 @@ btnPause.addEventListener('click', () => {
   live.setPaused(true);
   hud.classList.add('hidden');
   $('btn-jet-bomb')?.classList.add('hidden');
+  $('btn-hunt-reload')?.classList.add('hidden');
   showScreen('pause');
 });
 
@@ -2374,7 +2612,7 @@ btnMute.addEventListener('click', () => {
   const live = liveGame();
   if (!audio.muted && live.running && live.alive && !live.paused) {
     if (activeGame === 'pulse') audio.resumeClip();
-    else audio.startMusic();
+    else if (activeGame !== 'hunt') audio.startMusic();
   }
 });
 
@@ -2408,12 +2646,14 @@ function onResize() {
   pulse.resize();
   jet.resize();
   dash.resize();
-  if (game.running || mirror.running || drift.running || pulse.running || jet.running || dash.running) return;
+  hunt.resize();
+  if (game.running || mirror.running || drift.running || pulse.running || jet.running || dash.running || hunt.running) return;
   if (activeGame === 'mirror') mirror.draw();
   else if (activeGame === 'drift') drift.draw();
   else if (activeGame === 'pulse') pulse.draw();
   else if (activeGame === 'jet') jet.draw();
   else if (activeGame === 'dash') dash.draw();
+  else if (activeGame === 'hunt') hunt.draw();
   else {
     if (typeof game.seedStars === 'function') game.seedStars();
     game.draw();
@@ -2423,12 +2663,13 @@ window.addEventListener('resize', onResize);
 window.addEventListener('orientationchange', () => setTimeout(onResize, 120));
 
 function idleDraw() {
-  if (!game.running && !mirror.running && !drift.running && !pulse.running && !jet.running && !dash.running) {
+  if (!game.running && !mirror.running && !drift.running && !pulse.running && !jet.running && !dash.running && !hunt.running) {
     if (activeGame === 'mirror') mirror.drawIdle();
     else if (activeGame === 'drift') drift.drawIdle();
     else if (activeGame === 'pulse') pulse.drawIdle();
     else if (activeGame === 'jet') jet.drawIdle();
     else if (activeGame === 'dash') dash.drawIdle();
+    else if (activeGame === 'hunt') hunt.drawIdle();
     else {
       game.angle += 0.004;
       game.draw();
@@ -2454,6 +2695,7 @@ function openAerger() {
   if (pulse.running) pulse.stop();
   if (jet.running) jet.stop();
   if (dash.running) dash.stop();
+  if (hunt.running) hunt.stop();
   audio.stopMusic();
   audio.stopClip();
   hud.classList.add('hidden');
@@ -2486,6 +2728,7 @@ function openDuel() {
   if (pulse.running) pulse.stop();
   if (jet.running) jet.stop();
   if (dash.running) dash.stop();
+  if (hunt.running) hunt.stop();
   audio.stopMusic();
   audio.stopClip();
   hud.classList.add('hidden');
@@ -2531,6 +2774,11 @@ $('btn-hub-dash').addEventListener('click', () => {
   audio.click();
   openDashMenu();
 });
+$('btn-hub-hunt').addEventListener('click', () => {
+  audio.resume();
+  audio.click();
+  openHuntMenu();
+});
 
 const paint = mountPaint({
   onHub: () => showHub(),
@@ -2546,6 +2794,7 @@ function openPaint() {
   if (pulse.running) pulse.stop();
   if (jet.running) jet.stop();
   if (dash.running) dash.stop();
+  if (hunt.running) hunt.stop();
   audio.stopMusic();
   audio.stopClip();
   hud.classList.add('hidden');
@@ -2689,6 +2938,32 @@ $('btn-dash-hub').addEventListener('click', () => {
   audio.click();
   showHub();
 });
+$('btn-hunt-play').addEventListener('click', startHunt);
+$('btn-hunt-lb').addEventListener('click', () => {
+  audio.click();
+  openLeaderboard('hunt', 'hunt');
+});
+$('btn-hunt-hub').addEventListener('click', () => {
+  audio.click();
+  showHub();
+});
+$('btn-hunt-onboard').addEventListener('click', () => {
+  audio.click();
+  markHuntOnboard();
+  beginHunt();
+});
+$('btn-hunt-onboard-skip').addEventListener('click', () => {
+  audio.click();
+  markHuntOnboard();
+  beginHunt();
+});
+$('btn-hunt-reload').addEventListener('click', (e) => {
+  e.stopPropagation();
+  e.preventDefault();
+  if (activeGame !== 'hunt' || !hunt.running || hunt.paused) return;
+  audio.resume();
+  hunt.reload();
+});
 $('btn-dash-onboard').addEventListener('click', () => {
   audio.click();
   markDashOnboard();
@@ -2741,6 +3016,7 @@ jet.setDifficulty(jetDifficulty);
 jet.resize();
 dash.setDifficulty(dashDifficulty);
 dash.resize();
+hunt.resize();
 preloadPulseManifest().catch(() => {});
 if (typeof game.seedStars === 'function') game.seedStars();
 idleDraw();
@@ -2752,6 +3028,7 @@ window.__ORBIT_RUSH__ = {
   pulse,
   jet,
   dash,
+  hunt,
   paint,
   computeScore,
   formatFormula,
@@ -2778,6 +3055,8 @@ window.__ORBIT_RUSH__ = {
   startDash,
   beginDash,
   openDashDifficulty,
+  startHunt,
+  beginHunt,
   showHub,
   beginRun,
   openDifficultyPicker,

@@ -342,7 +342,7 @@ async function main() {
       document.getElementById('btn-lb-back')?.click();
       document.getElementById('btn-over-hub')?.click();
       const hub = !document.getElementById('screen-hub').classList.contains('hidden');
-      const games = ['btn-hub-rush', 'btn-hub-mirror', 'btn-hub-aerger', 'btn-hub-duel', 'btn-hub-drift', 'btn-hub-pulse', 'btn-hub-jet'].map((id) => !!document.getElementById(id));
+      const games = ['btn-hub-rush', 'btn-hub-mirror', 'btn-hub-aerger', 'btn-hub-duel', 'btn-hub-drift', 'btn-hub-pulse', 'btn-hub-jet', 'btn-hub-dash', 'btn-hub-hunt', 'btn-hub-paint'].map((id) => !!document.getElementById(id));
       document.getElementById('btn-hub-aerger')?.click();
       const aerger = !document.getElementById('screen-aerger').classList.contains('hidden');
       return {

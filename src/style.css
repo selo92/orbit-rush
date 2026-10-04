@@ -903,7 +903,9 @@ h2 {
 .jet-diff-panel,
 .dash-panel,
 .dash-onboard-panel,
-.dash-diff-panel {
+.dash-diff-panel,
+.hunt-panel,
+.hunt-onboard-panel {
   max-height: calc(100vh - 28px - var(--safe-top) - var(--safe-bottom));
   overflow-y: auto;
 }
@@ -1027,6 +1029,10 @@ h2 {
   color: #7af0ff;
 }
 
+.hub-tile.hunt .hub-glyph {
+  color: #ffd56a;
+}
+
 .hub-tile.paint .hub-glyph {
   color: #ffe566;
 }
@@ -1100,6 +1106,15 @@ h2 {
 
 .hub-tile.dash strong {
   color: #7af0ff;
+}
+
+.hub-tile.hunt {
+  border-color: rgba(255, 196, 84, 0.7);
+  background: linear-gradient(160deg, rgba(48, 36, 8, 0.78), rgba(18, 36, 18, 0.62));
+}
+
+.hub-tile.hunt strong {
+  color: #ffd56a;
 }
 
 .hub-tile.paint {
@@ -1194,6 +1209,50 @@ h2 {
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.04em;
+}
+
+.hunt-reload {
+  position: absolute;
+  right: 14px;
+  bottom: calc(18px + var(--safe-bottom));
+  z-index: 6;
+  min-width: 118px;
+  height: 48px;
+  padding: 0 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 213, 106, 0.75);
+  background: rgba(28, 18, 8, 0.88);
+  color: #ffd56a;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  box-shadow: 0 0 18px rgba(255, 180, 60, 0.28);
+}
+
+.hunt-reload.is-empty {
+  animation: huntReload 0.7s ease-in-out infinite;
+}
+
+@keyframes huntReload {
+  50% {
+    transform: scale(1.05);
+    box-shadow: 0 0 22px rgba(255, 77, 109, 0.45);
+  }
+}
+
+#game.hunt-aim {
+  cursor: none;
+}
+
+.hud.hunt-mode #hud-time.low {
+  color: #ff4d6d;
+}
+
+.diff-badge.hunt {
+  color: #ffd56a;
+  border-color: rgba(255, 213, 106, 0.55);
+  background: rgba(255, 196, 84, 0.12);
 }
 
 .pulse-diff-panel h2 {

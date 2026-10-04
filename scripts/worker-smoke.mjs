@@ -464,7 +464,7 @@ try {
     ip: '203.0.113.92',
     body: { name: 'BadGame', score: computeScore(1000, 0, 0, 0), survivalMs: 1000, orbs: 0, game: 'puzzle' },
   });
-  assert(badGamePost.status === 400 && badGamePost.data.error === 'Invalid game (rush|mirror|drift|pulse|jet|dash)', 'invalid game post');
+  assert(badGamePost.status === 400 && badGamePost.data.error === 'Invalid game (rush|mirror|drift|pulse|jet|dash|hunt)', 'invalid game post');
 
   const driftScore = computeScore(8000, 3, 100, 2);
   const driftPost = await api('/api/scores', {
@@ -606,6 +606,30 @@ try {
   assert(dashBoard.data.scores.some((s) => s.name === 'DashPilot'), 'dash difficulty filter includes einfach');
   const rushAfterDash = await api('/api/scores?game=rush', { ip: '203.0.113.117' });
   assert(!rushAfterDash.data.scores.some((s) => s.name === 'DashPilot'), 'dash score stays off rush');
+
+  const huntScore = computeScore(90000, 4, 50, 2);
+  const huntPost = await api('/api/scores', {
+    method: 'POST',
+    ip: '203.0.113.118',
+    body: {
+      name: 'HuntPilot',
+      score: huntScore,
+      survivalMs: 90000,
+      orbs: 4,
+      comboBonus: 50,
+      nearMisses: 2,
+      difficulty: 'mittel',
+      game: 'hunt',
+    },
+  });
+  assert(huntPost.status === 200, `hunt post ${JSON.stringify(huntPost.data)}`);
+  assert(huntPost.data.scores.every((s) => s.game === 'hunt'), 'hunt response is the hunt board');
+  assert(huntPost.data.scores.some((s) => s.name === 'HuntPilot'), 'hunt pilot listed');
+  const huntBoard = await api('/api/scores?game=hunt', { ip: '203.0.113.119' });
+  assert(huntBoard.status === 200 && huntBoard.data.game === 'hunt', 'hunt filter names the board');
+  assert(huntBoard.data.scores.some((s) => s.name === 'HuntPilot'), 'hunt filter lists the pilot');
+  const rushAfterHunt = await api('/api/scores?game=rush', { ip: '203.0.113.119' });
+  assert(!rushAfterHunt.data.scores.some((s) => s.name === 'HuntPilot'), 'hunt score stays off rush');
 
   const notAScore = await api('/api/scores', {
     method: 'POST',

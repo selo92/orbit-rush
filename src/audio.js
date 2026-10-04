@@ -245,4 +245,147 @@ export class AudioBus {
       this._musicTimer = null;
     }
   }
+
+  /** Cached noise for Orbit Hunt. Synthesized, no samples. */
+  noiseBuffer() {
+    this.ensure();
+    if (!this.ctx) return null;
+    if (this._noise) return this._noise;
+    const n = Math.floor(this.ctx.sampleRate * 0.25);
+    const buf = this.ctx.createBuffer(1, n, this.ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) data[i] = Math.random() * 2 - 1;
+    this._noise = buf;
+    return buf;
+  }
+
+  /** Extra gain in front of the mute bus so the bang stays loud without ignoring mute. */
+  shotBus() {
+    if (this._shotGain) return this._shotGain;
+    const g = this.ctx.createGain();
+    g.gain.value = 1.85;
+    g.connect(this._master);
+    this._shotGain = g;
+    return g;
+  }
+
+  shapedNoise(t0, dur, gain, type, freq, dest) {
+    const buf = this.noiseBuffer();
+    if (!this.ctx || !buf || !dest) return;
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = type;
+    filter.frequency.setValueAtTime(freq, t0);
+    filter.Q.value = type === 'bandpass' ? 0.8 : 0.7;
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(gain, t0);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    src.connect(filter);
+    filter.connect(g);
+    g.connect(dest);
+    src.start(t0);
+    src.stop(t0 + dur + 0.02);
+  }
+
+  slideAt(t0, freq, slideTo, dur, type, gain, dest) {
+    if (!this.ctx || !dest) return;
+    const o = this.ctx.createOscillator();
+    const g = this.ctx.createGain();
+    o.type = type;
+    o.frequency.setValueAtTime(Math.max(20, freq), t0);
+    o.frequency.exponentialRampToValueAtTime(Math.max(20, slideTo), t0 + dur);
+    g.gain.setValueAtTime(gain, t0);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(g);
+    g.connect(dest);
+    o.start(t0);
+    o.stop(t0 + dur + 0.02);
+  }
+
+  clickAt(t0, freq, gain) {
+    if (!this.ctx || !this._master) return;
+    const o = this.ctx.createOscillator();
+    const g = this.ctx.createGain();
+    o.type = 'square';
+    o.frequency.setValueAtTime(freq, t0);
+    g.gain.setValueAtTime(gain, t0);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.028);
+    o.connect(g);
+    g.connect(this._master);
+    o.start(t0);
+    o.stop(t0 + 0.05);
+    this.shapedNoise(t0, 0.018, gain * 0.45, 'highpass', 1600, this._master);
+  }
+
+  /**
+   * Shotgun KNALL: noise burst, low thump, and two short delay taps.
+   * Everything is synthesized. Mute zeroes the master bus these nodes use.
+   */
+  shot() {
+    if (this.muted) return;
+    this.ensure();
+    if (!this.ctx || !this._master) return;
+    const t0 = this.ctx.currentTime;
+    const bus = this.shotBus();
+    this.shapedNoise(t0, 0.1, 0.95, 'lowpass', 420, bus);
+    this.shapedNoise(t0, 0.04, 0.55, 'highpass', 2400, bus);
+    this.slideAt(t0, 96, 36, 0.14, 'sine', 0.9, bus);
+    this.slideAt(t0, 180, 50, 0.05, 'triangle', 0.28, bus);
+    this.shapedNoise(t0 + 0.046, 0.08, 0.22, 'lowpass', 780, bus);
+    this.shapedNoise(t0 + 0.092, 0.1, 0.11, 'lowpass', 560, bus);
+  }
+
+  /** Click, then clack. */
+  reload() {
+    if (this.muted) return;
+    this.ensure();
+    if (!this.ctx) return;
+    const t0 = this.ctx.currentTime;
+    this.clickAt(t0, 190, 0.22);
+    this.clickAt(t0 + 0.078, 360, 0.16);
+  }
+
+  cock() {
+    if (this.muted) return;
+    this.ensure();
+    if (!this.ctx) return;
+    const t0 = this.ctx.currentTime;
+    this.clickAt(t0, 640, 0.14);
+    this.clickAt(t0 + 0.052, 420, 0.11);
+  }
+
+  /** Empty magazine. */
+  dry() {
+    if (this.muted) return;
+    this.ensure();
+    if (!this.ctx) return;
+    this.clickAt(this.ctx.currentTime, 150, 0.16);
+  }
+
+  /** Hit: a short squawk plus a soft poof. */
+  squawk() {
+    if (this.muted) return;
+    this.ensure();
+    if (!this.ctx || !this._master) return;
+    const t0 = this.ctx.currentTime;
+    this.slideAt(t0, 860, 220, 0.12, 'square', 0.24, this._master);
+    this.slideAt(t0 + 0.03, 540, 160, 0.1, 'triangle', 0.14, this._master);
+    this.shapedNoise(t0, 0.06, 0.32, 'bandpass', 980, this._master);
+  }
+
+  fluff() {
+    this.squawk();
+  }
+
+  sparkle() {
+    this.tone(880, 0.06, 'sine', 0.2);
+    this.tone(1320, 0.08, 'triangle', 0.16);
+    this.tone(1760, 0.1, 'sine', 0.1);
+  }
+
+  penalty() {
+    this.tone(240, 0.12, 'sawtooth', 0.18, 90);
+    this.tone(140, 0.16, 'square', 0.1);
+  }
 }

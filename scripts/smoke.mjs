@@ -261,6 +261,7 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
   assert(scoresMod.normalizeGame('Pulse') === 'pulse', 'normalize pulse');
   assert(scoresMod.normalizeGame('Jet') === 'jet', 'normalize jet');
   assert(scoresMod.normalizeGame('Dash') === 'dash', 'normalize dash');
+  assert(scoresMod.normalizeGame('Hunt') === 'hunt', 'normalize hunt');
   assert(scoresMod.normalizeGame('nope') === 'rush', 'unknown game defaults to rush');
 {
   const mixed = [
@@ -297,7 +298,7 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
     nearMisses: 0,
     game: 'nope',
   });
-  assert(!badGame.ok && badGame.error === 'Invalid game (rush|mirror|drift|pulse|jet|dash)', 'reject bad game');
+  assert(!badGame.ok && badGame.error === 'Invalid game (rush|mirror|drift|pulse|jet|dash|hunt)', 'reject bad game');
   const okGame = scoresMod.validatePostBody({
     name: 'A',
     score: 10,
@@ -1467,6 +1468,172 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
 }
 
 {
+  const { HuntGame, huntTargetPoints, HUNT_MAG, HUNT_RELOAD_SEC, formatHuntFormula } = await import(
+    path.join(root, 'src', 'hunt.js')
+  );
+
+  assert(huntTargetPoints('far') > huntTargetPoints('near'), 'a far puffling outscores a near one');
+  assert(huntTargetPoints('gold') > huntTargetPoints('far'), 'the golden puffling is the big prize');
+  assert(huntTargetPoints('hidden') === 200, 'the hidden puffling is worth 200');
+  assert(huntTargetPoints('sign') === 100, 'the signpost is worth 100');
+  assert(huntTargetPoints('near') === 75, 'a near puffling is the small prize');
+
+  function makeHunt() {
+    const canvas = {
+      width: 390,
+      height: 780,
+      style: {},
+      classList: { remove() {}, add() {} },
+      getBoundingClientRect: () => ({ width: 390, height: 780, left: 0, top: 0 }),
+      getContext() {
+        return { setTransform() {} };
+      },
+      addEventListener() {},
+      removeEventListener() {},
+      setPointerCapture() {},
+    };
+    const audio = new Proxy({}, { get: () => () => {} });
+    const game = new HuntGame(canvas, { audio, onGameOver() {}, onHud() {} });
+    game.resize();
+    return game;
+  }
+
+  const hunt = makeHunt();
+  hunt.running = true;
+  hunt.alive = true;
+  const far = hunt.makeBird('far', 240);
+  far.y = 150;
+  far.vx = 0;
+  const near = hunt.makeBird('near', 240);
+  near.y = 150;
+  near.vx = 0;
+  hunt.cam = 0;
+  hunt.birds = [far, near];
+  const aim = hunt.birdScreen(near);
+  hunt.aim = { x: aim.x, y: aim.y };
+  assert(hunt.shoot() === true, 'a shot leaves the magazine');
+  assert(near.falling === true && far.falling === false, 'the nearer puffling takes the hit');
+  assert(hunt.ammo === HUNT_MAG - 1, 'ammo drops by one');
+  assert(hunt.orbs === 0 && hunt.nearMisses === 1, 'a near hit is the smaller formula term');
+
+  hunt.birds = [far];
+  far.falling = false;
+  const farAim = hunt.birdScreen(far);
+  hunt.aim = { x: farAim.x, y: farAim.y };
+  hunt.shoot();
+  assert(far.falling === true, 'a far puffling falls when hit');
+  assert(hunt.orbs === 1 && hunt.nearMisses === 2, 'a far hit adds an orb and a near-miss');
+
+  hunt.aim = { x: 4, y: 4 };
+  const shotsBefore = hunt.shots;
+  const ammoBefore = hunt.ammo;
+  while (hunt.ammo > 0) hunt.shoot();
+  assert(hunt.ammo === 0, 'the magazine empties');
+  assert(hunt.shots === shotsBefore + ammoBefore, 'each remaining cartridge is one shot');
+  const dryShots = hunt.shots;
+  assert(hunt.shoot() === false && hunt.shots === dryShots, 'a dry click adds no shot');
+
+  assert(hunt.reload() === true, 'reload starts on an empty magazine');
+  assert(hunt.reload() === false, 'reload does not stack');
+  hunt.update(HUNT_RELOAD_SEC + 0.05);
+  assert(hunt.ammo === HUNT_MAG, 'reload fills eight shots');
+
+  const combo = makeHunt();
+  combo.award('mid');
+  combo.award('mid');
+  assert(combo.comboBonus === 50 && combo.orbs === 2, 'a second hit inside the window chains');
+  combo.syncScore();
+  const beforePenalty = combo.score;
+  combo.penalize();
+  assert(combo.score === beforePenalty - 100, 'a penalty removes 100 points');
+  assert(combo.comboTimer === 0, 'a penalty breaks the chain');
+
+  const posted = makeHunt();
+  posted.survivalMs = 90000;
+  posted.award('far');
+  posted.award('gold');
+  posted.award('hidden');
+  posted.award('sign');
+  posted.penalize();
+  const result = posted.buildResult();
+  assert(result.game === 'hunt', 'hunt result names its board');
+  assert(result.hits === 4 && result.penalties === 1, 'hunt result counts hits and penalties');
+  assert(
+    result.score === computeScore(result.survivalMs, result.orbs, result.comboBonus, result.nearMisses),
+    'hunt score matches the shared formula'
+  );
+  assert(
+    result.formula ===
+      formatHuntFormula(result.survivalMs, result.orbs, result.comboBonus, result.nearMisses, result.score),
+    'hunt formula string matches'
+  );
+  const accepted = scoresMod.validatePostBody({
+    name: 'HuntPilot',
+    score: result.score,
+    survivalMs: result.survivalMs,
+    orbs: result.orbs,
+    comboBonus: result.comboBonus,
+    nearMisses: result.nearMisses,
+    difficulty: result.difficulty,
+    game: result.game,
+  });
+  assert(accepted.ok, `hunt run passes the server check ${accepted.error || ''}`);
+
+  const pan = makeHunt();
+  pan.running = true;
+  pan.alive = true;
+  pan.pointerKind = 'mouse';
+  pan.pointerInside = true;
+  pan.aim = { x: 0, y: pan.h * 0.4 };
+  pan.cam = 220;
+  pan.step(0.3);
+  assert(pan.cam < 220, 'the view pans when the crosshair sits on the edge');
+
+  const popIn = makeHunt();
+  const planted = popIn.makeBird('mid', 120);
+  assert(planted.pop === 1 && planted.entrance === 'live', 'a placed puffling is ready to hit');
+  const born = popIn.surpriseBird('near');
+  assert(born.pop === 0 && born.entrance !== 'live', 'a spawned puffling pops in');
+  assert(
+    ['hill', 'hay', 'tree', 'wind', 'drop', 'grass', 'dash', 'peek'].includes(born.entrance),
+    'spawn uses a surprise entrance'
+  );
+  popIn.birds = [born];
+  popIn.running = true;
+  popIn.alive = true;
+  popIn.hitStop = 0;
+  popIn.step(0.2);
+  assert(born.pop > 0.5, 'the pop-in is snappy');
+
+  const juice = makeHunt();
+  juice.running = true;
+  juice.alive = true;
+  const golden = juice.makeBird('gold', 200);
+  golden.y = 180;
+  golden.vx = 0;
+  juice.cam = 0;
+  juice.birds = [golden];
+  const goldAim = juice.birdScreen(golden);
+  juice.aim = { x: goldAim.x, y: goldAim.y };
+  juice.shoot();
+  assert(juice.hitStop >= 0.06 && juice.hitStop <= 0.08, 'a hit freezes for a short beat');
+  assert(golden.flash === 1 && golden.falling === true, 'a hit flashes the puffling and knocks it down');
+  assert(juice.feathers.length >= 18, 'a hit throws a feather burst');
+  assert(juice.rings.length >= 1, 'a hit leaves an impact ring');
+  assert(juice.sparks.some((s) => s.star), 'a golden hit throws sparkles');
+  assert(juice.recoil > 0 && juice.muzzle > 0, 'a shot kicks the crosshair');
+  juice.step(0.05);
+  assert(juice.hitStop > 0 && golden.y === 180, 'the freeze holds the bird');
+  juice.hitStop = 0;
+  golden.y = juice.h * 0.7;
+  golden.vy = 500;
+  golden.falling = true;
+  golden.bounces = 0;
+  juice.step(0.16);
+  assert(golden.bounces >= 1, 'a falling puffling bounces on the ground');
+}
+
+{
   const manifest = JSON.parse(fs.readFileSync(path.join(root, 'public', 'pulse-music', 'manifest.json'), 'utf8'));
   const musicDir = path.join(root, 'public', 'pulse-music');
   for (const id of ['einfach', 'mittel', 'schwer', 'baba']) {
@@ -2548,6 +2715,32 @@ try {
   assert(!rushAfterDash.scores.some((s) => s.name === 'DashPilot'), 'express keeps dash off rush');
   const dashBoard = await fetch(`http://127.0.0.1:${PORT}/api/scores?game=dash&difficulty=einfach`).then((r) => r.json());
   assert(dashBoard.game === 'dash' && dashBoard.scores.some((s) => s.name === 'DashPilot'), 'express dash filter');
+
+  await new Promise((r) => setTimeout(r, 2100));
+  const huntScore = computeScore(90000, 4, 50, 2);
+  const huntPost = await fetch(`http://127.0.0.1:${PORT}/api/scores`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: 'HuntPilot',
+      score: huntScore,
+      survivalMs: 90000,
+      orbs: 4,
+      comboBonus: 50,
+      nearMisses: 2,
+      difficulty: 'mittel',
+      game: 'hunt',
+      clientId: 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1',
+    }),
+  });
+  const huntApi = await huntPost.json();
+  assert(huntPost.ok, `hunt post failed: ${JSON.stringify(huntApi)}`);
+  assert(huntApi.scores.every((s) => s.game === 'hunt'), 'express hunt board');
+  assert(huntApi.scores.some((s) => s.name === 'HuntPilot'), 'express hunt pilot');
+  const rushAfterHunt = await fetch(`http://127.0.0.1:${PORT}/api/scores?game=rush`).then((r) => r.json());
+  assert(!rushAfterHunt.scores.some((s) => s.name === 'HuntPilot'), 'express keeps hunt off rush');
+  const huntBoard = await fetch(`http://127.0.0.1:${PORT}/api/scores?game=hunt`).then((r) => r.json());
+  assert(huntBoard.game === 'hunt' && huntBoard.scores.some((s) => s.name === 'HuntPilot'), 'express hunt filter');
 
   const aergerBase = `http://127.0.0.1:${PORT}`;
   const created = await fetch(`${aergerBase}/api/aerger/create`, {
