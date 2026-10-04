@@ -1468,9 +1468,8 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
 }
 
 {
-  const { HuntGame, huntTargetPoints, HUNT_MAG, HUNT_RELOAD_SEC, formatHuntFormula } = await import(
-    path.join(root, 'src', 'hunt.js')
-  );
+  const { HuntGame, huntTargetPoints, HUNT_MAG, HUNT_RELOAD_SEC, HUNT_BIRD_MAX_SEC, formatHuntFormula } =
+    await import(path.join(root, 'src', 'hunt.js'));
 
   assert(huntTargetPoints('far') > huntTargetPoints('near'), 'a far puffling outscores a near one');
   assert(huntTargetPoints('gold') > huntTargetPoints('far'), 'the golden puffling is the big prize');
@@ -1478,13 +1477,13 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
   assert(huntTargetPoints('sign') === 100, 'the signpost is worth 100');
   assert(huntTargetPoints('near') === 75, 'a near puffling is the small prize');
 
-  function makeHunt() {
+  function makeHunt(w = 390, h = 780) {
     const canvas = {
-      width: 390,
-      height: 780,
+      width: w,
+      height: h,
       style: {},
       classList: { remove() {}, add() {} },
-      getBoundingClientRect: () => ({ width: 390, height: 780, left: 0, top: 0 }),
+      getBoundingClientRect: () => ({ width: w, height: h, left: 0, top: 0 }),
       getContext() {
         return { setTransform() {} };
       },
@@ -1631,6 +1630,231 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
   golden.bounces = 0;
   juice.step(0.16);
   assert(golden.bounces >= 1, 'a falling puffling bounces on the ground');
+
+  function armBird(game, kind, sx, sy) {
+    const bird = game.makeBird(kind, 0);
+    bird.pop = 1;
+    bird.bob = 0;
+    bird.falling = false;
+    bird.leaving = false;
+    bird.vx = 0;
+    bird.y = sy;
+    bird.x = sx + game.cam * bird.depth;
+    game.birds = [bird];
+    game.ammo = HUNT_MAG;
+    game.hitStop = 0;
+    game.viewShakeX = 0;
+    game.viewShakeY = 0;
+    game.pointerKind = '';
+    return bird;
+  }
+
+  for (const kind of ['near', 'mid', 'far', 'gold']) {
+    for (const camFrac of [0, 0.45, 1]) {
+      const depthHit = makeHunt();
+      depthHit.running = true;
+      depthHit.alive = true;
+      depthHit.cam = depthHit.maxCam * camFrac;
+      const sx = depthHit.w * (0.22 + camFrac * 0.18);
+      const sy = depthHit.h * 0.36;
+      const bird = armBird(depthHit, kind, sx, sy);
+      const screen = depthHit.birdScreen(bird);
+      assert(
+        Math.abs(screen.x - sx) < 0.02 && Math.abs(screen.y - sy) < 0.02,
+        `${kind} keeps its screen position at camera ${camFrac}`
+      );
+      depthHit.aim = { x: sx, y: sy };
+      depthHit.shoot();
+      assert(bird.falling === true, `${kind} dies when tapped at camera ${camFrac}`);
+    }
+  }
+
+  const phone = makeHunt(360, 520);
+  phone.running = true;
+  phone.alive = true;
+  phone.dpr = 3;
+  phone.cam = phone.maxCam * 0.63;
+  const tiny = armBird(phone, 'far', phone.w * 0.62, phone.h * 0.22);
+  phone.pointerKind = 'touch';
+  const tinyScreen = phone.birdScreen(tiny);
+  phone.aim = { x: tinyScreen.x, y: tinyScreen.y };
+  phone.shoot();
+  assert(tiny.falling === true, 'a far puffling on a short phone screen still dies');
+
+  const shape = makeHunt();
+  shape.running = true;
+  shape.alive = true;
+  shape.cam = 280;
+  const stretched = armBird(shape, 'far', 160, 150);
+  stretched.entrance = 'dash';
+  stretched.pop = 1;
+  const dashScreen = shape.birdScreen(stretched);
+  const [dashSx] = shape.popScale(stretched);
+  shape.aim = { x: dashScreen.x + stretched.r * 1.14 * dashSx * 0.96, y: dashScreen.y };
+  assert(shape.pick(shape.aim.x, shape.aim.y)?.bird === stretched, 'a dash wing is inside the hitbox');
+  stretched.entrance = 'hill';
+  stretched.pop = 0.75;
+  const [, squashSy] = shape.popScale(stretched);
+  const squashScreen = shape.birdScreen(stretched);
+  const tuftY = squashScreen.y - stretched.r * 1.12 * squashSy * 0.95;
+  assert(shape.pick(squashScreen.x, tuftY)?.bird === stretched, 'a stretched tuft is inside the hitbox');
+  stretched.pop = 0.16;
+  stretched.age = 0;
+  assert(!shape.pick(squashScreen.x, squashScreen.y), 'the first blink of a pop-in is not a target');
+  stretched.pop = 0.36;
+  assert(shape.pick(squashScreen.x, squashScreen.y)?.bird === stretched, 'a popped-in puffling can be hit');
+  stretched.pop = 0.1;
+  stretched.age = 0.45;
+  assert(shape.pick(squashScreen.x, squashScreen.y)?.bird === stretched, 'a stuck pop-in tell becomes hittable');
+
+  const slop = makeHunt();
+  slop.running = true;
+  slop.alive = true;
+  slop.cam = 140;
+  const slopBird = armBird(slop, 'mid', 200, 220);
+  const slopScreen = slop.birdScreen(slopBird);
+  slop.pointerKind = '';
+  const mouseBox = slop.birdHitExtents(slopBird);
+  slop.pointerKind = 'touch';
+  const touchBox = slop.birdHitExtents(slopBird);
+  const slopX = slopScreen.x + (mouseBox.hx + touchBox.hx) / 2;
+  slop.pointerKind = '';
+  assert(!slop.pick(slopX, slopScreen.y), 'the mouse hitbox stays close to the body');
+  slop.pointerKind = 'touch';
+  assert(slop.pick(slopX, slopScreen.y)?.bird === slopBird, 'a touch hitbox is more generous');
+
+  const shaken = makeHunt();
+  shaken.running = true;
+  shaken.alive = true;
+  shaken.cam = 360;
+  const shakenBird = armBird(shaken, 'far', 210, 130);
+  const shakenScreen = shaken.birdScreen(shakenBird);
+  const shakenBox = shaken.birdHitExtents(shakenBird);
+  shaken.viewShakeX = 12;
+  shaken.viewShakeY = -8;
+  const shakenAim = { x: shakenScreen.x + shakenBox.hx + 2, y: shakenScreen.y - 8 };
+  assert(shaken.pick(shakenAim.x, shakenAim.y)?.bird === shakenBird, 'a tap on the shaken sprite still hits');
+  shaken.viewShakeX = 0;
+  shaken.viewShakeY = 0;
+  assert(!shaken.pick(shakenAim.x, shakenAim.y), 'that point misses once the shake offset is gone');
+
+  const scaled = makeHunt();
+  scaled.running = true;
+  scaled.alive = true;
+  scaled.dpr = 2;
+  scaled.w = 390;
+  scaled.h = 780;
+  scaled.canvas.getBoundingClientRect = () => ({ left: 16, top: 40, width: 195, height: 390 });
+  const mapped = scaled.localPoint({ clientX: 16 + 195 * 0.4, clientY: 40 + 390 * 0.3 });
+  assert(Math.abs(mapped.x - 156) < 0.05 && Math.abs(mapped.y - 234) < 0.05, 'css scale and dpr map into game pixels');
+  scaled.cam = 220;
+  const scaledBird = armBird(scaled, 'far', mapped.x, mapped.y);
+  scaled.aim = mapped;
+  scaled.hitStop = 0.07;
+  assert(scaled.releasePointer(mapped, 12, 90) === true, 'a tap during hit-stop still fires');
+  assert(scaledBird.falling === true, 'a tap during hit-stop still kills the puffling');
+  const missed = armBird(scaled, 'mid', 40, 40);
+  const panShots = scaled.shots;
+  assert(scaled.releasePointer({ x: 8, y: 8 }, 70, 80) === false, 'a short pan does not fire');
+  assert(scaled.shots === panShots && missed.falling === false, 'a pan leaves the magazine alone');
+  scaled.aim = { x: missed.x - scaled.cam * missed.depth, y: 40 };
+  const slip = scaled.birdScreen(missed);
+  assert(scaled.releasePointer(slip, 60, 120) === true && missed.falling === true, 'a short slip onto a puffling still hits');
+  assert(scaled.releasePointer(slip, 20, 500) === false, 'a long press does not shoot');
+
+  const blocked = makeHunt();
+  blocked.running = true;
+  blocked.alive = true;
+  blocked.cam = Math.min(160, blocked.maxCam);
+  const lantern = blocked.props.find((prop) => prop.id === 'lantern');
+  const lanternPoint = blocked.penaltyPoint(lantern);
+  const covered = armBird(blocked, 'far', lanternPoint.x, lanternPoint.y);
+  covered.depth = 0.42;
+  covered.x = lanternPoint.x + blocked.cam * covered.depth;
+  blocked.penalties = 0;
+  blocked.aim = { x: lanternPoint.x, y: lanternPoint.y };
+  blocked.shoot();
+  assert(covered.falling === true, 'a puffling in front of a prop still dies');
+  assert(blocked.penalties === 0, 'the prop does not steal the hit');
+
+  const wind = blocked.props.find((prop) => prop.id === 'wind');
+  const perched = blocked.makeBird('mid');
+  perched.entrance = 'wind';
+  blocked.cam = 240;
+  blocked.perchOn(perched, wind);
+  const perchedScreen = perched.x - blocked.cam * perched.depth;
+  const windScreen = wind.x - blocked.cam * wind.depth + (wind.peekX || 0) * 0.15;
+  assert(perched.depth > wind.depth, 'a perched puffling is drawn in front of its prop');
+  assert(Math.abs(perchedScreen - windScreen) < 0.02, 'perching keeps the prop parallax');
+
+  const life = makeHunt();
+  life.running = true;
+  life.alive = true;
+  life.seedFlock();
+  for (let i = 0; i < (HUNT_BIRD_MAX_SEC + 1) / 0.02; i++) {
+    life.step(0.02);
+    for (const bird of life.birds) {
+      assert(
+        (bird.age || 0) <= HUNT_BIRD_MAX_SEC + 1e-6,
+        `no bird stays past its max life (${bird.kind} ${bird.entrance} ${bird.age})`
+      );
+    }
+  }
+  assert(life.birds.every((bird) => (bird.age || 0) <= HUNT_BIRD_MAX_SEC), 'the flock respects the lifetime cap');
+
+  const frozen = makeHunt();
+  frozen.running = true;
+  frozen.alive = true;
+  frozen.hitStop = 0;
+  const peek = frozen.makeBird('mid', frozen.w * 0.45);
+  peek.entrance = 'peek';
+  peek.peekLife = 0.08;
+  peek.pop = 1;
+  peek.vx = 0;
+  peek.cruise = 0;
+  peek.age = 0;
+  frozen.birds = [peek];
+  for (let i = 0; i < 50; i++) frozen.step(0.02);
+  assert(!frozen.birds.includes(peek), 'a peek tell ends instead of freezing the bird');
+
+  const wedged = frozen.makeBird('near', frozen.w * 0.5);
+  wedged.entrance = 'peek';
+  wedged.peekLife = 99;
+  wedged.pop = 1;
+  wedged.vx = 0;
+  wedged.cruise = 0;
+  wedged.age = 0;
+  frozen.birds = [wedged];
+  frozen.hitStop = 0;
+  for (let i = 0; i < 200; i++) frozen.step(0.02);
+  assert(!frozen.birds.includes(wedged), 'a peek whose timer never ends is forced out');
+
+  const still = frozen.makeBird('near', frozen.w * 0.5);
+  still.entrance = 'hill';
+  still.pop = 1;
+  still.vx = 0;
+  still.cruise = 0;
+  still.age = 0;
+  const stillX = still.x;
+  frozen.birds = [still];
+  frozen.step(0.02);
+  assert(Math.abs(still.vx) >= 48, 'a bird with no velocity is given an exit speed');
+  for (let i = 0; i < 100; i++) frozen.step(0.02);
+  assert(!frozen.birds.includes(still) || Math.abs(still.x - stillX) > 100, 'a bird with no velocity cannot hang in place');
+
+  const pinned = frozen.makeBird('far', 120);
+  pinned.age = HUNT_BIRD_MAX_SEC - 0.01;
+  pinned.pop = 1;
+  frozen.birds = [pinned];
+  frozen.hitStop = 3;
+  frozen.step(0.05);
+  assert(!frozen.birds.includes(pinned), 'hit-stop cannot pin a bird past its max life');
+
+  frozen.lastTs = 50;
+  frozen.running = true;
+  frozen.onAppHidden(true);
+  frozen.onAppHidden(false);
+  assert(frozen.lastTs === 0, 'returning from a hidden tab restarts the frame clock');
 }
 
 {

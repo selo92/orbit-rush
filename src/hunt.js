@@ -29,6 +29,9 @@ export const HUNT_ROUND_MS = HUNT_ROUND_SEC * 1000;
 export const HUNT_MAG = 8;
 export const HUNT_RELOAD_SEC = 0.48;
 export const HUNT_WORLD_SCREENS = 3.2;
+/** Hard cap so a wedged bird cannot sit in the meadow for the whole round. */
+export const HUNT_BIRD_MAX_SEC = 24;
+const HUNT_TAP_PX = 36;
 
 /** Base award, before the combo chain. */
 export const HUNT_AWARDS = {
@@ -181,6 +184,8 @@ export class HuntGame {
     this.pointerKind = '';
     this.pointerInside = false;
     this.shake = 0;
+    this.viewShakeX = 0;
+    this.viewShakeY = 0;
     this.muzzle = 0;
     this.recoil = 0;
     this.hitStop = 0;
@@ -301,10 +306,15 @@ export class HuntGame {
         return;
       }
       this.pointerKind = e.pointerType || 'touch';
+      const down = this.localPoint(e);
       this.drag = {
         id: e.pointerId,
         x: e.clientX,
         y: e.clientY,
+        x0: e.clientX,
+        y0: e.clientY,
+        ax: down.x,
+        ay: down.y,
         t: typeof performance !== 'undefined' ? performance.now() : Date.now(),
         moved: false,
       };
@@ -323,10 +333,15 @@ export class HuntGame {
         return;
       }
       if (!this.drag || this.drag.id !== e.pointerId) return;
+      const travel = Math.hypot(e.clientX - this.drag.x0, e.clientY - this.drag.y0);
+      if (travel < HUNT_TAP_PX) return;
+      if (!this.drag.moved) {
+        this.drag.moved = true;
+        this.drag.x = e.clientX;
+        this.drag.y = e.clientY;
+        return;
+      }
       const dx = e.clientX - this.drag.x;
-      const dy = e.clientY - this.drag.y;
-      if (!this.drag.moved && Math.hypot(dx, dy) < 16) return;
-      this.drag.moved = true;
       this.cam -= dx;
       this.clampCam();
       this.drag.x = e.clientX;
@@ -335,13 +350,16 @@ export class HuntGame {
     this._onPointerUp = (e) => {
       if (this.drag && this.drag.id === e.pointerId) {
         const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
-        const dt = now - this.drag.t;
-        if (!this.drag.moved && dt < 360 && this.running && !this.paused && this.alive) {
-          this.aim = this.localPoint(e);
-          this.shoot();
-        }
+        const held = now - this.drag.t;
+        const travel = Math.hypot(e.clientX - this.drag.x0, e.clientY - this.drag.y0);
+        const aim = this.localPoint(e);
         this.drag = null;
+        this.releasePointer(aim, travel, held);
       }
+    };
+    this._onVis = () => {
+      if (typeof document === 'undefined') return;
+      this.onAppHidden(!!document.hidden);
     };
     this._onPointerLeave = (e) => {
       if (e.pointerType === 'mouse') this.pointerInside = false;
@@ -354,6 +372,9 @@ export class HuntGame {
     this.canvas.addEventListener('pointerup', this._onPointerUp);
     this.canvas.addEventListener('pointercancel', this._onPointerUp);
     this.canvas.addEventListener('pointerleave', this._onPointerLeave);
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', this._onVis);
+    }
   }
 
   unbindInput() {
@@ -367,7 +388,45 @@ export class HuntGame {
     this.canvas.removeEventListener('pointerup', this._onPointerUp);
     this.canvas.removeEventListener('pointercancel', this._onPointerUp);
     this.canvas.removeEventListener('pointerleave', this._onPointerLeave);
+    if (typeof document !== 'undefined' && this._onVis) {
+      document.removeEventListener('visibilitychange', this._onVis);
+    }
     this.drag = null;
+  }
+
+  /**
+   * A finger-up either shoots or was a pan. Hit-stop does not eat the tap:
+   * the shot is resolved immediately against the birds on screen.
+   * @param {{x:number,y:number}} aim
+   * @param {number} travelPx
+   * @param {number} heldMs
+   */
+  releasePointer(aim, travelPx, heldMs) {
+    if (!this.running || this.paused || !this.alive || this.ending) return false;
+    if (heldMs >= 480) return false;
+    const travel = Math.max(0, Number(travelPx) || 0);
+    const onBird = travel >= HUNT_TAP_PX && this.pick(aim.x, aim.y)?.kind === 'bird';
+    if (travel < HUNT_TAP_PX || onBird) {
+      this.aim = aim;
+      return this.shoot();
+    }
+    return false;
+  }
+
+  /** Restart the frame clock after the tab was hidden so the loop cannot stay frozen. */
+  onAppHidden(hidden) {
+    if (hidden) {
+      this._sawHide = true;
+      return;
+    }
+    if (!this._sawHide) return;
+    this._sawHide = false;
+    if (!this.running || this.paused) return;
+    this.lastTs = 0;
+    if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(this.raf);
+    if (typeof requestAnimationFrame === 'function') {
+      this.raf = requestAnimationFrame((t) => this.loop(t));
+    }
   }
 
   start() {
@@ -458,8 +517,10 @@ export class HuntGame {
         this.audio.cock?.();
       }
     }
+    this.guardBirds(dt);
     if (this.hitStop > 0) {
       this.hitStop = Math.max(0, this.hitStop - dt);
+      this.birds = this.birds.filter((bird) => !bird.doom);
       return;
     }
     if (this.pointerKind === 'mouse' && this.pointerInside && !this.ending) {
@@ -519,13 +580,17 @@ export class HuntGame {
     const dir = Math.random() < 0.5 ? -1 : 1;
     const scale = clamp((this.h || 780) / 780, 0.72, 1.15);
     const y = (this.h || 780) * flight.y;
+    const vx = dir * flight.speed * (0.88 + Math.random() * 0.28);
     return {
       kind,
       x: planted ? x : 0,
       y,
       flightY: y,
       hideY: null,
-      vx: dir * flight.speed * (0.88 + Math.random() * 0.28),
+      vx,
+      cruise: vx,
+      emerge: 1,
+      age: 0,
       depth: flight.depth,
       r: flight.r * scale,
       falling: false,
@@ -580,40 +645,38 @@ export class HuntGame {
       place(edge);
       const kick = kind === 'gold' ? 1.45 : 2.05 + Math.random() * 0.35;
       bird.vx = (fromLeft ? 1 : -1) * flight.speed * kick;
+      bird.cruise = bird.vx;
+      bird.emerge = 1;
       bird.y = bird.flightY;
       this.burstDust(fromLeft ? 10 : this.w - 10, bird.y, 7);
     } else if (entrance === 'drop') {
       place(sx);
       bird.hideY = -bird.r - 6;
       bird.y = bird.hideY;
-      bird.vx *= 0.35;
+      bird.emerge = 0.35;
       this.burstDust(sx, 8, 6);
     } else if (entrance === 'peek') {
       place(sx);
       bird.y = bird.flightY;
       bird.peekLife = 0.68 + Math.random() * 0.42;
-      bird.vx *= 0.12;
+      bird.vx = bird.cruise * 0.12;
+      bird.emerge = 1;
       this.burstDust(sx, bird.y + bird.r * 0.2, 8);
     } else if (entrance === 'wind' || entrance === 'tree' || entrance === 'hay') {
       const prop = entrance === 'wind' ? wind : entrance === 'tree' ? tree : hay;
-      const psx = prop.x - this.cam * prop.depth + (prop.peekX || 0) * 0.15;
-      bird.depth = Math.max(0.28, prop.depth - 0.05);
-      bird.x = psx + this.cam * bird.depth;
-      bird.hideY = prop.y - prop.h * (entrance === 'hay' ? 0.2 : 0.42);
-      bird.y = bird.hideY;
-      bird.vx *= 0.18;
-      this.burstDust(psx, bird.hideY, 8);
+      this.perchOn(bird, prop);
+      this.burstDust(bird.x - this.cam * bird.depth, bird.hideY, 8);
     } else if (entrance === 'grass') {
       place(sx);
       bird.hideY = this.h * 0.7;
       bird.y = bird.hideY;
-      bird.vx *= 0.22;
+      bird.emerge = 0.22;
       this.burstDust(sx, bird.hideY, 8);
     } else {
       place(sx);
       bird.hideY = Math.max(this.h * 0.54, bird.flightY + this.h * 0.11);
       bird.y = bird.hideY;
-      bird.vx *= 0.28;
+      bird.emerge = 0.28;
       this.burstDust(sx, bird.hideY, 8);
     }
     return bird;
@@ -628,12 +691,46 @@ export class HuntGame {
     }
   }
 
+  guardBirds(dt) {
+    for (const bird of this.birds) {
+      bird.age = (bird.age || 0) + dt;
+      if (bird.age >= HUNT_BIRD_MAX_SEC) bird.doom = true;
+    }
+  }
+
+  /** True when no camera pan can bring the bird back onto the screen. */
+  beyondMeadow(bird) {
+    const margin = (bird.r || 20) + 90;
+    const depth = bird.depth || 0;
+    const minSx = bird.x - this.maxCam * depth;
+    const maxSx = bird.x;
+    return maxSx < -margin || minSx > this.w + margin;
+  }
+
+  perchOn(bird, prop) {
+    const psx = prop.x - this.cam * prop.depth + (prop.peekX || 0) * 0.15;
+    bird.depth = Math.min(1.2, (prop.depth || 1) + 0.06);
+    bird.x = psx + this.cam * bird.depth;
+    const hay = bird.entrance === 'hay';
+    bird.hideY = prop.y - prop.h * (hay ? 0.2 : 0.42);
+    bird.y = bird.hideY;
+    bird.emerge = 0.18;
+  }
+
+  finishEntrance(bird) {
+    if (bird.entrance === 'peek' || bird.entrance === 'dash') return;
+    const cruise = bird.cruise || bird.vx;
+    if (Math.abs(cruise) >= 48) bird.vx = cruise;
+  }
+
   advanceBirds(dt) {
     const ground = this.h * 0.78;
     for (const bird of this.birds) {
+      if (bird.doom) continue;
       bird.flap += dt * (bird.kind === 'gold' ? 16 : 9);
       if (bird.flash > 0) bird.flash = Math.max(0, bird.flash - dt * 7);
       if (bird.falling) {
+        bird.fallAge = (bird.fallAge || 0) + dt;
         bird.vy += 1400 * dt;
         bird.y += bird.vy * dt;
         bird.x += bird.vx * dt;
@@ -656,33 +753,47 @@ export class HuntGame {
           bird.y = ground;
           bird.rest += dt;
         }
-      } else if (bird.pop < 1) {
-        bird.pop = Math.min(1, bird.pop + dt / Math.max(0.08, bird.intro || 0.15));
+        if ((bird.rest || 0) > 1.05 || bird.fallAge > 3.6 || bird.y > this.h + (bird.r || 20) + 120) {
+          bird.doom = true;
+        }
+        continue;
+      }
+      // Leaving must win over pop-in. Otherwise pop climbs back to 1 and the bird freezes.
+      if (bird.leaving) {
+        bird.leaveAge = (bird.leaveAge || 0) + dt;
+        bird.pop = Math.max(0, (bird.pop ?? 1) - dt * 5.2);
+        bird.x += (bird.vx || 0) * dt * 0.35;
+        if (bird.pop <= 0.02 || bird.leaveAge > 0.6) bird.doom = true;
+        continue;
+      }
+      if ((bird.pop ?? 1) < 1) {
+        const intro = Math.min(0.22, Math.max(0.08, bird.intro || 0.15));
+        bird.pop = Math.min(1, bird.pop + dt / intro);
         if (bird.hideY != null) {
           const e = 1 - (1 - bird.pop) * (1 - bird.pop);
           bird.y = bird.hideY + (bird.flightY - bird.hideY) * e;
         }
-        const cruise = bird.entrance === 'dash' ? bird.vx : bird.vx * 0.35;
-        bird.x += cruise * dt;
-      } else if (bird.leaving) {
-        bird.pop = Math.max(0, bird.pop - dt * 5.2);
-      } else {
-        if (bird.entrance === 'peek') {
-          bird.peekLife -= dt;
-          if (bird.peekLife <= 0) bird.leaving = true;
+        bird.x += bird.vx * (bird.emerge ?? 1) * dt;
+        if (bird.pop >= 1 || (bird.age || 0) > 0.85) {
+          bird.pop = 1;
+          if (bird.hideY != null && (bird.age || 0) > 0.85) bird.y = bird.flightY;
+          this.finishEntrance(bird);
         }
-        bird.bob += dt * (bird.kind === 'gold' ? 11 : 6);
-        bird.x += bird.vx * dt;
+        continue;
       }
+      if (bird.entrance === 'peek') {
+        bird.peekLife = (bird.peekLife || 0) - dt;
+        if (bird.peekLife <= 0 || (bird.age || 0) > 2.6) bird.leaving = true;
+      } else if (Math.abs(bird.vx) < 48) {
+        const cruise = bird.cruise || 0;
+        if (Math.abs(cruise) >= 48) bird.vx = cruise;
+        else bird.vx = (Math.sign(cruise || bird.vx) || 1) * 72;
+      }
+      bird.bob += dt * (bird.kind === 'gold' ? 11 : 6);
+      bird.x += bird.vx * dt;
+      if (this.beyondMeadow(bird)) bird.doom = true;
     }
-    this.birds = this.birds.filter((bird) => {
-      if (bird.leaving && bird.pop <= 0.02) return false;
-      if (bird.falling) {
-        if ((bird.rest || 0) > 1.05) return false;
-        return bird.y < this.h + bird.r + 80;
-      }
-      return bird.x > -240 && bird.x < this.worldW + 240;
-    });
+    this.birds = this.birds.filter((bird) => !bird.doom);
   }
 
   advanceProps(dt) {
@@ -763,21 +874,55 @@ export class HuntGame {
     return { x: sx, y, r: prop.r || 28 };
   }
 
+  birdHittable(bird) {
+    if (!bird || bird.falling || bird.leaving || bird.doom) return false;
+    if ((bird.pop ?? 1) >= 0.3) return true;
+    return (bird.age || 0) >= 0.4;
+  }
+
+  /** Ellipse around the drawn body, including squash, wings, and extra touch slop. */
+  birdHitExtents(bird) {
+    const [sx, sy] = this.popScale(bird);
+    const r = Math.max(8, bird.r || 16);
+    const touch = this.pointerKind === 'touch' || this.pointerKind === 'pen';
+    const pad = touch ? Math.max(14, r * 0.22) : Math.max(4, r * 0.1);
+    return {
+      hx: r * 1.2 * Math.max(sx, 0.2) + pad,
+      hy: r * 1.22 * Math.max(sy, 0.2) + pad,
+    };
+  }
+
   pick(sx, sy) {
+    const ox = this.viewShakeX || 0;
+    const oy = this.viewShakeY || 0;
+    /** @type {{kind: string, depth: number, d: number, bird?: object, prop?: object} | null} */
+    let best = null;
+    for (const bird of this.birds) {
+      if (!this.birdHittable(bird)) continue;
+      const p = this.birdScreen(bird);
+      const ext = this.birdHitExtents(bird);
+      const dx = p.x + ox - sx;
+      const dy = p.y + oy - sy;
+      const nx = dx / ext.hx;
+      const ny = dy / ext.hy;
+      if (nx * nx + ny * ny > 1) continue;
+      const d = Math.hypot(dx, dy);
+      if (
+        !best ||
+        bird.depth > best.depth + 1e-6 ||
+        (Math.abs(bird.depth - best.depth) <= 1e-6 && d < best.d)
+      ) {
+        best = { kind: 'bird', depth: bird.depth, d, bird };
+      }
+    }
+    if (best) return best;
     /** @type {Array<{kind: string, depth: number, d: number, bird?: object, prop?: object}>} */
     const hits = [];
-    for (const bird of this.birds) {
-      if (bird.falling || bird.leaving) continue;
-      if ((bird.pop ?? 1) < 0.52) continue;
-      const p = this.birdScreen(bird);
-      const d = Math.hypot(p.x - sx, p.y - sy);
-      if (d <= p.r * 1.06) hits.push({ kind: 'bird', depth: bird.depth, d, bird });
-    }
     const host = this.popupHost();
     const pop = host ? this.popupPoint(host) : null;
     if (pop && pop.peek > 0.42) {
       const d = Math.hypot(pop.x - sx, pop.y - sy);
-      if (d <= pop.r) hits.push({ kind: 'hidden', depth: (host?.depth || 1) + 0.2, d, prop: host });
+      if (d <= pop.r) hits.push({ kind: 'hidden', depth: host?.depth || 1, d, prop: host });
     }
     for (const prop of this.props) {
       if (prop.kind === 'sign' && prop.up) {
@@ -1093,6 +1238,8 @@ export class HuntGame {
     if (!ctx || typeof ctx.beginPath !== 'function' || !this.w) return;
     const shakeX = (Math.random() - 0.5) * this.shake * 7;
     const shakeY = (Math.random() - 0.5) * this.shake * 5;
+    this.viewShakeX = shakeX;
+    this.viewShakeY = shakeY;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     ctx.clearRect(0, 0, this.w, this.h);
     ctx.save();
