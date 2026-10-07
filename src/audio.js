@@ -388,4 +388,21 @@ export class AudioBus {
     this.tone(240, 0.12, 'sawtooth', 0.18, 90);
     this.tone(140, 0.16, 'square', 0.1);
   }
+
+  /** Rising warning tick while a Hunt attacker is on screen. */
+  huntDanger(urgency = 0) {
+    if (this.muted) return;
+    const u = Math.max(0, Math.min(1, Number(urgency) || 0));
+    this.tone(460 + u * 740, 0.055, 'square', 0.08 + u * 0.07);
+    this.tone(150 + u * 70, 0.07, 'sine', 0.05);
+  }
+
+  /** The attacker connects. A low hit plus a crunch. */
+  huntStrike() {
+    if (this.muted) return;
+    this.tone(168, 0.24, 'sawtooth', 0.4, 42);
+    this.tone(64, 0.3, 'square', 0.22);
+    this.ensure();
+    if (this.ctx && this._master) this.shapedNoise(this.ctx.currentTime, 0.16, 0.5, 'lowpass', 480, this._master);
+  }
 }

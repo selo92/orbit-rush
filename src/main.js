@@ -12,7 +12,7 @@ import {
 } from './pulse.js';
 import { JetGame, getJetDifficulty } from './jet.js';
 import { DashGame, getDashDifficulty } from './dash.js';
-import { HuntGame } from './hunt.js';
+import { HuntGame, getHuntDifficulty, normalizeHuntDifficulty } from './hunt.js';
 import { mountPaint } from './paint-ui.js';
 import { mountAerger } from './aerger-ui.js';
 import { mountDuel } from './duel-ui.js';
@@ -71,6 +71,8 @@ const LS_DASH_BEST_PREFIX = 'orbit-dash-best-';
 const LS_DASH_DIFF = 'orbit-dash-difficulty';
 const LS_DASH_ONBOARD = 'orbit-dash-onboard-v2';
 const LS_HUNT_BEST = 'orbit-hunt-best';
+const LS_HUNT_BEST_PREFIX = 'orbit-hunt-best-';
+const LS_HUNT_DIFF = 'orbit-hunt-difficulty';
 const LS_HUNT_ONBOARD = 'orbit-hunt-onboard-v1';
 const SHARE_NOTE = '(Orbit Rush — play locally / LiveCodes)';
 
@@ -103,6 +105,7 @@ const screens = {
   dashDiff: $('screen-dash-diff'),
   hunt: $('screen-hunt'),
   huntOnboard: $('screen-hunt-onboard'),
+  huntDiff: $('screen-hunt-diff'),
   aerger: $('screen-aerger'),
   duel: $('screen-duel'),
   paint: $('screen-paint'),
@@ -156,6 +159,8 @@ let pulseDifficulty = loadPulseDifficulty();
 let jetDifficulty = loadJetDifficulty();
 /** @type {import('./difficulty.js').DifficultyId} */
 let dashDifficulty = loadDashDifficulty();
+/** @type {'einfach'|'mittel'|'schwer'} */
+let huntDifficulty = loadHuntDifficulty();
 /** @type {string} */
 let selectedSkin = normalizeSkin(loadSavedSkin());
 
@@ -497,26 +502,62 @@ function markDashOnboard() {
   }
 }
 
-function getHuntBest() {
+function loadHuntDifficulty() {
   try {
-    return Math.max(0, Math.floor(Number(localStorage.getItem(LS_HUNT_BEST)) || 0));
+    return normalizeHuntDifficulty(localStorage.getItem(LS_HUNT_DIFF) || 'mittel');
+  } catch {
+    return 'mittel';
+  }
+}
+
+function saveHuntDifficulty(id) {
+  const d = normalizeHuntDifficulty(id);
+  huntDifficulty = d;
+  try {
+    localStorage.setItem(LS_HUNT_DIFF, d);
+  } catch {
+    /* ignore */
+  }
+}
+
+function getHuntBest(id = huntDifficulty) {
+  const d = normalizeHuntDifficulty(id);
+  try {
+    const per = Math.max(0, Math.floor(Number(localStorage.getItem(LS_HUNT_BEST_PREFIX + d)) || 0));
+    if (per > 0) return per;
+    if (d === 'mittel') {
+      const legacy = Math.max(0, Math.floor(Number(localStorage.getItem(LS_HUNT_BEST)) || 0));
+      if (legacy > 0) {
+        localStorage.setItem(LS_HUNT_BEST_PREFIX + 'mittel', String(legacy));
+        return legacy;
+      }
+    }
+    return 0;
   } catch {
     return 0;
   }
 }
 
-function setHuntBest(score) {
+function setHuntBest(score, id = huntDifficulty) {
+  const d = normalizeHuntDifficulty(id);
   try {
-    localStorage.setItem(LS_HUNT_BEST, String(Math.floor(score)));
+    const value = String(Math.floor(score));
+    localStorage.setItem(LS_HUNT_BEST_PREFIX + d, value);
+    if (d === 'mittel') localStorage.setItem(LS_HUNT_BEST, value);
   } catch {
     /* ignore */
   }
 }
 
 function refreshHuntMenu() {
-  const best = getHuntBest();
+  const best = getHuntBest(huntDifficulty);
+  const label = getHuntDifficulty(huntDifficulty).label;
   const bestEl = $('hunt-best-val');
   if (bestEl) bestEl.textContent = best > 0 ? String(best) : '—';
+  const line = $('hunt-best');
+  if (line?.childNodes[0]?.nodeType === 3) {
+    line.childNodes[0].textContent = `Rekord (${label}): `;
+  }
 }
 
 function huntOnboardDone() {
@@ -1008,8 +1049,9 @@ function setOverDiffBadge(result) {
     return;
   }
   if (result.game === 'hunt') {
-    badge.textContent = '90s';
-    badge.className = 'diff-badge hunt';
+    const d = normalizeHuntDifficulty(result.difficulty || huntDifficulty);
+    badge.textContent = getHuntDifficulty(d).label;
+    badge.className = `diff-badge ${d}`;
     return;
   }
   if (result.game === 'pulse') {
@@ -1148,7 +1190,8 @@ function buildShareText(result) {
   if (result?.game === 'hunt') {
     const hits = Math.max(0, Math.floor(result.hits || 0));
     const accuracy = Math.max(0, Math.min(100, Math.round(result.accuracy || 0)));
-    return `Orbit Hunt — ${score} Punkte — ${hits} Treffer — ${accuracy}% — schlag mich!`;
+    const tag = getHuntDifficulty(result.difficulty || huntDifficulty).label;
+    return `Orbit Hunt [${tag}] — ${score} Punkte — ${hits} Treffer — ${accuracy}% — schlag mich!`;
   }
   if (result?.game === 'pulse') {
     const tag = result.daily
@@ -1254,7 +1297,9 @@ function showGameOver(result) {
   if (cause) {
     const penalties = Math.max(0, Math.floor(result.penalties || 0));
     const reason = huntRun
-      ? `Kette ×${Math.max(0, Math.floor(result.comboPeak || 0))}${penalties ? ` · ${penalties} Minus` : ''}`
+      ? result.caught
+        ? 'Der Angreifer war schneller.'
+        : `Kette ×${Math.max(0, Math.floor(result.comboPeak || 0))}${penalties ? ` · ${penalties} Minus` : ''}`
       : jetRun || dashRun
         ? result.hitReason || ''
         : '';
@@ -1262,7 +1307,9 @@ function showGameOver(result) {
     cause.classList.toggle('hidden', !reason);
   }
   $('over-title').textContent = huntRun
-    ? 'ZEIT UM'
+    ? result.caught
+      ? 'Erwischt!'
+      : 'ZEIT UM'
     : dashRun
     ? 'LAUF BEENDET'
     : jetRun
@@ -1278,6 +1325,7 @@ function showGameOver(result) {
           : mirrorRun
             ? 'SPIEGEL BRICHT'
             : 'ORBIT LOST';
+  $('over-title').classList.toggle('caught', !!(huntRun && result.caught));
   const retry = $('btn-retry');
   if (retry) retry.textContent = pulseRun || jetRun || dashRun || huntRun ? 'NOCHMAL' : 'PLAY AGAIN';
   $('over-streak').classList.toggle('hidden', !mirrorRun && !driftRun && !pulseRun && !jetRun && !dashRun && !huntRun);
@@ -1333,16 +1381,17 @@ function showGameOver(result) {
       ob.childNodes[0].textContent = `Rekord (${getJetDifficulty(diff).label}): `;
     }
   } else if (huntRun) {
-    const prev = getHuntBest();
+    const diff = normalizeHuntDifficulty(result.difficulty || huntDifficulty);
+    const prev = getHuntBest(diff);
     isNew = result.score > prev;
-    if (isNew) setHuntBest(result.score);
+    if (isNew) setHuntBest(result.score, diff);
     best = Math.max(prev, result.score);
     const hits = Math.max(0, Math.floor(result.hits || 0));
     const accuracy = Math.max(0, Math.min(100, Math.round(result.accuracy || 0)));
     $('over-streak-val').textContent = `${hits} Treffer · ${accuracy}%`;
     const ob = $('over-best');
     if (ob.childNodes[0] && ob.childNodes[0].nodeType === 3) {
-      ob.childNodes[0].textContent = 'Rekord: ';
+      ob.childNodes[0].textContent = `Rekord (${getHuntDifficulty(diff).label}): `;
     }
   } else if (dashRun) {
     const diff = normalizeDifficulty(result.difficulty || dashDifficulty);
@@ -1624,7 +1673,7 @@ const hunt = new HuntGame(canvas, {
     pwrShield.classList.add('hidden');
     pwrSlow.classList.add('hidden');
     pwrMagnet.classList.add('hidden');
-    hudMode.textContent = 'JAGD';
+    hudMode.textContent = getHuntDifficulty(hunt.difficultyId).label.toUpperCase();
     hudMode.classList.remove('hidden');
     const reloadBtn = $('btn-hunt-reload');
     if (reloadBtn) {
@@ -2147,7 +2196,7 @@ function beginHunt() {
   $('btn-jet-bomb')?.classList.add('hidden');
   const reloadBtn = $('btn-hunt-reload');
   reloadBtn?.classList.remove('hidden');
-  hudMode.textContent = 'JAGD';
+  hudMode.textContent = getHuntDifficulty(huntDifficulty).label.toUpperCase();
   hudMode.classList.remove('hidden');
   touchHint.textContent = 'Tippen trifft · Wischen schwenkt';
   touchHint.classList.add('hidden');
@@ -2155,7 +2204,29 @@ function beginHunt() {
   void touchHint.offsetWidth;
   touchHint.classList.remove('hidden');
   canvas.classList.add('hunt-aim');
-  hunt.start();
+  hunt.start(huntDifficulty);
+}
+
+function syncHuntDiffChips() {
+  document.querySelectorAll('#hunt-diff-options .diff-chip').forEach((btn) => {
+    const id = btn.getAttribute('data-hunt-diff');
+    btn.setAttribute('aria-pressed', id === huntDifficulty ? 'true' : 'false');
+  });
+  const best = getHuntBest(huntDifficulty);
+  const label = getHuntDifficulty(huntDifficulty).label;
+  const line = $('hunt-diff-best');
+  if (line?.childNodes[0]?.nodeType === 3) {
+    line.childNodes[0].textContent = `Rekord auf ${label}: `;
+  }
+  const val = $('hunt-diff-best-val');
+  if (val) val.textContent = best > 0 ? String(best) : '—';
+  if (!hunt.running) hunt.setDifficulty(huntDifficulty);
+}
+
+function openHuntDifficulty() {
+  activeGame = 'hunt';
+  syncHuntDiffChips();
+  showScreen('huntDiff');
 }
 
 function startHunt() {
@@ -2166,7 +2237,7 @@ function startHunt() {
     showScreen('huntOnboard');
     return;
   }
-  beginHunt();
+  openHuntDifficulty();
 }
 
 function beginRun(opts = {}) {
@@ -2263,7 +2334,7 @@ function openLeaderboard(from, gameId = 'rush') {
   } else if (lbGame === 'dash') {
     lbFilter = dashDifficulty || 'all';
   } else if (lbGame === 'hunt') {
-    lbFilter = 'all';
+    lbFilter = huntDifficulty || 'all';
   } else if (lbGame === 'pulse') {
     lbFilter =
       from === 'over' && lastResult?.game === 'pulse' && lastResult?.daily
@@ -2278,11 +2349,16 @@ function openLeaderboard(from, gameId = 'rush') {
 function syncLbFilters() {
   document.querySelectorAll('.lb-filter').forEach((btn) => {
     const filter = btn.getAttribute('data-filter');
-    btn.classList.toggle('hidden', filter === 'daily' && lbGame !== 'rush' && lbGame !== 'pulse');
+    const hideDaily = filter === 'daily' && lbGame !== 'rush' && lbGame !== 'pulse';
+    const hideBaba = filter === 'baba' && lbGame === 'hunt';
+    btn.classList.toggle('hidden', hideDaily || hideBaba);
     btn.classList.toggle('active', filter === lbFilter);
+    if (filter === 'einfach') btn.textContent = lbGame === 'hunt' ? 'Leicht' : 'Einfach';
     if (filter === 'all') {
       btn.textContent =
-        lbGame === 'drift' || lbGame === 'pulse' || lbGame === 'jet' || lbGame === 'dash' ? 'Alle' : 'All';
+        lbGame === 'drift' || lbGame === 'pulse' || lbGame === 'jet' || lbGame === 'dash' || lbGame === 'hunt'
+          ? 'Alle'
+          : 'All';
     }
   });
 }
@@ -2318,7 +2394,9 @@ async function renderLeaderboard() {
     syncLbFilters();
   } else if (lbGame === 'hunt') {
     if (heading) heading.textContent = 'HUNT TOP 50';
-    filters?.classList.add('hidden');
+    if (lbFilter === 'daily' || lbFilter === 'baba') lbFilter = huntDifficulty || 'mittel';
+    filters?.classList.remove('hidden');
+    syncLbFilters();
   } else {
     if (heading) heading.textContent = 'GLOBAL TOP 50';
     filters?.classList.remove('hidden');
@@ -2347,7 +2425,8 @@ async function renderLeaderboard() {
       scores = res.scores;
       source = res.source;
     } else if (lbGame === 'hunt') {
-      const res = await fetchScores({ game: 'hunt' });
+      const filter = !lbFilter || lbFilter === 'all' ? undefined : lbFilter;
+      const res = await fetchScores(filter ? { difficulty: filter, game: 'hunt' } : { game: 'hunt' });
       scores = res.scores;
       source = res.source;
     } else if (lbGame === 'pulse' && lbFilter === 'daily') {
@@ -2410,8 +2489,9 @@ async function renderLeaderboard() {
         badge.className = 'diff-badge mirror';
         badge.textContent = 'Mirror';
       } else if (lbGame === 'hunt') {
-        badge.className = 'diff-badge hunt';
-        badge.textContent = '90s';
+        const d = normalizeHuntDifficulty(row.difficulty || 'mittel');
+        badge.className = `diff-badge ${d}`;
+        badge.textContent = getHuntDifficulty(d).label;
       } else if (row.mode === 'daily' || ((lbGame === 'rush' || lbGame === 'pulse') && lbFilter === 'daily')) {
         badge.className = 'diff-badge daily';
         badge.textContent = row.dailyDate ? `Daily ${String(row.dailyDate).slice(5)}` : 'Daily';
@@ -2950,12 +3030,28 @@ $('btn-hunt-hub').addEventListener('click', () => {
 $('btn-hunt-onboard').addEventListener('click', () => {
   audio.click();
   markHuntOnboard();
-  beginHunt();
+  openHuntDifficulty();
 });
 $('btn-hunt-onboard-skip').addEventListener('click', () => {
   audio.click();
   markHuntOnboard();
+  openHuntDifficulty();
+});
+document.querySelectorAll('#hunt-diff-options .diff-chip').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    audio.click();
+    huntDifficulty = normalizeHuntDifficulty(btn.getAttribute('data-hunt-diff'));
+    syncHuntDiffChips();
+  });
+});
+$('btn-hunt-diff-start').addEventListener('click', () => {
+  saveHuntDifficulty(huntDifficulty);
   beginHunt();
+});
+$('btn-hunt-diff-back').addEventListener('click', () => {
+  audio.click();
+  refreshHuntMenu();
+  showScreen('hunt');
 });
 $('btn-hunt-reload').addEventListener('click', (e) => {
   e.stopPropagation();
@@ -3019,6 +3115,7 @@ dash.resize();
 hunt.resize();
 preloadPulseManifest().catch(() => {});
 if (typeof game.seedStars === 'function') game.seedStars();
+hunt.setDifficulty(huntDifficulty);
 idleDraw();
 
 window.__ORBIT_RUSH__ = {
@@ -3057,6 +3154,7 @@ window.__ORBIT_RUSH__ = {
   openDashDifficulty,
   startHunt,
   beginHunt,
+  openHuntDifficulty,
   showHub,
   beginRun,
   openDifficultyPicker,
@@ -3103,6 +3201,13 @@ window.__ORBIT_RUSH__ = {
   },
   get dashDifficulty() {
     return dashDifficulty;
+  },
+  setHuntDifficulty(id) {
+    saveHuntDifficulty(id);
+    syncHuntDiffChips();
+  },
+  get huntDifficulty() {
+    return huntDifficulty;
   },
   setSkin(id) {
     if (!skinIsUnlocked(id)) return false;

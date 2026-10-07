@@ -1,24 +1,34 @@
 /**
- * Orbit Hunt — a 90-second cartoon shooting gallery.
+ * Orbit Hunt — a cartoon shooting gallery.
  *
- * Original pufflings (round fluffballs), not any existing shooting-gallery cast.
- * Far / small ones are worth more than near / big ones. The round always lasts
- * 90 seconds. The magazine holds 8 shots; reload with R, right-click, or the
- * on-screen button.
+ * Original creatures (round fluffballs), not any existing shooting-gallery cast
+ * and not a traced photo. Far / small ones are worth more than near / big ones.
+ * Mittel keeps the 90-second round and the 8-shot magazine. Leicht is slower
+ * and longer, with no attackers. Schwer is faster, shorter, and meaner.
+ * Reload with R, right-click, or the on-screen button.
  *
- * Points fold into the shared Rush formula so `game=hunt` passes the D1 check:
+ * Points fold into the shared Rush formula so `game=hunt` passes the D1 check.
+ * Difficulty is the existing `einfach|mittel|schwer` column (Leicht uses
+ * `einfach`). No new game id and no new Worker.
  *
  *   score = floor(seconds) × 10 + orbs × 100 + comboBonus + nearMisses × 75
  *
- *   near puffling   75   = 1 near-miss
- *   mid puffling   100   = 1 orb
- *   far puffling   175   = 1 orb + 1 near-miss
- *   golden puffling 300  = 3 orbs
- *   hidden puffling 200  = 2 orbs
- *   signpost       100   = 1 orb
- *   penalty        −100  (removed from orbs, then near-misses, before submit)
+ *   near puffling    75
+ *   hamster         100
+ *   mid puffling    100
+ *   far puffling    175
+ *   bunny           175
+ *   chick           200
+ *   hidden puffling 200
+ *   bat             250
+ *   mole            275
+ *   golden puffling 300
+ *   attacker        400
+ *   signpost        100
+ *   penalty         −100  (removed from orbs, then near-misses, before submit)
  *
  * A hit inside the combo window adds the usual chain bonus on orb hits.
+ * One foreground attacker at a time. Miss the window and the run ends.
  */
 import { computeScore, NEAR_MISS_POINTS, COMBO_GAP_SEC, COMBO_MAX, COMBO_STEP } from './game.js';
 
@@ -41,7 +51,121 @@ export const HUNT_AWARDS = {
   gold: { orbs: 3, near: 0, points: 300 },
   hidden: { orbs: 2, near: 0, points: 200 },
   sign: { orbs: 1, near: 0, points: 100 },
+  hamster: { orbs: 1, near: 0, points: 100 },
+  bunny: { orbs: 1, near: 1, points: 175 },
+  chick: { orbs: 2, near: 0, points: 200 },
+  bat: { orbs: 1, near: 2, points: 250 },
+  mole: { orbs: 2, near: 1, points: 275 },
+  attacker: { orbs: 4, near: 0, points: 400 },
 };
+
+/** Species besides the original pufflings. Movement and points differ. */
+export const HUNT_SPECIES = ['hamster', 'bunny', 'chick', 'mole', 'bat'];
+
+const SPECIES_DEF = {
+  puff: { speed: 1, size: 1, y: 0 },
+  hamster: { speed: 0.62, size: 1.16, y: 0.5 },
+  bunny: { speed: 0.92, size: 1.02, y: 0.46 },
+  chick: { speed: 1.28, size: 0.74, y: 0.3 },
+  mole: { speed: 0.35, size: 0.96, y: 0.6 },
+  bat: { speed: 1.22, size: 0.88, y: 0.18 },
+};
+
+const CRITTER_LOOK = {
+  hamster: { body: '#d2bba4', shade: '#a89078', belly: '#f6eadc', ear: '#e7b7a8', cheek: '#f0b0a8', nose: '#e07a8a' },
+  bunny: { body: '#f7f2ea', shade: '#e3d5c6', belly: '#fffaf6', ear: '#f6c3d2', cheek: '#f3b7c4', nose: '#e48b98' },
+  chick: { body: '#ffe56b', shade: '#f0c24a', belly: '#fff3c0', ear: '#ffd24a', cheek: '#ffb0a0', nose: '#ff8a3c' },
+  mole: { body: '#8d6b52', shade: '#6a4c38', belly: '#c4a484', ear: '#a07a62', cheek: '#d7a090', nose: '#f0a0b4' },
+  bat: { body: '#7d7a96', shade: '#55526e', belly: '#c0bdd2', ear: '#6a6684', cheek: '#c4a0b0', nose: '#e7a0b0' },
+};
+
+/** How long the lunge plays before the run is lost. */
+export const HUNT_LUNGE_SEC = 0.48;
+
+/**
+ * Leicht is stored as `einfach` so the existing difficulty column accepts it.
+ * Mittel matches the original 90s / 8-shot gallery, plus rare attackers.
+ *
+ * @type {Record<'einfach'|'mittel'|'schwer', {
+ *   id: 'einfach'|'mittel'|'schwer',
+ *   label: string,
+ *   blurb: string,
+ *   roundSec: number,
+ *   mag: number,
+ *   speed: number,
+ *   size: number,
+ *   spawnScale: number,
+ *   surprise: number,
+ *   attacker: boolean,
+ *   attackerWindow: number,
+ *   attackerGap: number,
+ *   attackerFirst: number,
+ * }>}
+ */
+export const HUNT_DIFFICULTIES = {
+  einfach: {
+    id: 'einfach',
+    label: 'Leicht',
+    blurb: 'Langsam · große Ziele · mehr Zeit · keine Angreifer',
+    roundSec: 120,
+    mag: 10,
+    speed: 0.68,
+    size: 1.3,
+    spawnScale: 1.35,
+    surprise: 0.55,
+    attacker: false,
+    attackerWindow: 0,
+    attackerGap: 99,
+    attackerFirst: 99,
+  },
+  mittel: {
+    id: 'mittel',
+    label: 'Mittel',
+    blurb: 'Bekannte Balance · hin und wieder ein Angreifer',
+    roundSec: 90,
+    mag: 8,
+    speed: 1,
+    size: 1,
+    spawnScale: 1,
+    surprise: 1,
+    attacker: true,
+    attackerWindow: 2,
+    attackerGap: 14,
+    attackerFirst: 12,
+  },
+  schwer: {
+    id: 'schwer',
+    label: 'Schwer',
+    blurb: 'Schnell · überraschende Auftritte · weniger Schuss · viele Angreifer',
+    roundSec: 68,
+    mag: 6,
+    speed: 1.38,
+    size: 0.86,
+    spawnScale: 0.62,
+    surprise: 1.65,
+    attacker: true,
+    attackerWindow: 1.35,
+    attackerGap: 6.2,
+    attackerFirst: 5.2,
+  },
+};
+
+const HUNT_DIFF_IDS = /** @type {const} */ (['einfach', 'mittel', 'schwer']);
+
+/** @param {unknown} id */
+export function normalizeHuntDifficulty(id) {
+  const s = typeof id === 'string' ? id.toLowerCase().trim() : '';
+  if (s === 'leicht') return 'einfach';
+  if (HUNT_DIFF_IDS.includes(/** @type {'einfach'|'mittel'|'schwer'} */ (s))) {
+    return /** @type {'einfach'|'mittel'|'schwer'} */ (s);
+  }
+  return 'mittel';
+}
+
+/** @param {unknown} id */
+export function getHuntDifficulty(id) {
+  return HUNT_DIFFICULTIES[normalizeHuntDifficulty(id)];
+}
 
 const KIND_LOOK = {
   near: { body: '#ffe0bf', wing: '#ff9d73', beak: '#ff8a5a', tuft: '#ffb088', belly: '#fff7ee' },
@@ -144,7 +268,15 @@ export class HuntGame {
     this._bound = false;
     this.clouds = [];
     this.idleT = 0;
+    this.difficultyId = 'mittel';
+    this.diff = getHuntDifficulty('mittel');
     this.resetState();
+  }
+
+  /** @param {unknown} id */
+  setDifficulty(id) {
+    this.difficultyId = normalizeHuntDifficulty(id);
+    this.diff = getHuntDifficulty(this.difficultyId);
   }
 
   resetState() {
@@ -161,7 +293,9 @@ export class HuntGame {
     this.comboCount = 0;
     this.comboTimer = 0;
     this.comboPeak = 0;
-    this.ammo = HUNT_MAG;
+    this.mag = this.diff?.mag ?? HUNT_MAG;
+    this.roundMs = Math.round((this.diff?.roundSec ?? HUNT_ROUND_SEC) * 1000);
+    this.ammo = this.mag;
     this.reloadT = 0;
     this.shots = 0;
     this.hits = 0;
@@ -192,6 +326,12 @@ export class HuntGame {
     this.bannerT = 2.6;
     this._settled = null;
     this.drag = null;
+    this.attacker = null;
+    this.attackerT = this.diff?.attacker ? this.diff.attackerFirst : 1e9;
+    this.caught = false;
+    this.crack = 0;
+    this.flash = 0;
+    this.armed = false;
   }
 
   resize() {
@@ -405,8 +545,9 @@ export class HuntGame {
     if (!this.running || this.paused || !this.alive || this.ending) return false;
     if (heldMs >= 480) return false;
     const travel = Math.max(0, Number(travelPx) || 0);
-    const onBird = travel >= HUNT_TAP_PX && this.pick(aim.x, aim.y)?.kind === 'bird';
-    if (travel < HUNT_TAP_PX || onBird) {
+    const picked = travel >= HUNT_TAP_PX ? this.pick(aim.x, aim.y) : null;
+    const onTarget = picked?.kind === 'bird' || picked?.kind === 'attacker';
+    if (travel < HUNT_TAP_PX || onTarget) {
       this.aim = aim;
       return this.shoot();
     }
@@ -429,9 +570,12 @@ export class HuntGame {
     }
   }
 
-  start() {
+  /** @param {unknown} [difficultyId] */
+  start(difficultyId) {
+    if (difficultyId != null && difficultyId !== '') this.setDifficulty(difficultyId);
     clearTimeout(this._overTimer);
     this.resetState();
+    this.armed = true;
     this.resize();
     this.seedFlock();
     this.bindInput();
@@ -494,12 +638,15 @@ export class HuntGame {
   }
 
   step(dt) {
+    if (this.finished) return;
     this.clock += dt;
     if (!this.ending) this.survivalMs += dt * 1000;
-    if (!this.ending && this.survivalMs >= HUNT_ROUND_MS) {
-      this.survivalMs = HUNT_ROUND_MS;
+    const roundMs = this.roundMs || HUNT_ROUND_MS;
+    if (!this.ending && this.survivalMs >= roundMs) {
+      this.survivalMs = roundMs;
       this.ending = true;
       this.endT = 0.7;
+      if (this.attacker?.phase === 'warn') this.attacker = null;
     }
     if (this.ending) {
       this.endT -= dt;
@@ -513,11 +660,13 @@ export class HuntGame {
     if (this.reloadT > 0) {
       this.reloadT = Math.max(0, this.reloadT - dt);
       if (this.reloadT === 0) {
-        this.ammo = HUNT_MAG;
+        this.ammo = this.mag || HUNT_MAG;
         this.audio.cock?.();
       }
     }
     this.guardBirds(dt);
+    this.advanceAttacker(dt);
+    if (this.finished) return;
     if (this.hitStop > 0) {
       this.hitStop = Math.max(0, this.hitStop - dt);
       this.birds = this.birds.filter((bird) => !bird.doom);
@@ -531,7 +680,7 @@ export class HuntGame {
       if (push) this.cam += push * 720 * dt;
     }
     this.clampCam();
-    if (!this.ending) this.spawn(dt);
+    if (!this.ending && this.attacker?.phase !== 'lunge') this.spawn(dt);
     this.advanceBirds(dt);
     this.advanceProps(dt);
   }
@@ -540,20 +689,40 @@ export class HuntGame {
     this.cam = clamp(this.cam, 0, this.maxCam);
   }
 
+  rollPuffKind() {
+    const roll = Math.random();
+    return roll < 0.34 ? 'near' : roll < 0.68 ? 'mid' : 'far';
+  }
+
+  rollSpecies() {
+    if (Math.random() < 0.4) return 'puff';
+    return HUNT_SPECIES[(Math.random() * HUNT_SPECIES.length) | 0];
+  }
+
+  speciesKind(species) {
+    if (species === 'hamster' || species === 'mole') return 'near';
+    if (species === 'chick') return 'far';
+    return 'mid';
+  }
+
   spawn(dt) {
+    const spawnScale = this.diff?.spawnScale ?? 1;
+    const surprise = this.diff?.surprise ?? 1;
     this.spawnT -= dt;
     this.goldT -= dt;
     this.popupGap -= dt;
     const alive = this.birds.filter((b) => !b.falling && !b.leaving).length;
-    if (this.spawnT <= 0 && alive < 7) {
-      let gap = 0.22 + Math.random() * Math.random() * 1.15;
-      if (Math.random() < 0.16) gap += 0.4 + Math.random() * 0.7;
+    const cap = surprise > 1.3 ? 8 : 7;
+    if (this.spawnT <= 0 && alive < cap) {
+      let gap = (0.22 + Math.random() * Math.random() * 1.15) * spawnScale;
+      if (Math.random() < 0.16) gap += (0.4 + Math.random() * 0.7) * (surprise > 1 ? 0.5 : 1);
       this.spawnT = gap;
-      const burst = Math.random() < 0.2 && alive < 5 ? 2 : 1;
+      let burst = Math.random() < 0.2 * Math.min(1.35, surprise) && alive < 5 ? 2 : 1;
+      if (surprise > 1.4 && Math.random() < 0.28 && alive < 4) burst = 3;
       for (let i = 0; i < burst; i++) {
-        const roll = Math.random();
-        const kind = roll < 0.34 ? 'near' : roll < 0.68 ? 'mid' : 'far';
-        this.birds.push(this.surpriseBird(kind));
+        const species = this.rollSpecies();
+        const kind = species === 'puff' ? this.rollPuffKind() : this.speciesKind(species);
+        this.birds.push(this.surpriseBird(kind, species));
       }
     }
     if (this.goldT <= 0) {
@@ -574,15 +743,19 @@ export class HuntGame {
     }
   }
 
-  makeBird(kind, x) {
+  makeBird(kind, x, species = 'puff') {
+    const spec = SPECIES_DEF[species] || SPECIES_DEF.puff;
     const flight = KIND_FLIGHT[kind] || KIND_FLIGHT.mid;
     const planted = x != null;
     const dir = Math.random() < 0.5 ? -1 : 1;
     const scale = clamp((this.h || 780) / 780, 0.72, 1.15);
-    const y = (this.h || 780) * flight.y;
-    const vx = dir * flight.speed * (0.88 + Math.random() * 0.28);
+    const diffSpeed = this.diff?.speed ?? 1;
+    const diffSize = this.diff?.size ?? 1;
+    const y = (this.h || 780) * (species === 'puff' ? flight.y : spec.y);
+    const vx = dir * flight.speed * (0.88 + Math.random() * 0.28) * diffSpeed * spec.speed;
     return {
       kind,
+      species,
       x: planted ? x : 0,
       y,
       flightY: y,
@@ -592,7 +765,7 @@ export class HuntGame {
       emerge: 1,
       age: 0,
       depth: flight.depth,
-      r: flight.r * scale,
+      r: flight.r * scale * diffSize * spec.size,
       falling: false,
       vy: 0,
       rot: 0,
@@ -618,9 +791,9 @@ export class HuntGame {
     return prop;
   }
 
-  /** A puffling that pops into the current view instead of drifting in from off-screen. */
-  surpriseBird(kind) {
-    const bird = this.makeBird(kind);
+  /** A creature that pops into the current view instead of drifting in from off-screen. */
+  surpriseBird(kind, species = 'puff') {
+    const bird = this.makeBird(kind, undefined, species);
     const flight = KIND_FLIGHT[kind] || KIND_FLIGHT.mid;
     const wind = this.propOnScreen('wind');
     const tree = this.propOnScreen('tree');
@@ -630,9 +803,13 @@ export class HuntGame {
     if (tree) options.push('tree', 'tree');
     if (hay) options.push('hay', 'hay');
     if (kind === 'gold') options.push('dash', 'drop', 'drop');
+    const surprise = this.diff?.surprise ?? 1;
+    if (surprise > 1.25) options.push('dash', 'drop', 'peek', 'dash');
+    if (surprise < 0.7) options.push('hill', 'grass', 'hill');
     const entrance = options[(Math.random() * options.length) | 0];
     bird.entrance = entrance;
-    bird.intro = 0.12 + Math.random() * 0.07;
+    const introScale = surprise > 1 ? Math.min(surprise, 1.55) : surprise < 1 ? Math.max(surprise, 0.72) : 1;
+    bird.intro = (0.12 + Math.random() * 0.07) / introScale;
     bird.pop = 0;
     bird.flightY = bird.y + (Math.random() - 0.5) * this.h * 0.035;
     const sx = this.w * (0.16 + Math.random() * 0.68);
@@ -644,7 +821,8 @@ export class HuntGame {
       const edge = fromLeft ? -(22 + Math.random() * 18) : this.w + 22 + Math.random() * 18;
       place(edge);
       const kick = kind === 'gold' ? 1.45 : 2.05 + Math.random() * 0.35;
-      bird.vx = (fromLeft ? 1 : -1) * flight.speed * kick;
+      const diffSpeed = this.diff?.speed ?? 1;
+      bird.vx = (fromLeft ? 1 : -1) * flight.speed * kick * diffSpeed * (SPECIES_DEF[species]?.speed || 1);
       bird.cruise = bird.vx;
       bird.emerge = 1;
       bird.y = bird.flightY;
@@ -679,13 +857,38 @@ export class HuntGame {
       bird.emerge = 0.28;
       this.burstDust(sx, bird.hideY, 8);
     }
+    if (species === 'mole') {
+      const sx = this.w * (0.16 + Math.random() * 0.68);
+      bird.species = 'mole';
+      bird.entrance = 'peek';
+      bird.depth = 1;
+      bird.x = sx + this.cam * bird.depth;
+      bird.flightY = this.h * 0.6;
+      bird.hideY = this.h * 0.74;
+      bird.y = bird.hideY;
+      bird.pop = 0;
+      bird.intro = 0.16;
+      bird.emerge = 0.2;
+      bird.peekLife = 0.72 + Math.random() * 0.38;
+      bird.vx = (Math.random() < 0.5 ? -1 : 1) * 28;
+      bird.cruise = bird.vx;
+      this.burstDust(sx, bird.hideY, 9);
+    } else if (species === 'bat' && bird.entrance !== 'dash') {
+      bird.flightY = this.h * (0.12 + Math.random() * 0.08);
+      if (bird.entrance === 'peek' || bird.hideY == null) bird.y = bird.flightY;
+    }
     return bird;
   }
 
   seedFlock() {
     this.birds = [];
-    for (const kind of ['near', 'mid', 'far']) {
-      const bird = this.surpriseBird(kind);
+    const lineup = [
+      ['near', 'puff'],
+      ['mid', 'hamster'],
+      ['far', 'chick'],
+    ];
+    for (const [kind, species] of lineup) {
+      const bird = this.surpriseBird(kind, species);
       bird.pop = 0.08 + Math.random() * 0.2;
       this.birds.push(bird);
     }
@@ -789,6 +992,7 @@ export class HuntGame {
         if (Math.abs(cruise) >= 48) bird.vx = cruise;
         else bird.vx = (Math.sign(cruise || bird.vx) || 1) * 72;
       }
+      if (bird.entrance !== 'peek') this.steerSpecies(bird);
       bird.bob += dt * (bird.kind === 'gold' ? 11 : 6);
       bird.x += bird.vx * dt;
       if (this.beyondMeadow(bird)) bird.doom = true;
@@ -841,12 +1045,38 @@ export class HuntGame {
 
   birdScreen(bird) {
     const rising = bird.pop != null && bird.pop < 1;
-    const bob = bird.falling || rising ? 0 : Math.sin(bird.bob) * bird.r * 0.22;
+    let bob = 0;
+    if (!bird.falling && !rising) {
+      if (bird.species === 'bunny') bob = -Math.abs(Math.sin(bird.bob * 1.35)) * bird.r * 0.9;
+      else if (bird.species === 'bat') bob = Math.sin((bird.age || 0) * 5) * bird.r * 1.1;
+      else if (bird.species === 'chick') bob = Math.sin((bird.age || 0) * 7) * bird.r * 0.4;
+      else if (bird.species === 'hamster') bob = Math.sin(bird.bob) * bird.r * 0.34;
+      else bob = Math.sin(bird.bob) * bird.r * 0.22;
+    }
     return {
       x: bird.x - this.cam * bird.depth,
       y: bird.y + bob,
       r: bird.r,
     };
+  }
+
+  /** Species motion that does not fight the pop-in or the peek tell. */
+  steerSpecies(bird) {
+    if (!bird.baseVx) {
+      const seeded = bird.cruise || bird.vx || 72;
+      bird.baseVx = Math.abs(seeded) < 36 ? Math.sign(seeded || 1) * 72 : seeded;
+    }
+    const cruise = bird.baseVx;
+    if (bird.species === 'bunny') {
+      const hop = Math.abs(Math.sin(bird.bob * 1.35));
+      bird.vx = hop < 0.15 ? cruise * 0.22 : cruise;
+    } else if (bird.species === 'chick') {
+      bird.vx = cruise + Math.sin((bird.age || 0) * 9) * Math.abs(cruise) * 0.55;
+    } else if (bird.species === 'bat') {
+      bird.vx = cruise * (0.65 + 0.7 * Math.sin((bird.age || 0) * 3.2));
+    } else if (bird.species === 'hamster') {
+      bird.vx = cruise * 0.72;
+    }
   }
 
   popupHost() {
@@ -892,7 +1122,21 @@ export class HuntGame {
     };
   }
 
+  attackerContains(attacker, sx, sy) {
+    const pop = Math.max(0.35, attacker.pop || 0);
+    const touch = this.pointerKind === 'touch' || this.pointerKind === 'pen';
+    const pad = touch ? Math.max(16, attacker.r * 0.08) : Math.max(6, attacker.r * 0.04);
+    const rad = attacker.r * (0.78 + 0.22 * pop) + pad;
+    const dx = attacker.x - sx;
+    const dy = attacker.y - sy;
+    return dx * dx + dy * dy <= rad * rad;
+  }
+
   pick(sx, sy) {
+    const threat = this.attacker;
+    if (threat && threat.phase === 'warn' && (threat.pop ?? 0) >= 0.18 && this.attackerContains(threat, sx, sy)) {
+      return { kind: 'attacker', depth: 4, d: 0, attacker: threat };
+    }
     const ox = this.viewShakeX || 0;
     const oy = this.viewShakeY || 0;
     /** @type {{kind: string, depth: number, d: number, bird?: object, prop?: object} | null} */
@@ -945,10 +1189,30 @@ export class HuntGame {
   }
 
   resolve(hit) {
+    if (hit.kind === 'attacker' && this.attacker) {
+      const attacker = this.attacker;
+      const gain = this.award('attacker');
+      this.attacker = null;
+      const gap = this.diff?.attackerGap || 12;
+      this.attackerT = gap * (0.85 + Math.random() * 0.35);
+      this.hitStop = 0.1;
+      this.shake = Math.min(1.7, this.shake + 1.05);
+      this.flash = 0.62;
+      this.puff(attacker.x, attacker.y, '#fff6ea', 42);
+      this.impact(attacker.x, attacker.y, '#ffe566');
+      this.sparkleBurst(attacker.x, attacker.y);
+      this.sparkleBurst(attacker.x, attacker.y - 16);
+      this.floatText(`+${gain}`, attacker.x, attacker.y - attacker.r * 0.35, '#ffe566', 1.7);
+      this.audio.squawk?.();
+      this.audio.sparkle?.();
+      return;
+    }
     if (hit.kind === 'bird' && hit.bird) {
       const bird = hit.bird;
       const p = this.birdScreen(bird);
       const gold = bird.kind === 'gold';
+      const awardKind =
+        bird.species && bird.species !== 'puff' && HUNT_AWARDS[bird.species] ? bird.species : bird.kind;
       bird.falling = true;
       bird.leaving = false;
       bird.pop = 1;
@@ -959,7 +1223,7 @@ export class HuntGame {
       bird.bounces = 0;
       bird.rest = 0;
       bird.rot = (Math.random() - 0.5) * 0.6;
-      const gain = this.award(bird.kind);
+      const gain = this.award(awardKind);
       const mult = Math.min(COMBO_MAX, this.comboCount);
       this.hitStop = 0.072;
       this.shake = Math.min(1.25, this.shake + 0.78);
@@ -1127,6 +1391,10 @@ export class HuntGame {
 
   fadeFx(dt) {
     this.shake = Math.max(0, this.shake - dt * 2.6);
+    if (!(this.attacker && this.attacker.phase === 'lunge')) {
+      this.flash = Math.max(0, this.flash - dt * 1.7);
+      this.crack = Math.max(0, this.crack - dt * 1.4);
+    }
     this.muzzle = Math.max(0, this.muzzle - dt * 7.5);
     this.recoil = Math.max(0, this.recoil - dt * 8);
     for (const f of this.feathers) {
@@ -1168,12 +1436,13 @@ export class HuntGame {
   }
 
   emitHud() {
-    const left = Math.max(0, (HUNT_ROUND_MS - this.survivalMs) / 1000);
+    const round = this.roundMs || HUNT_ROUND_MS;
+    const left = Math.max(0, (round - this.survivalMs) / 1000);
     const chain = this.comboTimer > 0 ? Math.min(COMBO_MAX, this.comboCount) : 0;
     this.onHud?.({
       score: this.score,
       ammo: this.ammo,
-      mag: HUNT_MAG,
+      mag: this.mag || HUNT_MAG,
       time: left,
       combo: chain,
       reloading: this.reloadT > 0,
@@ -1185,7 +1454,7 @@ export class HuntGame {
     if (this.finished) return;
     this.finished = true;
     this.alive = false;
-    this.survivalMs = Math.min(this.survivalMs, HUNT_ROUND_MS);
+    if (!this.caught) this.survivalMs = Math.min(this.survivalMs, this.roundMs || HUNT_ROUND_MS);
     this.syncScore();
     this.emitHud();
     const result = this.buildResult();
@@ -1207,7 +1476,9 @@ export class HuntGame {
       orbs: settled.orbs,
       comboBonus: settled.comboBonus,
       nearMisses: settled.nearMisses,
-      difficulty: 'mittel',
+      difficulty: this.difficultyId || 'mittel',
+      caught: !!this.caught,
+      endReason: this.caught ? 'caught' : 'time',
       daily: false,
       hits,
       shots,
@@ -1268,12 +1539,14 @@ export class HuntGame {
     for (const layer of layers) layer.draw();
     this.drawForeground(ctx);
     this.drawDust(ctx);
+    this.drawAttacker(ctx);
     this.drawFeathers(ctx);
     this.drawImpacts(ctx);
     this.drawFloats(ctx);
     this.drawCrosshair(ctx);
     this.drawAmmo(ctx);
-    if (this.bannerT > 0 && this.running) this.drawBanner(ctx);
+    if (this.bannerT > 0 && this.running && !(this.attacker && this.attacker.phase === 'warn')) this.drawBanner(ctx);
+    this.drawStrike(ctx);
     ctx.restore();
   }
 
@@ -1631,11 +1904,16 @@ export class HuntGame {
         ctx.fill();
       }
     }
-    this.drawFluff(ctx, 0, 0, p.r, {
-      ...look,
-      flap: bird.flap,
-      face: bird.falling ? 'hit' : 'fly',
-    });
+    const face = bird.falling ? 'hit' : 'cute';
+    if (!bird.species || bird.species === 'puff') {
+      this.drawFluff(ctx, 0, 0, p.r, {
+        ...look,
+        flap: bird.flap,
+        face: face === 'cute' ? 'fly' : face,
+      });
+    } else {
+      this.drawCritter(ctx, 0, 0, p.r, bird.species, face, bird.flap);
+    }
     if (bird.flash > 0.04) {
       ctx.globalAlpha = Math.min(0.92, bird.flash);
       ctx.fillStyle = '#fff';
@@ -1735,6 +2013,7 @@ export class HuntGame {
       ctx.arc(-r * 0.28, eyeY - r * 0.04, r * 0.04, 0, TWO_PI);
       ctx.arc(r * 0.28, eyeY - r * 0.04, r * 0.04, 0, TWO_PI);
       ctx.fill();
+      if (look.face === 'angry') this.drawAngryBrows(ctx, r, eyeY);
     }
     if (look.face !== 'hit') {
       ctx.fillStyle = look.beak;
@@ -1743,6 +2022,14 @@ export class HuntGame {
       ctx.quadraticCurveTo(r * 0.16, r * 0.2, 0, r * 0.28);
       ctx.quadraticCurveTo(-r * 0.16, r * 0.2, 0, r * 0.08);
       ctx.fill();
+    }
+    if (look.face === 'angry') {
+      ctx.strokeStyle = '#3a2a22';
+      ctx.lineWidth = Math.max(1.6, r * 0.06);
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.arc(0, r * 0.46, r * 0.14, 0.12 * Math.PI, 0.88 * Math.PI);
+      ctx.stroke();
     }
     ctx.fillStyle = 'rgba(255, 120, 140, 0.45)';
     ctx.beginPath();
@@ -1887,9 +2174,10 @@ export class HuntGame {
   drawAmmo(ctx) {
     const y = this.h - 22;
     const gap = 14;
-    const total = (HUNT_MAG - 1) * gap;
+    const mag = this.mag || HUNT_MAG;
+    const total = (mag - 1) * gap;
     const x0 = this.w * 0.5 - total / 2;
-    for (let i = 0; i < HUNT_MAG; i++) {
+    for (let i = 0; i < mag; i++) {
       const on = i < this.ammo;
       ctx.beginPath();
       ctx.fillStyle = on ? '#ffe7a8' : 'rgba(255,255,255,0.28)';
@@ -1908,5 +2196,369 @@ export class HuntGame {
     ctx.textBaseline = 'middle';
     ctx.fillText('Wischen schwenkt · Tippen trifft', this.w * 0.5, this.h * 0.74 + 18);
     ctx.globalAlpha = 1;
+  }
+
+  beginAttacker(species) {
+    if (this.attacker) return this.attacker;
+    const pool = ['puff', ...HUNT_SPECIES];
+    const id = pool.includes(species) ? species : pool[(Math.random() * pool.length) | 0];
+    const short = Math.min(this.w || 390, this.h || 780);
+    this.attacker = {
+      species: id,
+      phase: 'warn',
+      t: 0,
+      window: Math.max(0.4, this.diff?.attackerWindow || 2),
+      x: (this.w || 390) * (0.46 + Math.random() * 0.08),
+      y: (this.h || 780) * (0.4 + Math.random() * 0.05),
+      r: short * 0.34,
+      pop: 0,
+      beep: 0.02,
+      depth: 4,
+    };
+    this.shake = Math.max(this.shake, 0.5);
+    this.audio.huntDanger?.(0.2);
+    return this.attacker;
+  }
+
+  advanceAttacker(dt) {
+    const attacker = this.attacker;
+    if (!attacker) {
+      if (!this.armed || this.ending || this.finished || !this.diff?.attacker) return;
+      this.attackerT -= dt;
+      if (this.attackerT > 0) return;
+      if (this.ammo <= 0 || this.reloadT > 0) {
+        this.attackerT = 0.3;
+        return;
+      }
+      this.beginAttacker();
+      return;
+    }
+    if (attacker.phase === 'warn') {
+      attacker.pop = Math.min(1, (attacker.pop || 0) + dt / 0.11);
+      attacker.t += dt;
+      const urgency = clamp(attacker.t / attacker.window, 0, 1);
+      attacker.beep = (attacker.beep || 0) - dt;
+      if (attacker.beep <= 0) {
+        this.audio.huntDanger?.(urgency);
+        attacker.beep = Math.max(0.14, 0.38 - urgency * 0.22);
+      }
+      this.shake = Math.max(this.shake, 0.12 + urgency * 0.9);
+      if (attacker.t >= attacker.window) {
+        attacker.phase = 'lunge';
+        attacker.t = 0;
+        this.audio.huntStrike?.();
+        this.shake = 1.8;
+      }
+      return;
+    }
+    if (attacker.phase === 'lunge') {
+      attacker.t += dt;
+      const u = clamp(attacker.t / HUNT_LUNGE_SEC, 0, 1);
+      this.crack = u;
+      this.flash = u < 0.22 ? u / 0.22 : Math.max(0.35, 1 - (u - 0.22) * 0.45);
+      this.shake = 1.45 + u;
+      if (attacker.t >= HUNT_LUNGE_SEC) {
+        this.caught = true;
+        this.finish();
+      }
+    }
+  }
+
+  drawAngryBrows(ctx, r, eyeY) {
+    ctx.strokeStyle = '#1a120e';
+    ctx.lineWidth = Math.max(2.2, r * 0.1);
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(-r * 0.52, eyeY - r * 0.46);
+    ctx.lineTo(-r * 0.06, eyeY - r * 0.16);
+    ctx.moveTo(r * 0.52, eyeY - r * 0.46);
+    ctx.lineTo(r * 0.06, eyeY - r * 0.16);
+    ctx.stroke();
+  }
+
+  drawPuppyFace(ctx, r, face, nose) {
+    const eyeY = -r * 0.02;
+    const eyeR = r * 0.2;
+    if (face === 'hit') {
+      ctx.strokeStyle = '#2a211c';
+      ctx.lineWidth = Math.max(1.6, r * 0.08);
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(-r * 0.42, eyeY - r * 0.12);
+      ctx.lineTo(-r * 0.16, eyeY + r * 0.1);
+      ctx.moveTo(-r * 0.16, eyeY - r * 0.12);
+      ctx.lineTo(-r * 0.42, eyeY + r * 0.1);
+      ctx.moveTo(r * 0.16, eyeY - r * 0.12);
+      ctx.lineTo(r * 0.42, eyeY + r * 0.1);
+      ctx.moveTo(r * 0.42, eyeY - r * 0.12);
+      ctx.lineTo(r * 0.16, eyeY + r * 0.1);
+      ctx.stroke();
+    } else {
+      ctx.fillStyle = '#140e0c';
+      ctx.beginPath();
+      ctx.ellipse(-r * 0.28, eyeY, eyeR * 0.92, eyeR * 1.18, 0, 0, TWO_PI);
+      ctx.ellipse(r * 0.28, eyeY, eyeR * 0.92, eyeR * 1.18, 0, 0, TWO_PI);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.95)';
+      ctx.beginPath();
+      ctx.ellipse(-r * 0.36, eyeY - eyeR * 0.38, eyeR * 0.28, eyeR * 0.4, -0.5, 0, TWO_PI);
+      ctx.ellipse(r * 0.2, eyeY - eyeR * 0.38, eyeR * 0.28, eyeR * 0.4, -0.5, 0, TWO_PI);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.8)';
+      ctx.beginPath();
+      ctx.arc(-r * 0.2, eyeY + eyeR * 0.28, eyeR * 0.12, 0, TWO_PI);
+      ctx.arc(r * 0.36, eyeY + eyeR * 0.28, eyeR * 0.12, 0, TWO_PI);
+      ctx.fill();
+      if (face === 'angry') this.drawAngryBrows(ctx, r, eyeY);
+    }
+    if (nose === 'beak') {
+      ctx.fillStyle = '#ff8a3c';
+      ctx.beginPath();
+      ctx.moveTo(0, r * 0.16);
+      ctx.lineTo(r * 0.16, r * 0.32);
+      ctx.lineTo(-r * 0.16, r * 0.32);
+      ctx.closePath();
+      ctx.fill();
+    } else {
+      const noseR = nose === 'mole' ? r * 0.13 : r * 0.065;
+      ctx.fillStyle = nose === 'mole' ? '#f3a8bc' : '#e48b9a';
+      ctx.beginPath();
+      ctx.ellipse(0, r * (nose === 'mole' ? 0.2 : 0.24), noseR, noseR * 0.72, 0, 0, TWO_PI);
+      ctx.fill();
+    }
+    ctx.strokeStyle = face === 'angry' ? '#2a211c' : '#6a5348';
+    ctx.lineWidth = Math.max(1.4, r * (face === 'angry' ? 0.055 : 0.04));
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    if (face === 'angry') ctx.arc(0, r * 0.46, r * 0.14, Math.PI * 0.15, Math.PI * 0.85);
+    else ctx.arc(0, r * 0.4, r * 0.12, Math.PI * 1.16, Math.PI * 1.84);
+    ctx.stroke();
+    if (face !== 'hit') {
+      ctx.fillStyle = 'rgba(255, 140, 160, 0.45)';
+      ctx.beginPath();
+      ctx.ellipse(-r * 0.48, r * 0.18, r * 0.11, r * 0.07, 0, 0, TWO_PI);
+      ctx.ellipse(r * 0.48, r * 0.18, r * 0.11, r * 0.07, 0, 0, TWO_PI);
+      ctx.fill();
+    }
+  }
+
+  drawCritter(ctx, x, y, r, species, face, flap) {
+    const look = CRITTER_LOOK[species] || CRITTER_LOOK.hamster;
+    const wing = Math.sin(flap || 0);
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.fillStyle = 'rgba(50, 36, 24, 0.16)';
+    ctx.beginPath();
+    ctx.ellipse(0, r * 0.78, r * 0.55, r * 0.14, 0, 0, TWO_PI);
+    ctx.fill();
+    if (species === 'mole') {
+      ctx.fillStyle = '#6d4c34';
+      ctx.beginPath();
+      ctx.ellipse(0, r * 0.72, r * 0.85, r * 0.28, 0, 0, TWO_PI);
+      ctx.fill();
+      ctx.fillStyle = '#8a6244';
+      ctx.beginPath();
+      ctx.ellipse(-r * 0.2, r * 0.6, r * 0.28, r * 0.12, 0, 0, TWO_PI);
+      ctx.ellipse(r * 0.22, r * 0.62, r * 0.22, r * 0.1, 0, 0, TWO_PI);
+      ctx.fill();
+    }
+    if (species === 'bat') {
+      ctx.fillStyle = look.shade;
+      ctx.beginPath();
+      ctx.ellipse(-r * 0.85, r * 0.05, r * 0.62, r * 0.28, -0.7 + wing * 0.7, 0, TWO_PI);
+      ctx.ellipse(r * 0.85, r * 0.05, r * 0.62, r * 0.28, 0.7 - wing * 0.7, 0, TWO_PI);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+      ctx.lineWidth = Math.max(1, r * 0.04);
+      ctx.beginPath();
+      ctx.moveTo(-r * 0.45, r * 0.02);
+      ctx.lineTo(-r * 1.15, -r * 0.12 + wing * r * 0.16);
+      ctx.moveTo(r * 0.45, r * 0.02);
+      ctx.lineTo(r * 1.15, -r * 0.12 - wing * r * 0.16);
+      ctx.stroke();
+    } else if (species !== 'chick') {
+      ctx.fillStyle = look.shade;
+      ctx.beginPath();
+      ctx.ellipse(-r * 0.72, r * 0.08, r * 0.28, r * 0.16, -0.5 + wing * 0.3, 0, TWO_PI);
+      ctx.ellipse(r * 0.72, r * 0.08, r * 0.28, r * 0.16, 0.5 - wing * 0.3, 0, TWO_PI);
+      ctx.fill();
+    }
+    if (species === 'bunny') {
+      ctx.fillStyle = look.ear;
+      ctx.beginPath();
+      ctx.ellipse(-r * 0.28, -r * 0.95, r * 0.16, r * 0.48, -0.18, 0, TWO_PI);
+      ctx.ellipse(r * 0.28, -r * 0.95, r * 0.16, r * 0.48, 0.18, 0, TWO_PI);
+      ctx.fill();
+      ctx.fillStyle = '#ffd5e2';
+      ctx.beginPath();
+      ctx.ellipse(-r * 0.28, -r * 0.95, r * 0.07, r * 0.3, -0.18, 0, TWO_PI);
+      ctx.ellipse(r * 0.28, -r * 0.95, r * 0.07, r * 0.3, 0.18, 0, TWO_PI);
+      ctx.fill();
+    } else if (species === 'hamster') {
+      ctx.fillStyle = look.ear;
+      ctx.beginPath();
+      ctx.ellipse(-r * 0.42, -r * 0.62, r * 0.2, r * 0.18, -0.4, 0, TWO_PI);
+      ctx.ellipse(r * 0.42, -r * 0.62, r * 0.2, r * 0.18, 0.4, 0, TWO_PI);
+      ctx.fill();
+    } else if (species === 'bat') {
+      ctx.fillStyle = look.ear;
+      ctx.beginPath();
+      ctx.moveTo(-r * 0.22, -r * 0.45);
+      ctx.lineTo(-r * 0.42, -r * 1.05);
+      ctx.lineTo(-r * 0.02, -r * 0.55);
+      ctx.moveTo(r * 0.22, -r * 0.45);
+      ctx.lineTo(r * 0.42, -r * 1.05);
+      ctx.lineTo(r * 0.02, -r * 0.55);
+      ctx.fill();
+    }
+    ctx.fillStyle = look.shade;
+    ctx.beginPath();
+    ctx.ellipse(-r * 0.38, r * 0.08, r * 0.42, r * 0.36, 0, 0, TWO_PI);
+    ctx.ellipse(r * 0.4, r * 0.02, r * 0.4, r * 0.34, 0, 0, TWO_PI);
+    ctx.ellipse(0, -r * 0.28, r * 0.46, r * 0.4, 0, 0, TWO_PI);
+    ctx.fill();
+    const g = ctx.createRadialGradient(-r * 0.22, -r * 0.28, r * 0.08, 0, 0, r);
+    g.addColorStop(0, '#fffaf6');
+    g.addColorStop(0.5, look.body);
+    g.addColorStop(1, look.shade);
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, r * 0.78, r * 0.7, 0, 0, TWO_PI);
+    ctx.fill();
+    ctx.fillStyle = look.belly;
+    ctx.beginPath();
+    ctx.ellipse(0, r * 0.24, r * 0.36, r * 0.26, 0, 0, TWO_PI);
+    ctx.fill();
+    if (species === 'chick') {
+      ctx.fillStyle = look.shade;
+      ctx.beginPath();
+      ctx.ellipse(-r * 0.55, r * 0.12, r * 0.22, r * 0.12, -0.6 + wing * 0.4, 0, TWO_PI);
+      ctx.ellipse(r * 0.55, r * 0.12, r * 0.22, r * 0.12, 0.6 - wing * 0.4, 0, TWO_PI);
+      ctx.fill();
+      ctx.fillStyle = '#fff4c4';
+      ctx.beginPath();
+      ctx.ellipse(0, -r * 0.78, r * 0.1, r * 0.2, 0, 0, TWO_PI);
+      ctx.ellipse(-r * 0.12, -r * 0.7, r * 0.08, r * 0.16, -0.5, 0, TWO_PI);
+      ctx.fill();
+    }
+    if (species === 'bunny') {
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.ellipse(r * 0.55, r * 0.35, r * 0.14, r * 0.12, 0.4, 0, TWO_PI);
+      ctx.fill();
+    }
+    if (species === 'mole') {
+      ctx.strokeStyle = look.shade;
+      ctx.lineWidth = Math.max(1.4, r * 0.06);
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(-r * 0.28, r * 0.48);
+      ctx.lineTo(-r * 0.46, r * 0.66);
+      ctx.moveTo(r * 0.28, r * 0.48);
+      ctx.lineTo(r * 0.46, r * 0.66);
+      ctx.stroke();
+    }
+    const nose = species === 'chick' ? 'beak' : species === 'mole' ? 'mole' : 'pink';
+    this.drawPuppyFace(ctx, r, face, nose);
+    ctx.restore();
+  }
+
+  drawAttacker(ctx) {
+    const attacker = this.attacker;
+    if (!attacker) return;
+    const warn = attacker.phase === 'warn';
+    const u = warn ? clamp(attacker.t / attacker.window, 0, 1) : clamp(attacker.t / HUNT_LUNGE_SEC, 0, 1);
+    const pop = warn ? Math.max(0.08, attacker.pop || 0) : 1;
+    const grow = warn ? 0.84 + u * 0.28 : 1 + u * 3.6;
+    const sh = warn
+      ? Math.sin(attacker.t * (18 + u * 42)) * (1.4 + u * 10)
+      : Math.sin(attacker.t * 46) * 8;
+    const x = warn ? attacker.x : attacker.x + (this.w * 0.5 - attacker.x) * Math.min(1, u * 1.4);
+    const y = warn ? attacker.y : attacker.y + (this.h * 0.46 - attacker.y) * Math.min(1, u * 1.4);
+    if (warn && u > 0.35) {
+      const vg = ctx.createRadialGradient(x, y, attacker.r * 0.4, x, y, Math.max(this.w, this.h) * 0.72);
+      vg.addColorStop(0, 'rgba(255, 40, 70, 0)');
+      vg.addColorStop(1, `rgba(90, 0, 16, ${(u - 0.35) * 0.55})`);
+      ctx.fillStyle = vg;
+      ctx.fillRect(-8, -8, this.w + 16, this.h + 16);
+    }
+    ctx.save();
+    ctx.translate(sh, -sh * 0.25);
+    if (warn) {
+      const ring = attacker.r * (1.22 + u * 0.55) * Math.max(pop, 0.4);
+      ctx.strokeStyle = u > 0.62 ? '#ff3355' : '#ffb020';
+      ctx.lineWidth = 5 + u * 8;
+      ctx.globalAlpha = 0.95;
+      ctx.beginPath();
+      ctx.arc(x, y, ring, -Math.PI / 2, -Math.PI / 2 + TWO_PI * (1 - u));
+      ctx.stroke();
+      ctx.globalAlpha = 0.28 + 0.22 * Math.abs(Math.sin(attacker.t * 9));
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(x, y, ring * (1.12 + Math.sin(attacker.t * 8) * 0.03), 0, TWO_PI);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      const labelY = clamp(y - attacker.r * grow * pop - 22, 64, this.h * 0.28);
+      ctx.fillStyle = 'rgba(48, 8, 14, 0.78)';
+      const lw = Math.min(this.w * 0.7, 210);
+      ctx.fillRect(this.w * 0.5 - lw / 2, labelY - 16, lw, 28);
+      ctx.fillStyle = u > 0.62 ? '#ffd0d8' : '#ffe1a8';
+      ctx.font = '800 15px Segoe UI, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('JETZT TREFFEN!', this.w * 0.5, labelY - 2);
+    }
+    ctx.translate(x, y);
+    ctx.scale(grow * pop, grow * pop);
+    if (!attacker.species || attacker.species === 'puff') {
+      this.drawFluff(ctx, 0, 0, attacker.r, {
+        ...KIND_LOOK.mid,
+        flap: this.clock * 14,
+        face: 'angry',
+      });
+    } else {
+      this.drawCritter(ctx, 0, 0, attacker.r, attacker.species, 'angry', this.clock * 14);
+    }
+    ctx.restore();
+  }
+
+  drawStrike(ctx) {
+    if (this.flash > 0.02) {
+      ctx.fillStyle = `rgba(255, 244, 236, ${clamp(this.flash, 0, 1) * 0.72})`;
+      ctx.fillRect(-12, -12, this.w + 24, this.h + 24);
+    }
+    if (this.crack <= 0.02) return;
+    const cx = this.w * 0.5;
+    const cy = this.h * 0.46;
+    ctx.save();
+    ctx.globalAlpha = clamp(this.crack, 0, 1);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    const reach = Math.min(this.w, this.h) * (0.34 + this.crack * 0.55);
+    for (let i = 0; i < 9; i++) {
+      const a = (i / 9) * TWO_PI + 0.17;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      let x = cx;
+      let y = cy;
+      for (let s = 0; s < 4; s++) {
+        const wobble = ((i * 5 + s * 3) % 7) - 3;
+        x += Math.cos(a + wobble * 0.14) * (reach / 4);
+        y += Math.sin(a + wobble * 0.14) * (reach / 4);
+        ctx.lineTo(x, y);
+        if (s === 2) {
+          ctx.moveTo(x, y);
+          ctx.lineTo(x + Math.cos(a + 0.8) * reach * 0.18, y + Math.sin(a + 0.8) * reach * 0.18);
+          ctx.moveTo(x, y);
+        }
+      }
+      ctx.strokeStyle = 'rgba(28, 10, 14, 0.9)';
+      ctx.lineWidth = 7 + this.crack * 3;
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,255,255,0.92)';
+      ctx.lineWidth = 2.2 + this.crack;
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 }
