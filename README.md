@@ -76,9 +76,13 @@ Die Rangliste ist nur `game=dash` (Top 50), gefiltert nach `difficulty`. Keine n
 
 ## Orbit Hunt
 
-Schiessbude, 90 Sekunden, eigene Pufflinge (runde Fluffbälle, kein fremdes Figuren-Set). Die Wiese ist breiter als der Bildschirm und liegt in Parallax-Schichten. Am Desktop schiebt das Fadenkreuz am Rand die Kamera. Auf dem Handy wischst du zum Schwenken und tippst zum Schuss.
+Schiessbude mit eigenen Figuren (runde Fluffbälle, kein fremdes Figuren-Set und kein nachgezeichnetes Foto). Neben den Pufflingen gibt es einen Hamster, einen Hasen, ein Küken, einen Maulwurf und eine Fledermaus. Jede Art bewegt sich anders und zählt anders. Die Wiese ist breiter als der Bildschirm und liegt in Parallax-Schichten. Am Desktop schiebt das Fadenkreuz am Rand die Kamera. Auf dem Handy wischst du zum Schwenken und tippst zum Schuss.
 
-Das Magazin hat acht Schuss. Nachladen: **R**, Rechtsklick oder der Knopf **NACHLADEN**. Kleine ferne Pufflinge geben mehr Punkte als große nahe. Ein goldener Puffling, ein Versteck hinter Mühle, Baum oder Heuhaufen und das Schild **WEG** geben Extra. Laterne, Korb und Schlafwolke kosten Punkte und brechen die Kette. Ein Treffer wirbelt Federn auf, dann fällt der Puffling.
+Vor dem Start: **Leicht · Mittel · Schwer**. Leicht ist langsam, die Ziele sind groß, die Zeit ist länger, Angreifer gibt es nicht. Mittel bleibt bei 90 Sekunden und acht Schuss, dazu taucht selten ein Angreifer auf. Schwer ist schneller, die Auftritte sind kürzer, das Magazin hat sechs Schuss, die Runde ist kürzer, und Angreifer kommen oft. Der Grad liegt unter `orbit-hunt-difficulty` und ändert die anderen Spiele nicht. Leicht wird als `einfach` gespeichert, weil die Rangliste genau diese Werte kennt.
+
+Das Magazin hängt am Grad. Nachladen: **R**, Rechtsklick oder der Knopf **NACHLADEN**. Kleine ferne Pufflinge geben mehr Punkte als große nahe. Ein goldener Puffling, ein Versteck hinter Mühle, Baum oder Heuhaufen und das Schild **WEG** geben Extra. Laterne, Korb und Schlafwolke kosten Punkte und brechen die Kette. Ein Treffer wirbelt Federn auf, dann fällt die Figur.
+
+Ab Mittel kann eine Figur ganz nah vor der Kamera auftauchen: groß, wütende Augenbrauen, ein zitternder Ring und ein Warnton. Es ist immer nur eine. Triff sie, bevor der Ring leer ist (Mittel etwa zwei Sekunden, Schwer etwa 1,35 Sekunden), dann gibt es einen fetten Bonus. Verpasst du sie, stürzt sie auf die Kamera, das Bild reißt, und der Endschirm sagt **Erwischt!** mit dem Punktestand. Leicht hat diesen Moment nicht.
 
 Die Punkte laufen über dieselbe Formel wie Rush, damit der Server sie prüft. Die Zeit der Runde steckt in den Sekunden, die Ziele in Treffern und Weit-Treffern, die Kette im Combo-Bonus, ein Minus zieht vorher 100 Punkte aus den Treffern:
 
@@ -86,7 +90,7 @@ Die Punkte laufen über dieselbe Formel wie Rush, damit der Server sie prüft. D
 score = floor(Sekunden) × 10 + Treffer × 100 + comboBonus + Weit × 75
 ```
 
-Die Rangliste ist nur `game=hunt` (Top 50), ohne Schwierigkeits-Filter. Lokaler Rekord: `orbit-hunt-best`. Der Endschirm zeigt Punkte, Treffer, Genauigkeit und den Rekord. Keine neue Migration und kein zweiter Worker.
+Die Rangliste ist nur `game=hunt` (Top 50), gefiltert nach `difficulty` (`einfach` zeigt als Leicht, plus Mittel, Schwer und Alle). Keine neue Migration: `scores.difficulty` und `scores.game` bleiben die bestehenden Spalten. Lokale Rekorde: `orbit-hunt-best-<grad>`. Der alte Schlüssel `orbit-hunt-best` zählt als Mittel. Der Endschirm zeigt Punkte, Treffer, Genauigkeit und den Rekord dieses Grads. Kein zweiter Worker.
 
 ## Orbit Paint
 

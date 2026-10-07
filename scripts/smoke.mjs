@@ -1468,8 +1468,18 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
 }
 
 {
-  const { HuntGame, huntTargetPoints, HUNT_MAG, HUNT_RELOAD_SEC, HUNT_BIRD_MAX_SEC, formatHuntFormula } =
-    await import(path.join(root, 'src', 'hunt.js'));
+  const {
+    HuntGame,
+    huntTargetPoints,
+    HUNT_MAG,
+    HUNT_RELOAD_SEC,
+    HUNT_BIRD_MAX_SEC,
+    HUNT_LUNGE_SEC,
+    formatHuntFormula,
+    getHuntDifficulty,
+    normalizeHuntDifficulty,
+    HUNT_SPECIES,
+  } = await import(path.join(root, 'src', 'hunt.js'));
 
   assert(huntTargetPoints('far') > huntTargetPoints('near'), 'a far puffling outscores a near one');
   assert(huntTargetPoints('gold') > huntTargetPoints('far'), 'the golden puffling is the big prize');
@@ -1855,6 +1865,138 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
   frozen.onAppHidden(true);
   frozen.onAppHidden(false);
   assert(frozen.lastTs === 0, 'returning from a hidden tab restarts the frame clock');
+
+  assert(normalizeHuntDifficulty('Leicht') === 'einfach', 'Leicht maps onto the einfach board');
+  assert(normalizeHuntDifficulty('einfach') === 'einfach', 'einfach stays einfach');
+  assert(normalizeHuntDifficulty('baba') === 'mittel', 'hunt has no baba grade');
+  assert(getHuntDifficulty('einfach').label === 'Leicht', 'the easy grade is labeled Leicht');
+  assert(getHuntDifficulty('mittel').label === 'Mittel', 'the middle grade is labeled Mittel');
+  assert(getHuntDifficulty('schwer').label === 'Schwer', 'the hard grade is labeled Schwer');
+  assert(getHuntDifficulty('einfach').attacker === false, 'Leicht has no attackers');
+  assert(getHuntDifficulty('einfach').speed < 1 && getHuntDifficulty('einfach').size > 1, 'Leicht is slower and bigger');
+  assert(getHuntDifficulty('einfach').roundSec > 90 && getHuntDifficulty('einfach').mag > HUNT_MAG, 'Leicht lasts longer and holds more shots');
+  assert(getHuntDifficulty('mittel').attacker === true && getHuntDifficulty('mittel').attackerWindow === 2, 'Mittel gives about two seconds');
+  assert(getHuntDifficulty('mittel').roundSec === 90 && getHuntDifficulty('mittel').mag === HUNT_MAG, 'Mittel keeps the original round');
+  const hardCfg = getHuntDifficulty('schwer');
+  assert(hardCfg.attackerWindow >= 1.2 && hardCfg.attackerWindow <= 1.5, 'Schwer window is 1.2 to 1.5 seconds');
+  assert(hardCfg.roundSec < 90 && hardCfg.mag < HUNT_MAG, 'Schwer is a shorter round or a smaller magazine');
+  assert(hardCfg.speed > 1 && hardCfg.surprise > 1, 'Schwer is faster and more surprising');
+  assert(hardCfg.attackerFirst < getHuntDifficulty('mittel').attackerFirst, 'Schwer sends attackers sooner');
+  assert(HUNT_SPECIES.length >= 5, 'several creature types sit beside the pufflings');
+
+  const huntHtml = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert(huntHtml.includes('id="screen-hunt-diff"'), 'hunt has a difficulty screen');
+  assert(huntHtml.includes('data-hunt-diff="einfach"') && huntHtml.includes('>Leicht<'), 'Leicht is a hunt chip');
+  assert(huntHtml.includes('data-hunt-diff="mittel"') && huntHtml.includes('>Mittel<'), 'Mittel is a hunt chip');
+  assert(huntHtml.includes('data-hunt-diff="schwer"') && huntHtml.includes('>Schwer<'), 'Schwer is a hunt chip');
+
+  const picked = makeHunt();
+  picked.start('leicht');
+  assert(picked.difficultyId === 'einfach' && picked.diff.label === 'Leicht', 'selecting Leicht arms the easy grade');
+  assert(picked.mag === getHuntDifficulty('einfach').mag, 'Leicht fills the larger magazine');
+  assert(picked.roundMs === getHuntDifficulty('einfach').roundSec * 1000, 'Leicht uses the longer clock');
+  picked.attackerT = 0;
+  picked.ammo = picked.mag;
+  picked.update(1.2);
+  assert(picked.attacker == null && picked.caught === false, 'Leicht never spawns an attacker');
+  picked.stop();
+
+  picked.start('schwer');
+  assert(picked.difficultyId === 'schwer' && picked.mag === hardCfg.mag, 'selecting Schwer arms the hard grade');
+  const slowBird = makeHunt();
+  slowBird.setDifficulty('einfach');
+  const slow = slowBird.makeBird('far', 20);
+  slowBird.setDifficulty('schwer');
+  const fast = slowBird.makeBird('far', 20);
+  assert(Math.abs(fast.vx) > Math.abs(slow.vx), 'Schwer targets move faster than Leicht targets');
+  assert(fast.r < slow.r, 'Schwer targets are smaller than Leicht targets');
+
+  const hopper = makeHunt();
+  const bunny = hopper.makeBird('mid', 80, 'bunny');
+  bunny.pop = 1;
+  bunny.falling = false;
+  bunny.bob = 0;
+  const grounded = hopper.birdScreen(bunny);
+  bunny.bob = Math.PI / 2;
+  const airborne = hopper.birdScreen(bunny);
+  assert(airborne.y < grounded.y - 1, 'a bunny hops');
+  const bat = hopper.makeBird('mid', 80, 'bat');
+  bat.pop = 1;
+  bat.falling = false;
+  bat.age = 0;
+  const batLow = hopper.birdScreen(bat);
+  bat.age = Math.PI / 10;
+  const batHigh = hopper.birdScreen(bat);
+  assert(Math.abs(batHigh.y - batLow.y) > 1, 'a bat weaves through the air');
+  const chick = hopper.makeBird('far', 80, 'chick');
+  chick.pop = 1;
+  chick.falling = false;
+  chick.age = 0;
+  const chickA = hopper.birdScreen(chick);
+  chick.age = Math.PI / 14;
+  const chickB = hopper.birdScreen(chick);
+  assert(Math.abs(chickB.y - chickA.y) > 1, 'a chick bobs');
+  const ham = hopper.makeBird('near', 40, 'hamster');
+  const puff = hopper.makeBird('near', 40, 'puff');
+  assert(ham.r > puff.r && ham.species === 'hamster', 'a hamster is a bigger fluffball');
+  const mole = hopper.surpriseBird('near', 'mole');
+  assert(mole.species === 'mole' && mole.entrance === 'peek' && mole.hideY > hopper.h * 0.5, 'a mole pops out of the ground');
+  assert(huntTargetPoints('mole') > huntTargetPoints('bat'), 'a mole outscores a bat');
+  assert(huntTargetPoints('bat') > huntTargetPoints('chick'), 'a bat outscores a chick');
+  assert(huntTargetPoints('chick') > huntTargetPoints('bunny'), 'a chick outscores a bunny');
+  assert(huntTargetPoints('bunny') > huntTargetPoints('hamster'), 'a bunny outscores a hamster');
+  assert(huntTargetPoints('attacker') > huntTargetPoints('mole'), 'an attacker is the biggest prize');
+
+  const save = makeHunt();
+  let savedOver = null;
+  save.onGameOver = (result) => {
+    savedOver = result;
+  };
+  save.running = true;
+  save.alive = true;
+  save.setDifficulty('mittel');
+  save.ammo = HUNT_MAG;
+  save.beginAttacker('bunny');
+  const firstAttacker = save.attacker;
+  save.beginAttacker('bat');
+  assert(save.attacker === firstAttacker, 'only one attacker is up at a time');
+  save.attacker.pop = 1;
+  save.attacker.t = 0.2;
+  save.aim = { x: save.attacker.x, y: save.attacker.y };
+  assert(save.shoot() === true, 'a shot can hit the attacker');
+  assert(save.attacker == null && save.caught === false, 'the attacker dies when it is shot in time');
+  assert(save.orbs === 4 && save.hits === 1, 'a killed attacker pays the bonus');
+  save.update(0.6);
+  assert(savedOver == null && save.alive === true, 'killing the attacker does not end the run');
+
+  const doom = makeHunt();
+  let doomed = null;
+  doom.onGameOver = (result) => {
+    doomed = result;
+  };
+  doom.running = true;
+  doom.alive = true;
+  doom.setDifficulty('schwer');
+  doom.beginAttacker('hamster');
+  assert(doom.attacker && doom.attacker.phase === 'warn', 'the attacker opens with a warning');
+  doom.attacker.window = 0.3;
+  doom.attacker.t = 0;
+  doom.attacker.pop = 1;
+  doom.update(0.3 + HUNT_LUNGE_SEC + 0.2);
+  assert(doomed && doomed.caught === true, 'an attacker timeout causes game over');
+  assert(doomed.endReason === 'caught' && doomed.game === 'hunt', 'the caught run stays on the hunt board');
+  assert(doomed.difficulty === 'schwer', 'the caught run keeps its difficulty');
+  const caughtPost = scoresMod.validatePostBody({
+    name: 'HuntPilot',
+    score: doomed.score,
+    survivalMs: doomed.survivalMs,
+    orbs: doomed.orbs,
+    comboBonus: doomed.comboBonus,
+    nearMisses: doomed.nearMisses,
+    difficulty: doomed.difficulty,
+    game: doomed.game,
+  });
+  assert(caughtPost.ok, `a caught hunt run still passes the server check ${caughtPost.error || ''}`);
 }
 
 {

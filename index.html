@@ -624,8 +624,8 @@
         <div class="panel hunt-panel">
           <p class="eyebrow">SCHIESSBUDE</p>
           <h1 class="logo">ORBIT<span>HUNT</span></h1>
-          <p class="tagline">90 Sekunden. Acht Schuss. Ferne Pufflinge zählen mehr.</p>
-          <p class="tagline">Rechtsklick, R oder Nachladen. Gold, Versteck und Schild geben Extra.</p>
+          <p class="tagline">Pufflinge, Hamster, Hasen, Küken, Maulwürfe und Fledermäuse.</p>
+          <p class="tagline">Leicht, Mittel oder Schwer. Ein wütender Angreifer beendet den Lauf.</p>
           <p id="hunt-best" class="best-line">
             Rekord: <strong id="hunt-best-val">—</strong>
           </p>
@@ -643,12 +643,39 @@
             Am Desktop schiebt das Fadenkreuz am Rand die Wiese.
             Auf dem Handy wischst du zum Schwenken und tippst zum Schuss.
             Nah ist groß und bringt wenig, fern ist klein und bringt viel.
+            Neben den Pufflingen hopst ein Hase, watschelt ein Küken, gräbt sich ein Maulwurf, flattert eine Fledermaus und rollt ein Hamster.
             Ein goldener Puffling, ein Versteck hinter Mühle, Baum oder Heu und das Schild WEG geben Extra.
             Laterne, Korb und Schlafwolke kosten Punkte.
-            Das Magazin hat acht Schuss. Nachladen geht mit R, Rechtsklick oder dem Knopf.
+            Ab Mittel taucht manchmal eine große wütende Fratze auf. Triff sie, solange der Ring schrumpft, sonst ist der Lauf vorbei.
+            Das Magazin hat je nach Grad sechs bis zehn Schuss. Nachladen geht mit R, Rechtsklick oder dem Knopf.
           </p>
           <button type="button" id="btn-hunt-onboard" class="btn primary">VERSTANDEN</button>
           <button type="button" id="btn-hunt-onboard-skip" class="btn ghost">SPÄTER</button>
+        </div>
+      </section>
+
+      <section id="screen-hunt-diff" class="screen hidden">
+        <div class="panel diff-panel hunt-diff-panel">
+          <p class="eyebrow">SCHIESSBUDE</p>
+          <h2>Wie mutig?</h2>
+          <p class="tagline diff-hint">Leicht übt ohne Angreifer. Schwer kommt dir ganz nah.</p>
+          <div id="hunt-diff-options" class="diff-options" role="radiogroup" aria-label="Schwierigkeit">
+            <button type="button" class="diff-chip" data-hunt-diff="einfach" aria-pressed="false">
+              <span class="diff-label">Leicht</span>
+              <span class="diff-blurb">Langsam · große Ziele · mehr Zeit · keine Angreifer</span>
+            </button>
+            <button type="button" class="diff-chip" data-hunt-diff="mittel" aria-pressed="true">
+              <span class="diff-label">Mittel</span>
+              <span class="diff-blurb">Bekannte Balance · hin und wieder ein Angreifer</span>
+            </button>
+            <button type="button" class="diff-chip schwer" data-hunt-diff="schwer" aria-pressed="false">
+              <span class="diff-label">Schwer</span>
+              <span class="diff-blurb">Schnell · kurze Zeit · weniger Schuss · viele Angreifer</span>
+            </button>
+          </div>
+          <p id="hunt-diff-best" class="best-line muted">Rekord auf Mittel: <strong id="hunt-diff-best-val">—</strong></p>
+          <button type="button" id="btn-hunt-diff-start" class="btn primary pulse">START</button>
+          <button type="button" id="btn-hunt-diff-back" class="btn ghost">ZURÜCK</button>
         </div>
       </section>
 
