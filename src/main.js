@@ -14,6 +14,8 @@ import { JetGame, getJetDifficulty } from './jet.js';
 import { DashGame, getDashDifficulty } from './dash.js';
 import { HuntGame, getHuntDifficulty, normalizeHuntDifficulty } from './hunt.js';
 import { mountPaint } from './paint-ui.js';
+import { mountMahjong } from './mahjong-ui.js';
+import { getMahjongDifficulty, normalizeMahjongDifficulty } from './mahjong.js';
 import { mountAerger } from './aerger-ui.js';
 import { mountDuel } from './duel-ui.js';
 import {
@@ -109,6 +111,7 @@ const screens = {
   aerger: $('screen-aerger'),
   duel: $('screen-duel'),
   paint: $('screen-paint'),
+  mahjong: $('screen-mahjong'),
 };
 
 const hud = $('hud');
@@ -130,7 +133,7 @@ const toastEl = $('toast');
 let lastResult = null;
 let lbBackTo = 'title';
 let lbFilter = 'all';
-/** @type {'hub'|'rush'|'mirror'|'aerger'|'duel'|'drift'|'pulse'|'jet'|'dash'|'hunt'|'paint'} */
+/** @type {'hub'|'rush'|'mirror'|'aerger'|'duel'|'drift'|'pulse'|'jet'|'dash'|'hunt'|'paint'|'mahjong'} */
 let activeGame = 'hub';
 /** @type {() => void} */
 let pauseAerger = () => {};
@@ -138,7 +141,13 @@ let pauseAerger = () => {};
 let pauseDuel = () => {};
 /** @type {() => void} */
 let pausePaint = () => {};
-/** @type {'rush'|'mirror'|'drift'|'pulse'|'jet'|'dash'|'hunt'} */
+/** @type {() => void} */
+let pauseMahjong = () => {};
+/** @type {() => void} */
+let resumeMahjong = () => {};
+/** @type {{ difficultyId?: string, pause?: () => void, resume?: () => void, open?: () => void }|null} */
+let mahjongUi = null;
+/** @type {'rush'|'mirror'|'drift'|'pulse'|'jet'|'dash'|'hunt'|'mahjong'} */
 let lbGame = 'rush';
 let submitting = false;
 let runSeq = 0;
@@ -703,7 +712,8 @@ function resultGame(result) {
     result?.game === 'pulse' ||
     result?.game === 'jet' ||
     result?.game === 'dash' ||
-    result?.game === 'hunt'
+    result?.game === 'hunt' ||
+    result?.game === 'mahjong'
   ) {
     return result.game;
   }
@@ -766,6 +776,7 @@ function showScreen(name) {
   if (name !== 'aerger') pauseAerger();
   if (name !== 'duel') pauseDuel();
   if (name !== 'paint') pausePaint();
+  if (name !== 'mahjong') pauseMahjong();
   for (const [k, el] of Object.entries(screens)) {
     if (!el) continue;
     el.classList.toggle('hidden', k !== name);
@@ -2322,7 +2333,8 @@ function openLeaderboard(from, gameId = 'rush') {
     gameId === 'pulse' ||
     gameId === 'jet' ||
     gameId === 'dash' ||
-    gameId === 'hunt'
+    gameId === 'hunt' ||
+    gameId === 'mahjong'
       ? gameId
       : 'rush';
   if (lbGame === 'rush') {
@@ -2335,6 +2347,8 @@ function openLeaderboard(from, gameId = 'rush') {
     lbFilter = dashDifficulty || 'all';
   } else if (lbGame === 'hunt') {
     lbFilter = huntDifficulty || 'all';
+  } else if (lbGame === 'mahjong') {
+    lbFilter = normalizeMahjongDifficulty(mahjongUi?.difficultyId || 'mittel');
   } else if (lbGame === 'pulse') {
     lbFilter =
       from === 'over' && lastResult?.game === 'pulse' && lastResult?.daily
@@ -2350,13 +2364,18 @@ function syncLbFilters() {
   document.querySelectorAll('.lb-filter').forEach((btn) => {
     const filter = btn.getAttribute('data-filter');
     const hideDaily = filter === 'daily' && lbGame !== 'rush' && lbGame !== 'pulse';
-    const hideBaba = filter === 'baba' && lbGame === 'hunt';
+    const hideBaba = filter === 'baba' && (lbGame === 'hunt' || lbGame === 'mahjong');
     btn.classList.toggle('hidden', hideDaily || hideBaba);
     btn.classList.toggle('active', filter === lbFilter);
-    if (filter === 'einfach') btn.textContent = lbGame === 'hunt' ? 'Leicht' : 'Einfach';
+    if (filter === 'einfach') btn.textContent = lbGame === 'hunt' || lbGame === 'mahjong' ? 'Leicht' : 'Einfach';
     if (filter === 'all') {
       btn.textContent =
-        lbGame === 'drift' || lbGame === 'pulse' || lbGame === 'jet' || lbGame === 'dash' || lbGame === 'hunt'
+        lbGame === 'drift' ||
+        lbGame === 'pulse' ||
+        lbGame === 'jet' ||
+        lbGame === 'dash' ||
+        lbGame === 'hunt' ||
+        lbGame === 'mahjong'
           ? 'Alle'
           : 'All';
     }
@@ -2397,6 +2416,13 @@ async function renderLeaderboard() {
     if (lbFilter === 'daily' || lbFilter === 'baba') lbFilter = huntDifficulty || 'mittel';
     filters?.classList.remove('hidden');
     syncLbFilters();
+  } else if (lbGame === 'mahjong') {
+    if (heading) heading.textContent = 'MAHJONG TOP 50';
+    if (lbFilter === 'daily' || lbFilter === 'baba') {
+      lbFilter = normalizeMahjongDifficulty(mahjongUi?.difficultyId || 'mittel');
+    }
+    filters?.classList.remove('hidden');
+    syncLbFilters();
   } else {
     if (heading) heading.textContent = 'GLOBAL TOP 50';
     filters?.classList.remove('hidden');
@@ -2429,6 +2455,11 @@ async function renderLeaderboard() {
       const res = await fetchScores(filter ? { difficulty: filter, game: 'hunt' } : { game: 'hunt' });
       scores = res.scores;
       source = res.source;
+    } else if (lbGame === 'mahjong') {
+      const filter = !lbFilter || lbFilter === 'all' ? undefined : lbFilter;
+      const res = await fetchScores(filter ? { difficulty: filter, game: 'mahjong' } : { game: 'mahjong' });
+      scores = res.scores;
+      source = res.source;
     } else if (lbGame === 'pulse' && lbFilter === 'daily') {
       const res = await fetchScores({ mode: 'daily', dailyDate: utcDateString(), game: 'pulse' });
       scores = res.scores;
@@ -2452,7 +2483,14 @@ async function renderLeaderboard() {
     list.innerHTML = '';
     if (!scores.length) {
       empty.classList.remove('hidden');
-      if (lbGame === 'drift' || lbGame === 'pulse' || lbGame === 'jet' || lbGame === 'dash' || lbGame === 'hunt') {
+      if (
+        lbGame === 'drift' ||
+        lbGame === 'pulse' ||
+        lbGame === 'jet' ||
+        lbGame === 'dash' ||
+        lbGame === 'hunt' ||
+        lbGame === 'mahjong'
+      ) {
         empty.textContent =
           source === 'local'
             ? 'Noch keine Punkte (lokal). Sei der Erste.'
@@ -2492,6 +2530,10 @@ async function renderLeaderboard() {
         const d = normalizeHuntDifficulty(row.difficulty || 'mittel');
         badge.className = `diff-badge ${d}`;
         badge.textContent = getHuntDifficulty(d).label;
+      } else if (lbGame === 'mahjong') {
+        const d = normalizeMahjongDifficulty(row.difficulty || 'mittel');
+        badge.className = `diff-badge ${d}`;
+        badge.textContent = getMahjongDifficulty(d).label;
       } else if (row.mode === 'daily' || ((lbGame === 'rush' || lbGame === 'pulse') && lbFilter === 'daily')) {
         badge.className = 'diff-badge daily';
         badge.textContent = row.dailyDate ? `Daily ${String(row.dailyDate).slice(5)}` : 'Daily';
@@ -2632,6 +2674,9 @@ $('btn-lb-back').addEventListener('click', () => {
   } else if (lbBackTo === 'hunt') {
     refreshHuntMenu();
     showScreen('hunt');
+  } else if (lbBackTo === 'mahjong') {
+    showScreen('mahjong');
+    resumeMahjong();
   } else {
     refreshTitleBest();
     showScreen('title');
@@ -2860,11 +2905,43 @@ $('btn-hub-hunt').addEventListener('click', () => {
   openHuntMenu();
 });
 
+function openMahjong() {
+  activeGame = 'mahjong';
+  if (game.running) game.stop();
+  if (mirror.running) mirror.stop();
+  if (drift.running) drift.stop();
+  if (pulse.running) pulse.stop();
+  if (jet.running) jet.stop();
+  if (dash.running) dash.stop();
+  if (hunt.running) hunt.stop();
+  audio.stopMusic();
+  audio.stopClip();
+  hud.classList.add('hidden');
+  setHudChrome('rush');
+  hudMode.classList.add('hidden');
+  showScreen('mahjong');
+  mahjongUi?.open();
+}
+
+$('btn-hub-mahjong').addEventListener('click', () => {
+  audio.resume();
+  audio.click();
+  openMahjong();
+});
+
 const paint = mountPaint({
   onHub: () => showHub(),
   audio,
 });
 pausePaint = () => paint.pause();
+
+mahjongUi = mountMahjong({
+  audio,
+  onHub: () => showHub(),
+  onLeaderboard: () => openLeaderboard('mahjong', 'mahjong'),
+});
+pauseMahjong = () => mahjongUi.pause();
+resumeMahjong = () => mahjongUi.resume();
 
 function openPaint() {
   activeGame = 'paint';
