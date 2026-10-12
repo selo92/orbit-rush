@@ -124,6 +124,44 @@ export class AudioBus {
     this.tone(440, 0.04, 'square', 0.15);
   }
 
+  /** Soft ivory click for Orbit Mahjong. */
+  mahjongTap() {
+    this.tone(620, 0.03, 'sine', 0.09);
+    this.tone(340, 0.045, 'triangle', 0.045);
+  }
+
+  /** @param {number} [combo] */
+  mahjongMatch(combo = 1) {
+    const base = 640 + (Math.max(1, combo) - 1) * 70;
+    this.tone(base, 0.07, 'sine', 0.11);
+    this.tone(base * 1.5, 0.12, 'triangle', 0.07);
+  }
+
+  mahjongDeny() {
+    this.tone(196, 0.06, 'triangle', 0.06);
+  }
+
+  mahjongHint() {
+    this.tone(880, 0.07, 'sine', 0.08);
+    this.tone(1170, 0.1, 'triangle', 0.05);
+  }
+
+  mahjongUndo() {
+    this.tone(480, 0.08, 'sine', 0.07, 240);
+  }
+
+  mahjongShuffle() {
+    this.tone(280, 0.04, 'triangle', 0.06);
+    this.tone(420, 0.06, 'sine', 0.05);
+    this.tone(560, 0.08, 'triangle', 0.04);
+  }
+
+  mahjongWin() {
+    [523, 659, 784, 1046].forEach((freq, index) => {
+      window.setTimeout(() => this.tone(freq, 0.16, 'sine', 0.09), index * 90);
+    });
+  }
+
   warn() {
     this.tone(320, 0.05, 'triangle', 0.12);
   }

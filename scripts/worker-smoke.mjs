@@ -464,7 +464,7 @@ try {
     ip: '203.0.113.92',
     body: { name: 'BadGame', score: computeScore(1000, 0, 0, 0), survivalMs: 1000, orbs: 0, game: 'puzzle' },
   });
-  assert(badGamePost.status === 400 && badGamePost.data.error === 'Invalid game (rush|mirror|drift|pulse|jet|dash|hunt)', 'invalid game post');
+  assert(badGamePost.status === 400 && badGamePost.data.error === 'Invalid game (rush|mirror|drift|pulse|jet|dash|hunt|mahjong)', 'invalid game post');
 
   const driftScore = computeScore(8000, 3, 100, 2);
   const driftPost = await api('/api/scores', {
@@ -630,6 +630,30 @@ try {
   assert(huntBoard.data.scores.some((s) => s.name === 'HuntPilot'), 'hunt filter lists the pilot');
   const rushAfterHunt = await api('/api/scores?game=rush', { ip: '203.0.113.119' });
   assert(!rushAfterHunt.data.scores.some((s) => s.name === 'HuntPilot'), 'hunt score stays off rush');
+
+  const mahjongScore = computeScore(0, 12, 100, 1);
+  const mahjongPost = await api('/api/scores', {
+    method: 'POST',
+    ip: '203.0.113.131',
+    body: {
+      name: 'MahjongPilot',
+      score: mahjongScore,
+      survivalMs: 0,
+      orbs: 12,
+      comboBonus: 100,
+      nearMisses: 1,
+      difficulty: 'einfach',
+      game: 'mahjong',
+    },
+  });
+  assert(mahjongPost.status === 200, `mahjong post ${JSON.stringify(mahjongPost.data)}`);
+  assert(mahjongPost.data.scores.every((s) => s.game === 'mahjong'), 'mahjong response is the mahjong board');
+  assert(mahjongPost.data.scores.some((s) => s.name === 'MahjongPilot'), 'mahjong pilot listed');
+  const mahjongBoard = await api('/api/scores?game=mahjong&difficulty=einfach', { ip: '203.0.113.132' });
+  assert(mahjongBoard.status === 200 && mahjongBoard.data.game === 'mahjong', 'mahjong filter names the board');
+  assert(mahjongBoard.data.scores.some((s) => s.name === 'MahjongPilot'), 'mahjong difficulty filter lists the pilot');
+  const rushAfterMahjong = await api('/api/scores?game=rush', { ip: '203.0.113.132' });
+  assert(!rushAfterMahjong.data.scores.some((s) => s.name === 'MahjongPilot'), 'mahjong score stays off rush');
 
   const notAScore = await api('/api/scores', {
     method: 'POST',

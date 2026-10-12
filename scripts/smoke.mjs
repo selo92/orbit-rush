@@ -104,6 +104,121 @@ for (const picture of paintMod.PICTURES) {
 }
 const paintHtml = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 assert(paintHtml.includes('btn-hub-paint') && paintHtml.includes('id="screen-paint"'), 'paint is on the hub');
+assert(paintHtml.includes('btn-hub-mahjong') && paintHtml.includes('id="screen-mahjong"'), 'mahjong is on the hub');
+assert(paintHtml.includes('Keine Züge mehr'), 'mahjong stuck notice');
+assert(paintHtml.includes('data-layout="schildkroete"') && paintHtml.includes('>Schildkröte<'), 'turtle layout chip');
+assert(paintHtml.includes('data-mj-diff="einfach"') && paintHtml.includes('>Leicht<'), 'mahjong Leicht chip');
+{
+  const mahjong = await import(path.join(root, 'src', 'mahjong.js'));
+  const { mulberry32, hashSeed } = await import(path.join(root, 'src', 'rng.js'));
+  const blocked = mahjong.indexBlockers([
+    { id: 0, x: 0, y: 0, z: 0, removed: false },
+    { id: 1, x: 2, y: 0, z: 0, removed: false },
+    { id: 2, x: 4, y: 0, z: 0, removed: false },
+    { id: 3, x: 0, y: 0, z: 1, removed: false },
+    { id: 4, x: 2, y: 0, z: 1, removed: false },
+    { id: 5, x: 4, y: 0, z: 1, removed: false },
+  ]);
+  assert(mahjong.isFree(blocked[3], blocked), 'left end of a row is free');
+  assert(mahjong.isFree(blocked[5], blocked), 'right end of a row is free');
+  assert(!mahjong.isFree(blocked[4], blocked), 'both neighbours block the middle tile');
+  blocked[3].removed = true;
+  assert(mahjong.isFree(blocked[4], blocked), 'one open side is enough');
+  blocked[3].removed = false;
+  assert(!mahjong.isFree(blocked[1], blocked), 'a tile on top blocks even with an open side');
+  assert(mahjong.facesMatch({ suit: 'flower', rank: 1 }, { suit: 'flower', rank: 4 }), 'any flower matches');
+  assert(mahjong.facesMatch({ suit: 'season', rank: 2 }, { suit: 'season', rank: 3 }), 'any season matches');
+  assert(!mahjong.facesMatch({ suit: 'flower', rank: 1 }, { suit: 'season', rank: 1 }), 'flowers do not match seasons');
+  assert(!mahjong.facesMatch({ suit: 'dot', rank: 1 }, { suit: 'dot', rank: 2 }), 'different ranks do not match');
+  assert(mahjong.fullTileSet().length === 144, 'full tile set is 144');
+  const catalog = mahjong.layoutCatalog();
+  assert(catalog.find((row) => row.id === 'schildkroete' && row.size === 'large').count === 144, 'turtle uses the full set');
+  for (const row of catalog) {
+    assert(row.count % 2 === 0 && row.count <= 144, `${row.id} ${row.size} is an even board`);
+  }
+  const sizes = {};
+  for (const row of catalog) {
+    sizes[row.id] = sizes[row.id] || {};
+    sizes[row.id][row.size] = row.count;
+  }
+  for (const id of Object.keys(sizes)) {
+    assert(sizes[id].small < sizes[id].medium && sizes[id].medium < sizes[id].large, `${id} grows with difficulty`);
+  }
+  for (const id of ['schildkroete', 'pyramide', 'drache', 'festung', 'schnell']) {
+    for (const diff of ['einfach', 'mittel', 'schwer']) {
+      const deal = mahjong.createDeal(id, diff, mulberry32(hashSeed(`${id}:${diff}`)));
+      assert(mahjong.replaySolution(deal.tiles, deal.solution), `${id} ${diff} deal is solvable`);
+      assert(deal.opening >= 1, `${id} ${diff} opens with a move`);
+    }
+  }
+  const board = new mahjong.MahjongGame();
+  board.start({ layout: 'schnell', difficulty: 'einfach', rng: mulberry32(9) });
+  const liveBefore = board.liveTiles().length;
+  const hintsBefore = board.hintsLeft;
+  const hinted = board.hint();
+  assert(hinted.ok && board.hintsLeft === hintsBefore - 1, 'hint spends one hint');
+  assert(board.liveTiles().length === liveBefore, 'hint does not remove tiles');
+  assert(
+    mahjong.facesMatch(board.tile(hinted.pair[0]), board.tile(hinted.pair[1])),
+    'hint shows a matching pair'
+  );
+  assert(board.isFreeId(hinted.pair[0]) && board.isFreeId(hinted.pair[1]), 'hint pair is free');
+  const [first, second] = board.solution[0];
+  board.advance(0.2);
+  board.select(first);
+  const matched = board.select(second);
+  assert(matched.type === 'match' || matched.type === 'win', 'solution pair can be taken');
+  assert(board.tile(first).removed && board.pairs === 1, 'match removes the pair');
+  assert(board.snapshot().score === 100, 'first pair is worth 100');
+  assert(board.undo().ok, 'undo restores the move');
+  assert(!board.tile(first).removed && board.pairs === 0 && board.snapshot().score === 0, 'undo puts the pair back');
+  assert(!board.undo().ok, 'undo stops at the start');
+  const fresh = new mahjong.MahjongGame();
+  fresh.start({ layout: 'festung', difficulty: 'mittel', rng: mulberry32(12) });
+  assert(fresh.shuffle(false).reason === 'moves', 'shuffle waits until no moves remain');
+  const freeTiles = fresh.freeTiles();
+  const buriedTiles = fresh.liveTiles().filter((tile) => !fresh.isFreeId(tile.id));
+  const faceAt = (n) => {
+    if (n < 27) {
+      const suits = ['dot', 'bamboo', 'char'];
+      return { suit: suits[Math.floor(n / 9)], rank: (n % 9) + 1 };
+    }
+    if (n < 31) return { suit: 'wind', rank: n - 26 };
+    return { suit: 'dragon', rank: (n - 30) % 3 || 3 };
+  };
+  let faceN = 0;
+  for (let i = 0; i < freeTiles.length; i++) {
+    const face = faceAt(faceN++);
+    freeTiles[i].suit = face.suit;
+    freeTiles[i].rank = face.rank;
+    buriedTiles[i].suit = face.suit;
+    buriedTiles[i].rank = face.rank;
+  }
+  for (let i = freeTiles.length; i < buriedTiles.length; i += 2) {
+    const face = faceAt(faceN++);
+    buriedTiles[i].suit = face.suit;
+    buriedTiles[i].rank = face.rank;
+    buriedTiles[i + 1].suit = face.suit;
+    buriedTiles[i + 1].rank = face.rank;
+  }
+  assert(fresh.findMatches().length === 0, 'a stuck board has no free pair');
+  const shuffled = fresh.shuffle(false);
+  assert(shuffled.ok, `stuck board can shuffle (${shuffled.reason || ''})`);
+  assert(mahjong.replaySolution(fresh.liveTiles(), fresh.solution), 'shuffle stays solvable');
+  const packed = mahjong.packMahjongScore(fresh.pairs, fresh.comboBonus, fresh.blitzes);
+  const scoreRules = await import(path.join(root, 'shared', 'scores.js'));
+  const accepted = scoreRules.validatePostBody({
+    name: 'Mahjong',
+    score: packed.score,
+    survivalMs: packed.survivalMs,
+    orbs: packed.orbs,
+    comboBonus: packed.comboBonus,
+    nearMisses: packed.nearMisses,
+    difficulty: 'mittel',
+    game: 'mahjong',
+  });
+  assert(accepted.ok && accepted.value.game === 'mahjong', `mahjong score passes ${accepted.error || ''}`);
+}
 assert(paintHtml.includes('id="paint-svg"'), 'paint board is svg');
 const duelMod = await import(path.join(root, 'shared', 'duel.js'));
 duelMod.selfCheck();
@@ -262,6 +377,7 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
   assert(scoresMod.normalizeGame('Jet') === 'jet', 'normalize jet');
   assert(scoresMod.normalizeGame('Dash') === 'dash', 'normalize dash');
   assert(scoresMod.normalizeGame('Hunt') === 'hunt', 'normalize hunt');
+  assert(scoresMod.normalizeGame('Mahjong') === 'mahjong', 'normalize mahjong');
   assert(scoresMod.normalizeGame('nope') === 'rush', 'unknown game defaults to rush');
 {
   const mixed = [
@@ -298,7 +414,7 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
     nearMisses: 0,
     game: 'nope',
   });
-  assert(!badGame.ok && badGame.error === 'Invalid game (rush|mirror|drift|pulse|jet|dash|hunt)', 'reject bad game');
+  assert(!badGame.ok && badGame.error === 'Invalid game (rush|mirror|drift|pulse|jet|dash|hunt|mahjong)', 'reject bad game');
   const okGame = scoresMod.validatePostBody({
     name: 'A',
     score: 10,
@@ -3107,6 +3223,30 @@ try {
   assert(!rushAfterHunt.scores.some((s) => s.name === 'HuntPilot'), 'express keeps hunt off rush');
   const huntBoard = await fetch(`http://127.0.0.1:${PORT}/api/scores?game=hunt`).then((r) => r.json());
   assert(huntBoard.game === 'hunt' && huntBoard.scores.some((s) => s.name === 'HuntPilot'), 'express hunt filter');
+  await new Promise((r) => setTimeout(r, 2100));
+  const mahjongScore = computeScore(0, 12, 100, 1);
+  const mahjongPost = await fetch(`http://127.0.0.1:${PORT}/api/scores`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: 'MahjongPilot',
+      score: mahjongScore,
+      survivalMs: 0,
+      orbs: 12,
+      comboBonus: 100,
+      nearMisses: 1,
+      difficulty: 'einfach',
+      game: 'mahjong',
+    }),
+  });
+  const mahjongApi = await mahjongPost.json();
+  assert(mahjongPost.ok, `mahjong post failed: ${JSON.stringify(mahjongApi)}`);
+  assert(mahjongApi.scores.every((s) => s.game === 'mahjong'), 'express mahjong board');
+  assert(mahjongApi.scores.some((s) => s.name === 'MahjongPilot'), 'express mahjong pilot');
+  const rushAfterMahjong = await fetch(`http://127.0.0.1:${PORT}/api/scores?game=rush`).then((r) => r.json());
+  assert(!rushAfterMahjong.scores.some((s) => s.name === 'MahjongPilot'), 'express keeps mahjong off rush');
+  const mahjongBoard = await fetch(`http://127.0.0.1:${PORT}/api/scores?game=mahjong&difficulty=einfach`).then((r) => r.json());
+  assert(mahjongBoard.game === 'mahjong' && mahjongBoard.scores.some((s) => s.name === 'MahjongPilot'), 'express mahjong filter');
 
   const aergerBase = `http://127.0.0.1:${PORT}`;
   const created = await fetch(`${aergerBase}/api/aerger/create`, {
