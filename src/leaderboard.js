@@ -6,6 +6,7 @@
 import { normalizeDifficulty, DEFAULT_DIFFICULTY } from './difficulty.js';
 import { isValidDailyDate } from './rng.js';
 import { inspectName, normalizeClientId, normalizeGame, sanitizeName } from '../shared/scores.js';
+import { getOrCreateClientId } from './identity.js';
 
 export { sanitizeName };
 
@@ -98,6 +99,7 @@ export function beginScoreRun({ game = 'rush', difficulty, mode = 'normal', dail
       game,
       difficulty,
       mode,
+      clientId: getOrCreateClientId(),
       ...(mode === 'daily' && dailyDate ? { dailyDate } : {}),
     }),
   })
@@ -192,6 +194,8 @@ export async function submitScore({
   clientId,
   game = 'rush',
   runToken,
+  huntLog,
+  mahjongLog,
 }) {
   const named = inspectName(name);
   if (!named.ok) throw new Error(named.error);
@@ -219,6 +223,8 @@ export async function submitScore({
   if (parsedId.ok && parsedId.clientId) payload.clientId = parsedId.clientId;
   const token = typeof runToken === 'string' && runToken ? runToken : await currentRunToken();
   if (token) payload.runToken = token;
+  if (typeof huntLog === 'string' && huntLog) payload.huntLog = huntLog;
+  if (typeof mahjongLog === 'string' && mahjongLog) payload.mahjongLog = mahjongLog;
 
   try {
     const data = await api('/api/scores', {

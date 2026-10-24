@@ -19,6 +19,12 @@ export const RATE_WINDOW_MS = 60_000;
 export const RATE_MAX = 30;
 /** Separate budget so opening a round does not eat the leaderboard limit. */
 export const START_RATE_MAX = 20;
+/** Hourly budgets. Per-minute windows reset too fast to stop a token farm. */
+export const HOUR_MS = 60 * 60 * 1000;
+export const START_HOUR_IP = 90;
+export const START_HOUR_CLIENT = 40;
+export const SUBMIT_HOUR_IP = 48;
+export const SUBMIT_HOUR_CLIENT = 16;
 /** Client survival may lead the server clock by a short start/submit race. */
 export const SURVIVAL_TOLERANCE_MS = 2_500;
 /** A paused endless run can sit; a day-old token cannot be cashed in. */
@@ -366,6 +372,22 @@ const RATE_CAPS = {
   dash: { maxSurvivalMs: 45 * 60 * 1000, orbsPerSec: 1.8, orbGrace: 8, nearPerSec: 2.4, nearGrace: 10, scorePerSec: 900, scoreGrace: 1200 },
 };
 
+/**
+ * Endless modes have no replay. Ceilings are about 10% above the best live D1
+ * row on 2026-10-24, rounded up. A later honest record past the ceiling is
+ * rejected until this table is raised. Grades with no rows use that game's
+ * highest observed score so they are not a softer farm lane. Mirror has no
+ * rows and shares Rush einfach. Baba Rush has no rows and shares einfach.
+ */
+const SCORE_CEILING = {
+  rush: { einfach: 7600, mittel: 4100, schwer: 2800, baba: 7600 },
+  mirror: { einfach: 7600, mittel: 7600, schwer: 7600, baba: 7600 },
+  drift: { einfach: 18800, mittel: 6400, schwer: 18800, baba: 18800 },
+  pulse: { einfach: 91000, mittel: 91000, schwer: 49000, baba: 91000 },
+  jet: { einfach: 28000, mittel: 47000, schwer: 30000, baba: 47000 },
+  dash: { einfach: 29000, mittel: 80000, schwer: 80000, baba: 80000 },
+};
+
 const MAHJONG_CAPS = {
   maxSurvivalMs: 60_000,
   maxOrbs: 72,
@@ -385,16 +407,12 @@ export function plausibilityError(value) {
   const sec = Math.floor(value.survivalMs / 1000);
   if (value.game === 'hunt') {
     const cap = HUNT_CAPS[value.difficulty] || HUNT_CAPS.mittel;
+    // Replay recomputes the score. These are only a sanity ceiling above a
+    // perfect autoplay of the sim, so a forged million still dies here.
     if (value.survivalMs > cap.maxSurvivalMs) return 'Survival too long';
-    if (value.orbs > Math.min(cap.maxOrbs, rateCap(sec, cap.orbsPerSec, cap.orbGrace))) {
-      return 'Orb count too high';
-    }
-    if (value.nearMisses > Math.min(cap.maxNear, rateCap(sec, cap.nearPerSec, cap.nearGrace))) {
-      return 'Near-miss count too high';
-    }
-    if (value.score > Math.min(cap.maxScore, rateCap(sec, cap.scorePerSec, cap.scoreGrace))) {
-      return 'Score too high for this run';
-    }
+    if (value.orbs > 900) return 'Orb count too high';
+    if (value.nearMisses > 900) return 'Near-miss count too high';
+    if (value.score > 160_000) return 'Score too high for this run';
   } else if (value.game === 'mahjong') {
     if (value.survivalMs > MAHJONG_CAPS.maxSurvivalMs) return 'Survival too long';
     if (value.orbs > MAHJONG_CAPS.maxOrbs) return 'Orb count too high';
@@ -413,6 +431,8 @@ export function plausibilityError(value) {
     if (value.orbs > rateCap(sec, cap.orbsPerSec, cap.orbGrace)) return 'Orb count too high';
     if (value.nearMisses > rateCap(sec, cap.nearPerSec, cap.nearGrace)) return 'Near-miss count too high';
     if (value.score > rateCap(sec, cap.scorePerSec, cap.scoreGrace)) return 'Score too high for this run';
+    const ceiling = SCORE_CEILING[value.game]?.[value.difficulty];
+    if (ceiling && value.score > ceiling) return 'Score too high for this run';
   }
 
   const maxComboBonus = value.orbs * (COMBO_MAX - 1) * COMBO_STEP;

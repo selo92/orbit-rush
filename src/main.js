@@ -1001,6 +1001,8 @@ async function sendScore(name, { auto = false } = {}) {
       mode: lastResult.daily ? 'daily' : 'normal',
       dailyDate: lastResult.daily ? lastResult.dailyDate || dailyDate : undefined,
       game: resultGame(lastResult),
+      huntLog: lastResult.huntLog,
+      mahjongLog: lastResult.mahjongLog,
     });
     status.classList.remove('error');
     status.classList.toggle('calm', !!(res.duplicate || res.rateLimited));
@@ -2198,7 +2200,7 @@ function openHuntMenu() {
   showScreen('hunt');
 }
 
-function beginHunt() {
+async function beginHunt() {
   activeGame = 'hunt';
   if (game.running) game.stop();
   if (mirror.running) mirror.stop();
@@ -2230,8 +2232,9 @@ function beginHunt() {
   void touchHint.offsetWidth;
   touchHint.classList.remove('hidden');
   canvas.classList.add('hunt-aim');
-  beginScoreRun({ game: 'hunt', difficulty: huntDifficulty, mode: 'normal' });
-  hunt.start(huntDifficulty);
+  const run = await beginScoreRun({ game: 'hunt', difficulty: huntDifficulty, mode: 'normal' });
+  if (activeGame !== 'hunt') return;
+  hunt.start(huntDifficulty, { seed: run?.seed });
 }
 
 function syncHuntDiffChips() {

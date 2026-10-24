@@ -3241,22 +3241,87 @@ try {
   assert(dashBoard.game === 'dash' && dashBoard.scores.some((s) => s.name === 'DashPilot'), 'express dash filter');
 
   await new Promise((r) => setTimeout(r, 2100));
-  const huntScore = computeScore(90000, 4, 50, 2);
+  const { HuntSim } = await import(path.join(root, 'shared', 'hunt-sim.js'));
+  const { MahjongGame } = await import(path.join(root, 'src', 'mahjong.js'));
+  const { mulberry32 } = await import(path.join(root, 'src', 'rng.js'));
+  async function playedHunt(name, difficulty, clientId) {
+    const start = await fetch(`http://127.0.0.1:${PORT}/api/run/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ game: 'hunt', difficulty, mode: 'normal' }),
+    });
+    const started = await start.json();
+    assert(start.ok && Number.isInteger(started.seed), `hunt seed ${JSON.stringify(started)}`);
+    const sim = new HuntSim({ seed: started.seed, difficulty, w: 390, h: 700, pointer: 'touch', record: true });
+    let guard = 0;
+    while (!sim.finished && guard++ < 400) {
+      if (sim.reloadT <= 0 && sim.ammo > 0) {
+        for (const bird of sim.birds) {
+          if (!sim.birdHittable(bird)) continue;
+          const p = sim.birdScreen(bird);
+          if (p.x < 0 || p.x > sim.w) continue;
+          sim.shoot(Math.round(p.x), Math.round(p.y));
+          break;
+        }
+      }
+      sim.step();
+    }
+    while (!sim.finished) sim.step();
+    const stats = sim.settled();
+    const store = JSON.parse(fs.readFileSync(runsPath, 'utf8'));
+    store.runs[started.runId].startedAt = Date.now() - (stats.survivalMs + 1500);
+    fs.writeFileSync(runsPath, JSON.stringify(store));
+    return {
+      name,
+      ...stats,
+      difficulty,
+      mode: 'normal',
+      game: 'hunt',
+      huntLog: sim.exportLog(),
+      runToken: started.token,
+      clientId,
+    };
+  }
+  async function playedMahjong(name, clientId) {
+    const start = await fetch(`http://127.0.0.1:${PORT}/api/run/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ game: 'mahjong', difficulty: 'einfach', mode: 'normal' }),
+    });
+    const started = await start.json();
+    assert(start.ok && Number.isInteger(started.seed), `mahjong seed ${JSON.stringify(started)}`);
+    const game = new MahjongGame();
+    game.start({ layout: 'schnell', difficulty: 'einfach', rng: mulberry32(started.seed) });
+    for (const pair of game.solution.map((entry) => entry.slice())) {
+      game.advance(0.2);
+      game.select(pair[0]);
+      game.select(pair[1]);
+    }
+    const result = game.result();
+    assert(game.won, 'express mahjong fixture cleared');
+    const store = JSON.parse(fs.readFileSync(runsPath, 'utf8'));
+    store.runs[started.runId].startedAt = Date.now() - 5000;
+    fs.writeFileSync(runsPath, JSON.stringify(store));
+    return {
+      name,
+      score: result.score,
+      survivalMs: result.survivalMs,
+      orbs: result.orbs,
+      comboBonus: result.comboBonus,
+      nearMisses: result.nearMisses,
+      difficulty: 'einfach',
+      mode: 'normal',
+      game: 'mahjong',
+      mahjongLog: result.mahjongLog,
+      runToken: started.token,
+      clientId,
+    };
+  }
   const huntPost = await fetch(`http://127.0.0.1:${PORT}/api/scores`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(
-      await scoreBody({
-        name: 'HuntPilot',
-        score: huntScore,
-        survivalMs: 90000,
-        orbs: 4,
-        comboBonus: 50,
-        nearMisses: 2,
-        difficulty: 'mittel',
-        game: 'hunt',
-        clientId: 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1',
-      })
+      await playedHunt('HuntPilot', 'mittel', 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1')
     ),
   });
   const huntApi = await huntPost.json();
@@ -3268,22 +3333,10 @@ try {
   const huntBoard = await fetch(`http://127.0.0.1:${PORT}/api/scores?game=hunt`).then((r) => r.json());
   assert(huntBoard.game === 'hunt' && huntBoard.scores.some((s) => s.name === 'HuntPilot'), 'express hunt filter');
   await new Promise((r) => setTimeout(r, 2100));
-  const mahjongScore = computeScore(0, 12, 100, 1);
   const mahjongPost = await fetch(`http://127.0.0.1:${PORT}/api/scores`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(
-      await scoreBody({
-        name: 'MahjongPilot',
-        score: mahjongScore,
-        survivalMs: 0,
-        orbs: 12,
-        comboBonus: 100,
-        nearMisses: 1,
-        difficulty: 'einfach',
-        game: 'mahjong',
-      })
-    ),
+    body: JSON.stringify(await playedMahjong('MahjongPilot', 'b1b1b1b1-b1b1-4b1b-8b1b-b1b1b1b1b1b1')),
   });
   const mahjongApi = await mahjongPost.json();
   assert(mahjongPost.ok, `mahjong post failed: ${JSON.stringify(mahjongApi)}`);

@@ -11,6 +11,11 @@ import {
   RATE_MAX,
   START_RATE_MAX,
   RATE_WINDOW_MS,
+  HOUR_MS,
+  START_HOUR_IP,
+  START_HOUR_CLIENT,
+  SUBMIT_HOUR_IP,
+  SUBMIT_HOUR_CLIENT,
   MIN_MS_BETWEEN_SUBMITS,
   BOARD_KEEP,
   PER_CLIENT_KEEP,
@@ -24,7 +29,9 @@ import {
   rankOf,
   normalizeGame,
   evaluateStoredRun,
+  normalizeClientId,
 } from '../shared/scores.js';
+import { applyReplay } from '../shared/replay.js';
 import { readEnvRunSecret, signRunToken, verifyRunToken } from '../shared/run-token.js';
 import { SECURITY_HEADERS, clientIpFromRequest, readLimitedBody } from '../shared/http.js';
 
@@ -142,26 +149,34 @@ function rowToEntry(row) {
   };
 }
 
-async function bumpRateLimit(db, key, now) {
+async function bumpWindow(db, key, now, windowMs) {
   const row = await db
     .prepare(
       `INSERT INTO rate_limits (client_key, last_submit_ts, window_start, hit_count)
        VALUES (?, 0, ?, 1)
        ON CONFLICT(client_key) DO UPDATE SET
          window_start = CASE
-           WHEN rate_limits.window_start <= ? - ${RATE_WINDOW_MS} THEN ?
+           WHEN rate_limits.window_start <= ? - ${windowMs} THEN ?
            ELSE rate_limits.window_start
          END,
          hit_count = CASE
-           WHEN rate_limits.window_start <= ? - ${RATE_WINDOW_MS} THEN 1
+           WHEN rate_limits.window_start <= ? - ${windowMs} THEN 1
            ELSE rate_limits.hit_count + 1
          END
        RETURNING hit_count`
     )
     .bind(key, now, now, now, now)
     .first();
-  const hits = Number(row?.hit_count ?? row?.results?.[0]?.hit_count ?? 0);
-  return hits;
+  return Number(row?.hit_count ?? row?.results?.[0]?.hit_count ?? 0);
+}
+
+async function bumpRateLimit(db, key, now) {
+  return bumpWindow(db, key, now, RATE_WINDOW_MS);
+}
+
+async function hourAllows(db, key, now, limit) {
+  const hits = await bumpWindow(db, key, now, HOUR_MS);
+  return hits <= limit;
 }
 
 async function listBoard(db, query) {
@@ -481,6 +496,17 @@ export async function handleApi(request, db, env = {}) {
       console.error('run secret', err);
       return json({ error: 'Run signing unavailable' }, 500, request);
     }
+    const clientParsed = normalizeClientId(incoming.body?.clientId);
+    const clientId = clientParsed.ok ? clientParsed.clientId : '';
+    if (!(await hourAllows(db, `hs:${key}`, now, START_HOUR_IP))) {
+      return json({ error: 'Too many requests' }, 429, request);
+    }
+    if (clientId && !(await hourAllows(db, `hc:${clientId}`, now, START_HOUR_CLIENT))) {
+      return json({ error: 'Too many requests' }, 429, request);
+    }
+    const seedBytes = new Uint32Array(1);
+    crypto.getRandomValues(seedBytes);
+    const seed = seedBytes[0];
     const runId = crypto.randomUUID();
     const { game, difficulty, mode, dailyDate } = parsed.value;
     try {
@@ -504,12 +530,13 @@ export async function handleApi(request, db, env = {}) {
       mode,
       dailyDate,
       startedAt: now,
+      seed,
     });
-    return json({ ok: true, runId, token, game, difficulty, mode, dailyDate, startedAt: now }, 200, request);
+    return json({ ok: true, runId, token, game, difficulty, mode, dailyDate, startedAt: now, seed }, 200, request);
   }
 
-  if (request.method === 'POST' && url.pathname === '/api/scores') {
-    const incoming = await readJsonBody(request);
+    if (request.method === 'POST' && url.pathname === '/api/scores') {
+    const incoming = await readJsonBody(request, 16384);
     if (!incoming.ok) return json({ error: incoming.error }, incoming.status, request);
     const body = incoming.body;
 
@@ -525,6 +552,12 @@ export async function handleApi(request, db, env = {}) {
     if (now - last < MIN_MS_BETWEEN_SUBMITS) {
       return json({ error: 'Slow down' }, 429, request);
     }
+    if (!(await hourAllows(db, `ps:${key}`, now, SUBMIT_HOUR_IP))) {
+      return json({ error: 'Too many requests' }, 429, request);
+    }
+    if (value.clientId && !(await hourAllows(db, `pc:${value.clientId}`, now, SUBMIT_HOUR_CLIENT))) {
+      return json({ error: 'Too many requests' }, 429, request);
+    }
 
     let secret;
     try {
@@ -536,21 +569,31 @@ export async function handleApi(request, db, env = {}) {
     const verified = await verifyRunToken(secret, body.runToken);
     if (!verified.ok) return json({ error: verified.error }, 400, request);
     let stored = await loadRun(db, verified.claims.id);
-    let verdict = evaluateStoredRun(stored, verified.claims, value, now);
-    if (!verdict.ok) return json({ error: verdict.error }, verdict.status, request);
-    if (!verdict.duplicate) {
+    let scored = value;
+    let verdict;
+    if (stored?.consumedAt) {
+      verdict = evaluateStoredRun(stored, verified.claims, value, now);
+      if (!verdict.ok || !verdict.duplicate) {
+        return json({ error: verdict.error || 'Run already submitted' }, verdict.status || 400, request);
+      }
+    } else {
+      const replayed = applyReplay(verified.claims, body, value);
+      if (!replayed.ok) return json({ error: replayed.error }, replayed.status, request);
+      scored = replayed.value;
+      verdict = evaluateStoredRun(stored, verified.claims, scored, now);
+      if (!verdict.ok) return json({ error: verdict.error }, verdict.status, request);
       const won = await consumeRun(db, verified.claims.id, now, verdict.fingerprint);
       if (!won) {
         stored = await loadRun(db, verified.claims.id);
-        verdict = evaluateStoredRun(stored, verified.claims, value, now);
+        verdict = evaluateStoredRun(stored, verified.claims, scored, now);
         if (!verdict.ok || !verdict.duplicate) {
           return json({ error: verdict.error || 'Run already submitted' }, 400, request);
         }
       }
     }
 
-    const dup = verdict.duplicate ? { ts: stored?.consumedAt || now } : await findDuplicate(db, value, key, now);
-    const board = boardQueryForPost(value);
+    const dup = verdict.duplicate ? { ts: stored?.consumedAt || now } : await findDuplicate(db, scored, key, now);
+    const board = boardQueryForPost(scored);
     if (dup) {
       await touchSubmit(db, key, now);
       const scores = await listBoard(db, board);
@@ -558,7 +601,7 @@ export async function handleApi(request, db, env = {}) {
         {
           ok: true,
           duplicate: true,
-          rank: rankOf(scores, { name: value.name, score: value.score, ts: dup.ts }),
+          rank: rankOf(scores, { name: scored.name, score: scored.score, ts: dup.ts }),
           scores,
         },
         200,
@@ -566,13 +609,13 @@ export async function handleApi(request, db, env = {}) {
       );
     }
 
-    await insertAndTrim(db, value, key, now);
+    await insertAndTrim(db, scored, key, now);
     await touchSubmit(db, key, now);
     const scores = await listBoard(db, board);
     return json(
       {
         ok: true,
-        rank: rankOf(scores, { name: value.name, score: value.score, ts: now }),
+        rank: rankOf(scores, { name: scored.name, score: scored.score, ts: now }),
         scores,
       },
       200,

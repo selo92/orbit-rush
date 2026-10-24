@@ -51,7 +51,7 @@ async function hmacSha256(secret, message) {
 
 /**
  * @param {string} secret
- * @param {{ id: string, game: string, difficulty: string, mode: string, dailyDate: string|null, startedAt: number }} claims
+ * @param {{ id: string, game: string, difficulty: string, mode: string, dailyDate: string|null, startedAt: number, seed?: number }} claims
  */
 export async function signRunToken(secret, claims) {
   const payload = {
@@ -62,6 +62,7 @@ export async function signRunToken(secret, claims) {
     m: claims.mode,
     dd: claims.dailyDate || '',
     t: claims.startedAt,
+    s: claims.seed >>> 0,
   };
   const body = bytesToB64Url(new TextEncoder().encode(JSON.stringify(payload)));
   const sig = await hmacSha256(secret, `${TOKEN_VERSION}.${body}`);
@@ -110,6 +111,7 @@ export async function verifyRunToken(secret, token) {
       mode: payload.m === 'daily' ? 'daily' : 'normal',
       dailyDate: payload.dd ? String(payload.dd) : null,
       startedAt: Number(payload.t),
+      seed: Number.isInteger(payload.s) && payload.s >= 0 && payload.s <= 0xffffffff ? payload.s : null,
     },
   };
 }

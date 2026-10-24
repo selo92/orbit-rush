@@ -31,6 +31,7 @@
  * One foreground attacker at a time. Miss the window and the run ends.
  */
 import { computeScore, NEAR_MISS_POINTS, COMBO_GAP_SEC, COMBO_MAX, COMBO_STEP } from './game.js';
+import { HuntSim, huntSizeOk } from '../shared/hunt-sim.js';
 
 const TWO_PI = Math.PI * 2;
 
@@ -344,9 +345,20 @@ export class HuntGame {
     };
     const ratio = typeof window !== 'undefined' && window.devicePixelRatio ? window.devicePixelRatio : 1;
     this.dpr = Math.min(ratio, 2);
+    const nextW = Math.max(1, Math.floor(rect.width || this.canvas.width || 1));
+    const nextH = Math.max(1, Math.floor(rect.height || this.canvas.height || 1));
+    this.cssW = nextW;
+    this.cssH = nextH;
+    if (this.sim && this.running) {
+      this.canvas.width = Math.floor(nextW * this.dpr);
+      this.canvas.height = Math.floor(nextH * this.dpr);
+      this.canvas.style.width = `${nextW}px`;
+      this.canvas.style.height = `${nextH}px`;
+      return;
+    }
     const oldWorld = this.worldW || 0;
-    this.w = Math.max(1, Math.floor(rect.width || this.canvas.width || 1));
-    this.h = Math.max(1, Math.floor(rect.height || this.canvas.height || 1));
+    this.w = nextW;
+    this.h = nextH;
     this.canvas.width = Math.floor(this.w * this.dpr);
     this.canvas.height = Math.floor(this.h * this.dpr);
     this.canvas.style.width = `${this.w}px`;
@@ -409,11 +421,13 @@ export class HuntGame {
 
   localPoint(e) {
     const rect = this.canvas.getBoundingClientRect?.() || { left: 0, top: 0, width: this.w, height: this.h };
-    const rw = rect.width || this.w || 1;
-    const rh = rect.height || this.h || 1;
+    const rw = rect.width || this.cssW || this.w || 1;
+    const rh = rect.height || this.cssH || this.h || 1;
+    const w = this.sim?.w || this.w;
+    const h = this.sim?.h || this.h;
     return {
-      x: ((e.clientX - rect.left) * this.w) / rw,
-      y: ((e.clientY - rect.top) * this.h) / rh,
+      x: ((e.clientX - rect.left) * w) / rw,
+      y: ((e.clientY - rect.top) * h) / rh,
     };
   }
 
@@ -482,8 +496,11 @@ export class HuntGame {
         return;
       }
       const dx = e.clientX - this.drag.x;
-      this.cam -= dx;
-      this.clampCam();
+      if (this.sim) this.sim.noteCam(this.sim.pendingCam - dx);
+      else {
+        this.cam -= dx;
+        this.clampCam();
+      }
       this.drag.x = e.clientX;
       this.drag.y = e.clientY;
     };
@@ -570,14 +587,30 @@ export class HuntGame {
     }
   }
 
-  /** @param {unknown} [difficultyId] */
-  start(difficultyId) {
+  /** @param {unknown} [difficultyId] @param {{ seed?: number }} [opts] */
+  start(difficultyId, opts = {}) {
     if (difficultyId != null && difficultyId !== '') this.setDifficulty(difficultyId);
     clearTimeout(this._overTimer);
     this.resetState();
     this.armed = true;
+    this.sim = null;
     this.resize();
-    this.seedFlock();
+    const rawSeed = Number(opts.seed);
+    const seed = Number.isInteger(rawSeed) && rawSeed >= 0 && rawSeed <= 0xffffffff
+      ? rawSeed >>> 0
+      : (Math.floor(Math.random() * 0xffffffff) >>> 0);
+    const coarse = typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)')?.matches;
+    const w = huntSizeOk(this.w, this.h) ? this.w : 390;
+    const h = huntSizeOk(this.w, this.h) ? this.h : 780;
+    this.sim = new HuntSim({
+      seed,
+      difficulty: this.difficultyId,
+      w,
+      h,
+      pointer: coarse ? 'touch' : 'mouse',
+      record: true,
+    });
+    this.pullSim();
     this.bindInput();
     this.running = true;
     this.paused = false;
@@ -624,13 +657,60 @@ export class HuntGame {
     if (this.running) this.raf = requestAnimationFrame((t) => this.loop(t));
   }
 
+  pullSim() {
+    const sim = this.sim;
+    if (!sim) return;
+    this.birds = sim.birds;
+    this.props = sim.props;
+    this.popup = sim.popup;
+    this.cam = sim.cam;
+    this.maxCam = sim.maxCam;
+    this.worldW = sim.worldW;
+    this.w = sim.w;
+    this.h = sim.h;
+    this.attacker = sim.attacker;
+    this.ammo = sim.ammo;
+    this.mag = sim.mag;
+    this.reloadT = sim.reloadT;
+    this.orbs = sim.orbs;
+    this.comboBonus = sim.comboBonus;
+    this.nearMisses = sim.nearMisses;
+    this.debt = sim.debt;
+    this.comboCount = sim.comboCount;
+    this.comboTimer = sim.comboTimer;
+    this.comboPeak = sim.comboPeak;
+    this.hits = sim.hits;
+    this.shots = sim.shots;
+    this.penalties = sim.penalties;
+    this.clock = sim.clock;
+    this.survivalMs = sim.survivalMs;
+    this.roundMs = sim.roundMs;
+    this.ending = sim.ending;
+    this.finished = sim.finished;
+    this.caught = sim.caught;
+    this.shake = sim.shake;
+    this.flash = sim.flash;
+    this.crack = sim.crack;
+    this.hitStop = sim.hitStop;
+    this.bannerT = sim.bannerT;
+    this.score = sim.score;
+    this._settled = sim.settledStats;
+  }
+
   update(dt) {
-    let left = Math.max(0, dt);
-    while (left > 0 && this.alive && !this.finished) {
-      const step = Math.min(0.02, left);
-      this.step(step);
-      left -= step;
-      if (this.finished) break;
+    if (this.sim && this.alive && !this.finished) {
+      this.sim.noteAim(this.aim.x, this.aim.y);
+      this.sim.consume(dt);
+      this.pullSim();
+      if (this.sim.finished) this.finish();
+    } else if (!this.sim) {
+      let left = Math.max(0, dt);
+      while (left > 0 && this.alive && !this.finished) {
+        const step = Math.min(0.02, left);
+        this.step(step);
+        left -= step;
+        if (this.finished) break;
+      }
     }
     this.fadeFx(dt);
     this.syncScore();
@@ -1017,6 +1097,13 @@ export class HuntGame {
 
   reload() {
     if (!this.running || this.paused || !this.alive || this.ending) return false;
+    if (this.sim) {
+      const ok = this.sim.reload();
+      this.pullSim();
+      if (!ok) return false;
+      this.audio.reload?.();
+      return true;
+    }
     if (this.reloadT > 0 || this.ammo >= HUNT_MAG) return false;
     this.reloadT = HUNT_RELOAD_SEC;
     this.audio.reload?.();
@@ -1025,6 +1112,31 @@ export class HuntGame {
 
   shoot() {
     if (!this.running || this.paused || !this.alive || this.ending) return false;
+    if (this.sim) {
+      if (this.sim.reloadT > 0) return false;
+      if (this.sim.ammo <= 0) {
+        this.audio.dry?.();
+        this.floatText('leer', this.aim.x, this.aim.y - 18, '#ffb4c4');
+        return false;
+      }
+      const hit = this.sim.shoot(this.aim.x, this.aim.y);
+      this.pullSim();
+      if (!hit) return false;
+      this.muzzle = 1;
+      this.recoil = 1;
+      this.audio.shot?.();
+      if (hit.kind === 'miss') return true;
+      const x = hit.x ?? this.aim.x;
+      const y = hit.y ?? this.aim.y;
+      const gold = hit.bird?.kind === 'gold';
+      this.puff(x, y, '#fff', gold ? 34 : hit.kind === 'attacker' ? 28 : 16);
+      this.impact(x, y, hit.kind === 'penalty' ? '#ff4d6d' : '#fffaf0');
+      if (gold) this.sparkleBurst(x, y);
+      if (hit.kind === 'penalty') this.audio.penalty?.();
+      else this.audio.squawk?.();
+      this.floatText(hit.kind === 'penalty' ? '-100' : 'treffer', x, y - 16, '#fff');
+      return true;
+    }
     if (this.reloadT > 0) return false;
     if (this.ammo <= 0) {
       this.audio.dry?.();
@@ -1390,10 +1502,12 @@ export class HuntGame {
   }
 
   fadeFx(dt) {
-    this.shake = Math.max(0, this.shake - dt * 2.6);
-    if (!(this.attacker && this.attacker.phase === 'lunge')) {
-      this.flash = Math.max(0, this.flash - dt * 1.7);
-      this.crack = Math.max(0, this.crack - dt * 1.4);
+    if (!this.sim) {
+      this.shake = Math.max(0, this.shake - dt * 2.6);
+      if (!(this.attacker && this.attacker.phase === 'lunge')) {
+        this.flash = Math.max(0, this.flash - dt * 1.7);
+        this.crack = Math.max(0, this.crack - dt * 1.4);
+      }
     }
     this.muzzle = Math.max(0, this.muzzle - dt * 7.5);
     this.recoil = Math.max(0, this.recoil - dt * 8);
@@ -1485,6 +1599,7 @@ export class HuntGame {
       accuracy,
       penalties: this.penalties,
       comboPeak: Math.min(COMBO_MAX, this.comboPeak),
+      huntLog: this.sim?.exportLog?.() || '',
       formula: formatHuntFormula(
         settled.survivalMs,
         settled.orbs,
@@ -1509,9 +1624,11 @@ export class HuntGame {
     if (!ctx || typeof ctx.beginPath !== 'function' || !this.w) return;
     const shakeX = (Math.random() - 0.5) * this.shake * 7;
     const shakeY = (Math.random() - 0.5) * this.shake * 5;
-    this.viewShakeX = shakeX;
-    this.viewShakeY = shakeY;
-    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    this.viewShakeX = 0;
+    this.viewShakeY = 0;
+    const fitX = this.cssW && this.w ? this.cssW / this.w : 1;
+    const fitY = this.cssH && this.h ? this.cssH / this.h : 1;
+    ctx.setTransform(this.dpr * fitX, 0, 0, this.dpr * fitY, 0, 0);
     ctx.clearRect(0, 0, this.w, this.h);
     ctx.save();
     ctx.translate(shakeX, shakeY);

@@ -9,7 +9,11 @@ import { fileURLToPath } from 'url';
 import { createMemoryDb } from '../worker/memory-db.js';
 import worker from '../worker/index.js';
 import { handleApi, resetSchemaForTests, clientIpFromRequest } from '../worker/api.js';
-import { inspectName, pruneScores, selectBoard } from '../shared/scores.js';
+import { inspectName, pruneScores, selectBoard, hashClientKey, START_HOUR_IP } from '../shared/scores.js';
+import { HuntSim, replayHunt } from '../shared/hunt-sim.js';
+import { HuntGame } from '../src/hunt.js';
+import { MahjongGame } from '../src/mahjong.js';
+import { mulberry32 } from '../src/rng.js';
 import { MAX_LIVE_ROOMS } from '../shared/http.js';
 import { readEnvRunSecret } from '../shared/run-token.js';
 import { isOwnRow } from '../src/identity.js';
@@ -168,7 +172,50 @@ async function openRun(body, ip, { ageMs } = {}) {
     const info = db._sqlite.prepare('UPDATE runs SET started_at = ? WHERE run_id = ?').run(Date.now() - age, start.data.runId);
     assert(info.changes === 1, 'backdated the server run clock');
   }
-  return { ...body, runToken: start.data.token };
+  return { ...body, runToken: start.data.token, seed: start.data.seed };
+}
+
+function autoHunt(seed, difficulty) {
+  const sim = new HuntSim({ seed, difficulty, w: 390, h: 700, pointer: 'touch', record: true });
+  while (!sim.finished) {
+    if (sim.reloadT <= 0 && sim.ammo > 0) {
+      const threat = sim.attacker && sim.attacker.phase === 'warn' ? sim.attacker : null;
+      let shot = threat ? { x: Math.round(threat.x), y: Math.round(threat.y) } : null;
+      if (!shot) {
+        for (const bird of sim.birds) {
+          if (!sim.birdHittable(bird)) continue;
+          const p = sim.birdScreen(bird);
+          if (p.x < 0 || p.x > sim.w) continue;
+          shot = { x: Math.round(p.x), y: Math.round(p.y) };
+          break;
+        }
+      }
+      if (shot) sim.shoot(shot.x, shot.y);
+    } else if (sim.ammo <= 0) sim.reload();
+    sim.step();
+  }
+  const stats = sim.settled();
+  return { ...stats, huntLog: sim.exportLog(), seed };
+}
+
+function clearMahjong(seed, difficulty = 'einfach', layout = 'schnell') {
+  const game = new MahjongGame();
+  game.start({ layout, difficulty, rng: mulberry32(seed) });
+  for (const pair of game.solution.map((entry) => entry.slice())) {
+    game.advance(0.2);
+    game.select(pair[0]);
+    const hit = game.select(pair[1]);
+    if (hit.type !== 'match' && hit.type !== 'win') break;
+  }
+  const result = game.result();
+  return {
+    score: result.score,
+    survivalMs: result.survivalMs,
+    orbs: result.orbs,
+    comboBonus: result.comboBonus,
+    nearMisses: result.nearMisses,
+    mahjongLog: result.mahjongLog,
+  };
 }
 
 try {
@@ -720,23 +767,19 @@ try {
   const rushAfterDash = await api('/api/scores?game=rush', { ip: '203.0.113.117' });
   assert(!rushAfterDash.data.scores.some((s) => s.name === 'DashPilot'), 'dash score stays off rush');
 
-  const huntScore = computeScore(90000, 4, 50, 2);
+  const huntStart = await openRun({ game: 'hunt', difficulty: 'mittel', survivalMs: 90000 }, '203.0.113.118');
+  const huntPlayed = autoHunt(huntStart.seed, 'mittel');
   const huntPost = await api('/api/scores', {
     method: 'POST',
     ip: '203.0.113.118',
-    body: await openRun(
-      {
-        name: 'HuntPilot',
-        score: huntScore,
-        survivalMs: 90000,
-        orbs: 4,
-        comboBonus: 50,
-        nearMisses: 2,
-        difficulty: 'mittel',
-        game: 'hunt',
-      },
-      '203.0.113.118'
-    ),
+    body: {
+      name: 'HuntPilot',
+      ...huntPlayed,
+      difficulty: 'mittel',
+      mode: 'normal',
+      game: 'hunt',
+      runToken: huntStart.runToken,
+    },
   });
   assert(huntPost.status === 200, `hunt post ${JSON.stringify(huntPost.data)}`);
   assert(huntPost.data.scores.every((s) => s.game === 'hunt'), 'hunt response is the hunt board');
@@ -747,23 +790,19 @@ try {
   const rushAfterHunt = await api('/api/scores?game=rush', { ip: '203.0.113.119' });
   assert(!rushAfterHunt.data.scores.some((s) => s.name === 'HuntPilot'), 'hunt score stays off rush');
 
-  const mahjongScore = computeScore(0, 12, 100, 1);
+  const mahjongStart = await openRun({ game: 'mahjong', difficulty: 'einfach', survivalMs: 5000 }, '203.0.113.131');
+  const mahjongPlayed = clearMahjong(mahjongStart.seed, 'einfach');
   const mahjongPost = await api('/api/scores', {
     method: 'POST',
     ip: '203.0.113.131',
-    body: await openRun(
-      {
-        name: 'MahjongPilot',
-        score: mahjongScore,
-        survivalMs: 0,
-        orbs: 12,
-        comboBonus: 100,
-        nearMisses: 1,
-        difficulty: 'einfach',
-        game: 'mahjong',
-      },
-      '203.0.113.131'
-    ),
+    body: {
+      name: 'MahjongPilot',
+      ...mahjongPlayed,
+      difficulty: 'einfach',
+      mode: 'normal',
+      game: 'mahjong',
+      runToken: mahjongStart.runToken,
+    },
   });
   assert(mahjongPost.status === 200, `mahjong post ${JSON.stringify(mahjongPost.data)}`);
   assert(mahjongPost.data.scores.every((s) => s.game === 'mahjong'), 'mahjong response is the mahjong board');
@@ -794,10 +833,6 @@ try {
     { game: 'pulse', difficulty: 'mittel', survivalMs: 30000, orbs: 40, comboBonus: 500, nearMisses: 8 },
     { game: 'jet', difficulty: 'baba', survivalMs: 22000, orbs: 30, comboBonus: 800, nearMisses: 6 },
     { game: 'dash', difficulty: 'mittel', survivalMs: 16000, orbs: 10, comboBonus: 200, nearMisses: 3 },
-    { game: 'hunt', difficulty: 'einfach', survivalMs: 120000, orbs: 180, comboBonus: 6000, nearMisses: 30 },
-    { game: 'hunt', difficulty: 'mittel', survivalMs: 90000, orbs: 150, comboBonus: 8000, nearMisses: 40 },
-    { game: 'hunt', difficulty: 'schwer', survivalMs: 68000, orbs: 120, comboBonus: 4000, nearMisses: 20 },
-    { game: 'mahjong', difficulty: 'schwer', survivalMs: 4000, orbs: 36, comboBonus: 800, nearMisses: 6 },
   ];
   for (let i = 0; i < guarded.length; i++) {
     const spec = guarded[i];
@@ -1173,48 +1208,119 @@ try {
   assert(instant.status === 400, `instant hunt cap ${instant.status} ${JSON.stringify(instant.data)}`);
   assert(db._sqlite.prepare(`SELECT COUNT(*) AS n FROM scores WHERE name = 'Instant'`).get().n === 0, 'instant row stored');
 
-  const tuned = computeScore(90000, 160, 25000, 40);
+  const canvas = {
+    width: 390,
+    height: 700,
+    style: {},
+    classList: { add() {}, remove() {} },
+    getBoundingClientRect: () => ({ width: 390, height: 700, left: 0, top: 0 }),
+    getContext: () => ({ setTransform() {}, clearRect() {}, beginPath() {} }),
+    addEventListener() {},
+    removeEventListener() {},
+  };
+  const playedGame = new HuntGame(canvas, { audio: {}, onGameOver() {}, onHud() {} });
+  playedGame.start('mittel', { seed: 7 });
+  playedGame.aim = { x: 180, y: 280 };
+  playedGame.shoot();
+  let frames = 0;
+  while (playedGame.sim && !playedGame.sim.finished && frames++ < 8000) playedGame.update(0.05);
+  const wrapped = replayHunt(7, 'mittel', playedGame.sim.exportLog());
+  assert(
+    wrapped.ok && wrapped.score === playedGame.sim.score && wrapped.orbs === playedGame.sim.orbs,
+    `client hunt log replays ${JSON.stringify(wrapped)} vs ${playedGame.sim.score}`
+  );
+  playedGame.stop();
+
+  const replayStart = await openRun({ game: 'hunt', difficulty: 'mittel', survivalMs: 90000 }, '203.0.113.235');
+  const replayPlayed = autoHunt(replayStart.seed, 'mittel');
   const tunedPost = await api('/api/scores', {
     method: 'POST',
     ip: '203.0.113.235',
-    body: await openRun(
-      {
-        name: 'Tuned',
-        score: tuned,
-        survivalMs: 90000,
-        orbs: 160,
-        comboBonus: 25000,
-        nearMisses: 40,
-        difficulty: 'mittel',
-        game: 'hunt',
-      },
-      '203.0.113.235',
-      { ageMs: 95_000 }
-    ),
+    body: {
+      name: 'Tuned',
+      ...replayPlayed,
+      difficulty: 'mittel',
+      mode: 'normal',
+      game: 'hunt',
+      runToken: replayStart.runToken,
+    },
   });
-  assert(tunedPost.status === 200, `full-round hunt headroom ${tunedPost.status} ${JSON.stringify(tunedPost.data)}`);
+  assert(tunedPost.status === 200, `replayed hunt ${tunedPost.status} ${JSON.stringify(tunedPost.data)}`);
 
-  const overCap = computeScore(90000, 190, 32000, 20);
-  const overPost = await api('/api/scores', {
+  const jamixNear = await api('/api/scores', {
     method: 'POST',
     ip: '203.0.113.236',
     body: await openRun(
       {
-        name: 'OverCap',
-        score: overCap,
+        name: 'Jamix is best!',
+        score: 47400,
         survivalMs: 90000,
-        orbs: 190,
-        comboBonus: 32000,
-        nearMisses: 20,
+        orbs: 200,
+        comboBonus: 16000,
+        nearMisses: 140,
         difficulty: 'mittel',
         game: 'hunt',
+        huntLog: '390,700,t',
       },
       '203.0.113.236',
       { ageMs: 95_000 }
     ),
   });
-  assert(overPost.status === 400, `hunt above cap ${overPost.status} ${overCap} ${JSON.stringify(overPost.data)}`);
-  assert(db._sqlite.prepare(`SELECT COUNT(*) AS n FROM scores WHERE name = 'OverCap'`).get().n === 0, 'over-cap row stored');
+  assert(jamixNear.status === 400, `cap-sitting hunt ${jamixNear.status} ${JSON.stringify(jamixNear.data)}`);
+  assert(
+    db._sqlite.prepare(`SELECT COUNT(*) AS n FROM scores WHERE name = 'Jamix is best!'`).get().n === 0,
+    'cap-sitting row stored'
+  );
+
+  const tamperedLog = replayPlayed.huntLog.replace(/s(\d+),(\d+)/, (_, x, y) => `s${Number(x) + 40},${y}`);
+  const tamperStart = await openRun({ game: 'hunt', difficulty: 'mittel', survivalMs: 90000 }, '203.0.113.238');
+  const tamperPlay = autoHunt(tamperStart.seed, 'mittel');
+  const tamper = await api('/api/scores', {
+    method: 'POST',
+    ip: '203.0.113.238',
+    body: {
+      name: 'Tamper',
+      ...tamperPlay,
+      huntLog: tamperedLog,
+      difficulty: 'mittel',
+      mode: 'normal',
+      game: 'hunt',
+      runToken: tamperStart.runToken,
+    },
+  });
+  assert(tamper.status === 400 && tamper.data.error === 'Score does not match this run', `tampered hunt ${JSON.stringify(tamper.data)}`);
+
+  const hourIp = '203.0.113.239';
+  const hourKey = await hashClientKey(hourIp);
+  db._sqlite
+    .prepare(`INSERT INTO rate_limits (client_key, last_submit_ts, window_start, hit_count) VALUES (?, 0, ?, ?)`)
+    .run(`hs:${hourKey}`, Date.now(), START_HOUR_IP);
+  const hourStart = await api('/api/run/start', {
+    method: 'POST',
+    ip: hourIp,
+    body: { game: 'rush', difficulty: 'mittel', mode: 'normal' },
+  });
+  assert(hourStart.status === 429, `hourly run start ${hourStart.status} ${JSON.stringify(hourStart.data)}`);
+
+  const ceiling = computeScore(120000, 80, 0, 0);
+  const ceilingPost = await api('/api/scores', {
+    method: 'POST',
+    ip: '203.0.113.241',
+    body: await openRun(
+      {
+        name: 'Ceiling',
+        score: ceiling,
+        survivalMs: 120000,
+        orbs: 80,
+        comboBonus: 0,
+        nearMisses: 0,
+        difficulty: 'einfach',
+        game: 'rush',
+      },
+      '203.0.113.241'
+    ),
+  });
+  assert(ceilingPost.status === 400 && ceilingPost.data.error === 'Score too high for this run', `rush ceiling ${JSON.stringify(ceilingPost.data)}`);
 
   const raceIp = '203.0.113.237';
   const raceBody = await openRun(
