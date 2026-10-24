@@ -5,21 +5,12 @@
 
 import { normalizeDifficulty, DEFAULT_DIFFICULTY } from './difficulty.js';
 import { isValidDailyDate } from './rng.js';
-import { normalizeClientId, normalizeGame } from '../shared/scores.js';
+import { normalizeClientId, normalizeGame, sanitizeName } from '../shared/scores.js';
+
+export { sanitizeName };
 
 const LS_KEY = 'orbit-rush-scores-v1';
-const MAX_NAME = 16;
 const TOP_N = 50;
-
-export function sanitizeName(name) {
-  if (typeof name !== 'string') return '';
-  return name
-    .replace(/[<>&"'`\\/]/g, '')
-    .replace(/[\u0000-\u001F\u007F]/g, '')
-    .trim()
-    .replace(/\s+/g, ' ')
-    .slice(0, MAX_NAME);
-}
 
 function readLocal() {
   try {
@@ -92,6 +83,47 @@ function rankLocal(scores, filter = {}) {
 
 const API_BASE = (import.meta.env?.VITE_API_BASE ?? '').replace(/\/$/, '');
 
+/** In-flight server run for the round that just started. Submit waits on it. */
+let activeRun = null;
+
+/**
+ * Ask the server for a signed run token when a round starts.
+ * Offline or a failed start leaves submit to fall back to local scores.
+ */
+export function beginScoreRun({ game = 'rush', difficulty, mode = 'normal', dailyDate } = {}) {
+  const seq = (activeRun?.seq || 0) + 1;
+  const task = api('/api/run/start', {
+    method: 'POST',
+    body: JSON.stringify({
+      game,
+      difficulty,
+      mode,
+      ...(mode === 'daily' && dailyDate ? { dailyDate } : {}),
+    }),
+  })
+    .then((data) => {
+      if (activeRun && activeRun.seq === seq) activeRun.token = data?.token || null;
+      return data;
+    })
+    .catch(() => {
+      if (activeRun && activeRun.seq === seq) activeRun.token = null;
+      return null;
+    });
+  activeRun = { seq, token: null, task };
+  return task;
+}
+
+export async function currentRunToken() {
+  if (activeRun?.task) {
+    try {
+      await activeRun.task;
+    } catch {
+      /* beginScoreRun already swallows */
+    }
+  }
+  return activeRun?.token || null;
+}
+
 async function api(path, opts) {
   const url = `${API_BASE}${path}`;
   const res = await fetch(url, {
@@ -159,6 +191,7 @@ export async function submitScore({
   dailyDate,
   clientId,
   game = 'rush',
+  runToken,
 }) {
   const clean = sanitizeName(name);
   if (!clean) throw new Error('Name required');
@@ -183,6 +216,8 @@ export async function submitScore({
   }
   const parsedId = normalizeClientId(clientId);
   if (parsedId.ok && parsedId.clientId) payload.clientId = parsedId.clientId;
+  const token = typeof runToken === 'string' && runToken ? runToken : await currentRunToken();
+  if (token) payload.runToken = token;
 
   try {
     const data = await api('/api/scores', {
@@ -248,6 +283,7 @@ export async function submitScore({
       source: 'local',
       fallback: true,
       rateLimited: e.status === 429,
+      rejected: e.status === 400,
       error: e.message,
     };
   }

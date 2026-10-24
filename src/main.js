@@ -27,7 +27,7 @@ import {
   difficultyBadge,
 } from './difficulty.js';
 import { AudioBus } from './audio.js';
-import { fetchScores, submitScore, sanitizeName } from './leaderboard.js';
+import { fetchScores, submitScore, sanitizeName, beginScoreRun } from './leaderboard.js';
 import { getOrCreateClientId, isOwnRow, loadPlayerName, savePlayerName } from './identity.js';
 import { utcDateString } from './rng.js';
 import {
@@ -956,6 +956,9 @@ function formatSubmitStatus(res) {
   if (res.rateLimited) {
     return 'Saved on this device. The global board asked for a short pause.';
   }
+  if (res.rejected) {
+    return 'Saved on this device. The global board did not accept this run.';
+  }
   if (res.fallback || res.source !== 'api') {
     const rankTxt = res.rank ? ` Rank #${res.rank}.` : '';
     return `Saved on this device.${rankTxt} Global board unreachable.`;
@@ -1801,6 +1804,7 @@ function beginMirror() {
   touchHint.classList.remove('fade-fast');
   void touchHint.offsetWidth;
   touchHint.classList.remove('hidden');
+  beginScoreRun({ game: 'mirror', difficulty: 'mittel', mode: 'normal' });
   mirror.start();
 }
 
@@ -1841,6 +1845,7 @@ function beginDrift() {
   touchHint.classList.remove('fade-fast');
   void touchHint.offsetWidth;
   touchHint.classList.remove('hidden');
+  beginScoreRun({ game: 'drift', difficulty: driftDifficulty, mode: 'normal' });
   drift.start(driftDifficulty);
 }
 
@@ -1935,6 +1940,12 @@ function beginPulse(opts = {}) {
   touchHint.classList.remove('fade-fast');
   void touchHint.offsetWidth;
   touchHint.classList.remove('hidden');
+  beginScoreRun({
+    game: 'pulse',
+    difficulty: daily ? 'schwer' : pulseDifficulty,
+    mode: daily ? 'daily' : 'normal',
+    dailyDate: daily ? date : undefined,
+  });
   pulse.start({
     difficulty: pulseDifficulty,
     daily,
@@ -2057,6 +2068,7 @@ function beginJet() {
   touchHint.classList.remove('fade-fast');
   void touchHint.offsetWidth;
   touchHint.classList.remove('hidden');
+  beginScoreRun({ game: 'jet', difficulty: jetDifficulty, mode: 'normal' });
   jet.start(jetDifficulty);
 }
 
@@ -2152,6 +2164,7 @@ function beginDash() {
   touchHint.classList.remove('fade-fast');
   void touchHint.offsetWidth;
   touchHint.classList.remove('hidden');
+  beginScoreRun({ game: 'dash', difficulty: dashDifficulty, mode: 'normal' });
   dash.start(dashDifficulty);
 }
 
@@ -2215,6 +2228,7 @@ function beginHunt() {
   void touchHint.offsetWidth;
   touchHint.classList.remove('hidden');
   canvas.classList.add('hunt-aim');
+  beginScoreRun({ game: 'hunt', difficulty: huntDifficulty, mode: 'normal' });
   hunt.start(huntDifficulty);
 }
 
@@ -2278,6 +2292,7 @@ function beginRun(opts = {}) {
     runMode = 'daily';
     hudMode.textContent = `Daily · ${dailyDate}`;
     hudMode.classList.remove('hidden');
+    beginScoreRun({ game: 'rush', difficulty: 'schwer', mode: 'daily', dailyDate });
     game.start({
       daily: true,
       dailyDate,
@@ -2287,6 +2302,7 @@ function beginRun(opts = {}) {
   } else {
     runMode = 'normal';
     hudMode.classList.add('hidden');
+    beginScoreRun({ game: 'rush', difficulty: selectedDifficulty, mode: 'normal' });
     game.start({
       difficulty: selectedDifficulty,
       skinId: selectedSkin,

@@ -13,7 +13,7 @@ import {
   writeBest,
 } from './mahjong.js';
 import { faceLabel, tileSvg } from './mahjong-art.js';
-import { submitScore, sanitizeName } from './leaderboard.js';
+import { submitScore, sanitizeName, beginScoreRun } from './leaderboard.js';
 import { getOrCreateClientId, loadPlayerName, savePlayerName } from './identity.js';
 
 const LS_LAYOUT = 'orbit-mahjong-layout';
@@ -39,6 +39,7 @@ function germanStatus(res) {
     return res.rank ? `Schon auf der Liste. Platz ${res.rank}.` : 'Schon auf der Liste.';
   }
   if (res.rateLimited) return 'Auf diesem Gerät gespeichert. Die Liste bittet um eine Pause.';
+  if (res.rejected) return 'Auf diesem Gerät gespeichert. Die Liste hat diesen Lauf nicht angenommen.';
   if (res.fallback || res.source !== 'api') {
     return res.rank ? `Auf diesem Gerät gespeichert. Platz ${res.rank}.` : 'Auf diesem Gerät gespeichert.';
   }
@@ -427,6 +428,7 @@ export function mountMahjong(hooks) {
   function begin() {
     audio.resume?.();
     audio.mahjongTap?.();
+    beginScoreRun({ game: 'mahjong', difficulty: difficultyId, mode: 'normal' });
     game.start({ layout: layoutId, difficulty: difficultyId });
     menu.classList.add('hidden');
     table.classList.remove('hidden');
