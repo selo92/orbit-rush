@@ -17,14 +17,20 @@ import { fileURLToPath } from 'url';
 import {
   STORE_CAP,
   MIN_MS_BETWEEN_SUBMITS,
+  START_RATE_MAX,
+  RUN_MAX_AGE_MS,
+  RATE_WINDOW_MS,
   validatePostBody,
   validateScoresQuery,
+  normalizeRunRequest,
   selectBoard,
   findRecentDuplicate,
   boardQueryForPost,
   rankOf,
   hashClientKey,
+  evaluateStoredRun,
 } from '../shared/scores.js';
+import { signRunToken, verifyRunToken } from '../shared/run-token.js';
 import { handleAerger } from '../worker/aerger-api.js';
 import { createFileAergerStore } from './aerger-file-store.js';
 import { handleDuel } from '../worker/duel-api.js';
@@ -33,6 +39,7 @@ import { createFileDuelStore } from './duel-file-store.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, '..', 'data');
 const SCORES_FILE = path.join(DATA_DIR, 'scores.json');
+const RUNS_FILE = process.env.RUNS_FILE || path.join(DATA_DIR, 'runs.json');
 const PORT = Number(process.env.PORT || 8787);
 
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -55,6 +62,8 @@ const limiter = rateLimit({
 app.use('/api/', (req, res, next) => {
   if (req.originalUrl.startsWith('/api/aerger')) return next();
   if (req.originalUrl.startsWith('/api/duel')) return next();
+  // Round starts have their own budget so a game open does not trip the score limiter.
+  if (req.originalUrl.startsWith('/api/run/start')) return next();
   return limiter(req, res, next);
 });
 
@@ -115,6 +124,44 @@ async function sendWebResponse(res, response) {
 
 /** Recent submit fingerprints for double-submit / spam guard */
 const recentSubmits = new Map(); // key -> timestamp
+const startHits = new Map(); // ip -> { windowStart, hits }
+
+function newRunSecret() {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+function readRunStore() {
+  try {
+    const data = JSON.parse(fs.readFileSync(RUNS_FILE, 'utf8'));
+    if (!data || typeof data !== 'object' || typeof data.secret !== 'string' || !data.secret) {
+      throw new Error('missing secret');
+    }
+    if (!data.runs || typeof data.runs !== 'object') data.runs = {};
+    return data;
+  } catch {
+    const data = { secret: newRunSecret(), runs: {} };
+    writeRunStore(data);
+    return data;
+  }
+}
+
+function writeRunStore(data) {
+  const tmp = RUNS_FILE + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(data), 'utf8');
+  fs.renameSync(tmp, RUNS_FILE);
+}
+
+function bumpStartLimit(ip, now) {
+  const row = startHits.get(ip) || { windowStart: now, hits: 0 };
+  if (now - row.windowStart >= RATE_WINDOW_MS) {
+    row.windowStart = now;
+    row.hits = 0;
+  }
+  row.hits += 1;
+  startHits.set(ip, row);
+  return row.hits;
+}
 
 function readScores() {
   try {
@@ -149,6 +196,47 @@ app.get('/api/scores', (req, res) => {
   });
 });
 
+app.post('/api/run/start', async (req, res) => {
+  const parsed = normalizeRunRequest(req.body);
+  if (!parsed.ok) return res.status(parsed.status).json({ error: parsed.error });
+  const now = Date.now();
+  const ip = req.ip || req.socket?.remoteAddress || 'unknown';
+  if (bumpStartLimit(ip, now) > START_RATE_MAX) {
+    return res.status(429).json({ error: 'Too many requests' });
+  }
+  const store = readRunStore();
+  for (const [id, row] of Object.entries(store.runs)) {
+    if (Number(row.expiresAt) < now) delete store.runs[id];
+  }
+  const runId = crypto.randomUUID();
+  const { game, difficulty, mode, dailyDate } = parsed.value;
+  store.runs[runId] = {
+    game,
+    difficulty,
+    mode,
+    dailyDate,
+    startedAt: now,
+    expiresAt: now + RUN_MAX_AGE_MS,
+    consumedAt: null,
+    fingerprint: null,
+  };
+  writeRunStore(store);
+  try {
+    const token = await signRunToken(store.secret, {
+      id: runId,
+      game,
+      difficulty,
+      mode,
+      dailyDate,
+      startedAt: now,
+    });
+    res.json({ ok: true, runId, token, game, difficulty, mode, dailyDate, startedAt: now });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Run signing unavailable' });
+  }
+});
+
 app.post('/api/scores', async (req, res) => {
   const parsed = validatePostBody(req.body);
   if (!parsed.ok) return res.status(parsed.status).json({ error: parsed.error });
@@ -161,9 +249,24 @@ app.post('/api/scores', async (req, res) => {
     return res.status(429).json({ error: 'Slow down' });
   }
 
+  const store = readRunStore();
+  const verified = await verifyRunToken(store.secret, req.body?.runToken);
+  if (!verified.ok) return res.status(400).json({ error: verified.error });
+  const row = store.runs[verified.claims.id] || null;
+  let verdict = evaluateStoredRun(row, verified.claims, value, now);
+  if (!verdict.ok) return res.status(verdict.status).json({ error: verdict.error });
+  if (!verdict.duplicate) {
+    if (row.consumedAt) return res.status(400).json({ error: 'Run already submitted' });
+    row.consumedAt = now;
+    row.fingerprint = verdict.fingerprint;
+    writeRunStore(store);
+  }
+
   const scores = readScores();
-  const dup = findRecentDuplicate(scores, value, key, now);
   const board = boardQueryForPost(value);
+  const dup = verdict.duplicate
+    ? { ts: Number(row?.consumedAt) || now }
+    : findRecentDuplicate(scores, value, key, now);
   if (dup) {
     recentSubmits.set(key, now);
     const ranked = selectBoard(scores, board);

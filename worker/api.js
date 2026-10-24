@@ -9,18 +9,24 @@ import { handleDuel } from './duel-api.js';
 import { createD1DuelStore } from './duel-store.js';
 import {
   RATE_MAX,
+  START_RATE_MAX,
   RATE_WINDOW_MS,
   MIN_MS_BETWEEN_SUBMITS,
   STORE_CAP,
+  RUN_MAX_AGE_MS,
   validatePostBody,
   validateScoresQuery,
+  normalizeRunRequest,
   hashClientKey,
   boardQueryForPost,
   rankOf,
   normalizeGame,
+  evaluateStoredRun,
 } from '../shared/scores.js';
+import { readEnvRunSecret, signRunToken, verifyRunToken } from '../shared/run-token.js';
 
 let schemaReady = false;
+let cachedRunSecret = null;
 
 function corsHeaders(request) {
   const origin = request.headers.get('Origin');
@@ -278,7 +284,90 @@ async function touchSubmit(db, key, now) {
   await db.prepare(`UPDATE rate_limits SET last_submit_ts = ? WHERE client_key = ?`).bind(now, key).run();
 }
 
-export async function handleApi(request, db) {
+function changesOf(result) {
+  const n = Number(result?.meta?.changes ?? result?.changes ?? 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+async function runSecret(db, env) {
+  const fromEnv = readEnvRunSecret(env);
+  if (!fromEnv.ok) {
+    const err = new Error(fromEnv.error);
+    err.status = 500;
+    throw err;
+  }
+  if (fromEnv.secret) return fromEnv.secret;
+  if (cachedRunSecret) return cachedRunSecret;
+  const existing = await db.prepare(`SELECT value FROM app_secrets WHERE id = ?`).bind('run_hmac').first();
+  if (existing?.value) {
+    cachedRunSecret = String(existing.value);
+    return cachedRunSecret;
+  }
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  const value = [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+  const now = Date.now();
+  await db
+    .prepare(
+      `INSERT INTO app_secrets (id, value, created_at) VALUES (?, ?, ?)
+       ON CONFLICT(id) DO NOTHING`
+    )
+    .bind('run_hmac', value, now)
+    .run();
+  const row = await db.prepare(`SELECT value FROM app_secrets WHERE id = ?`).bind('run_hmac').first();
+  if (!row?.value) throw new Error('run secret missing');
+  cachedRunSecret = String(row.value);
+  return cachedRunSecret;
+}
+
+function mapRunRow(row) {
+  if (!row) return null;
+  return {
+    game: row.game,
+    difficulty: row.difficulty,
+    mode: row.mode,
+    dailyDate: row.daily_date || null,
+    startedAt: Number(row.started_at),
+    expiresAt: Number(row.expires_at),
+    consumedAt: row.consumed_at == null ? null : Number(row.consumed_at),
+    fingerprint: row.fingerprint || null,
+  };
+}
+
+async function loadRun(db, runId) {
+  const row = await db
+    .prepare(
+      `SELECT game, difficulty, mode, daily_date, started_at, expires_at, consumed_at, fingerprint
+       FROM runs WHERE run_id = ?`
+    )
+    .bind(runId)
+    .first();
+  return mapRunRow(row);
+}
+
+async function consumeRun(db, runId, now, fingerprint) {
+  const result = await db
+    .prepare(
+      `UPDATE runs SET consumed_at = ?, fingerprint = ?
+       WHERE run_id = ? AND consumed_at IS NULL`
+    )
+    .bind(now, fingerprint, runId)
+    .run();
+  return changesOf(result) > 0;
+}
+
+async function readJsonBody(request, limit = 8192) {
+  const len = Number(request.headers.get('content-length') || 0);
+  if (len > limit) return { ok: false, status: 413, error: 'Payload too large' };
+  try {
+    const text = await request.text();
+    if (text.length > limit) return { ok: false, status: 413, error: 'Payload too large' };
+    return { ok: true, body: text ? JSON.parse(text) : {} };
+  } catch {
+    return { ok: false, status: 400, error: 'Invalid JSON' };
+  }
+}
+
+export async function handleApi(request, db, env = {}) {
   const url = new URL(request.url);
 
   // Orbit Ärger polls often. Keep it off the score rate-limit row so a
@@ -322,15 +411,16 @@ export async function handleApi(request, db) {
   const ip = clientIpFromRequest(request);
   const key = await hashClientKey(ip);
   const now = Date.now();
+  const isRunStart = request.method === 'POST' && url.pathname === '/api/run/start';
 
   let hits = 0;
   try {
-    hits = await bumpRateLimit(db, key, now);
+    hits = await bumpRateLimit(db, isRunStart ? `s:${key}` : key, now);
   } catch (err) {
     console.error('rate', err);
     return json({ error: 'Server error' }, 500, request);
   }
-  if (hits > RATE_MAX) {
+  if (hits > (isRunStart ? START_RATE_MAX : RATE_MAX)) {
     return json({ error: 'Too many requests' }, 429, request);
   }
 
@@ -355,17 +445,49 @@ export async function handleApi(request, db) {
     );
   }
 
-  if (request.method === 'POST' && url.pathname === '/api/scores') {
-    const len = Number(request.headers.get('content-length') || 0);
-    if (len > 8192) return json({ error: 'Payload too large' }, 413, request);
-    let body;
+  if (isRunStart) {
+    const incoming = await readJsonBody(request, 2048);
+    if (!incoming.ok) return json({ error: incoming.error }, incoming.status, request);
+    const parsed = normalizeRunRequest(incoming.body);
+    if (!parsed.ok) return json({ error: parsed.error }, parsed.status, request);
+    let secret;
     try {
-      const text = await request.text();
-      if (text.length > 8192) return json({ error: 'Payload too large' }, 413, request);
-      body = text ? JSON.parse(text) : {};
-    } catch {
-      return json({ error: 'Invalid JSON' }, 400, request);
+      secret = await runSecret(db, env);
+    } catch (err) {
+      console.error('run secret', err);
+      return json({ error: 'Run signing unavailable' }, 500, request);
     }
+    const runId = crypto.randomUUID();
+    const { game, difficulty, mode, dailyDate } = parsed.value;
+    try {
+      await db.prepare(`DELETE FROM runs WHERE expires_at < ?`).bind(now).run();
+      await db
+        .prepare(
+          `INSERT INTO runs (
+             run_id, game, difficulty, mode, daily_date, started_at, expires_at, consumed_at, fingerprint
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL)`
+        )
+        .bind(runId, game, difficulty, mode, dailyDate, now, now + RUN_MAX_AGE_MS)
+        .run();
+    } catch (err) {
+      console.error('run start', err);
+      return json({ error: 'Server error' }, 500, request);
+    }
+    const token = await signRunToken(secret, {
+      id: runId,
+      game,
+      difficulty,
+      mode,
+      dailyDate,
+      startedAt: now,
+    });
+    return json({ ok: true, runId, token, game, difficulty, mode, dailyDate, startedAt: now }, 200, request);
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/scores') {
+    const incoming = await readJsonBody(request);
+    if (!incoming.ok) return json({ error: incoming.error }, incoming.status, request);
+    const body = incoming.body;
 
     const parsed = validatePostBody(body);
     if (!parsed.ok) return json({ error: parsed.error }, parsed.status, request);
@@ -380,7 +502,30 @@ export async function handleApi(request, db) {
       return json({ error: 'Slow down' }, 429, request);
     }
 
-    const dup = await findDuplicate(db, value, key, now);
+    let secret;
+    try {
+      secret = await runSecret(db, env);
+    } catch (err) {
+      console.error('run secret', err);
+      return json({ error: 'Run signing unavailable' }, 500, request);
+    }
+    const verified = await verifyRunToken(secret, body.runToken);
+    if (!verified.ok) return json({ error: verified.error }, 400, request);
+    let stored = await loadRun(db, verified.claims.id);
+    let verdict = evaluateStoredRun(stored, verified.claims, value, now);
+    if (!verdict.ok) return json({ error: verdict.error }, verdict.status, request);
+    if (!verdict.duplicate) {
+      const won = await consumeRun(db, verified.claims.id, now, verdict.fingerprint);
+      if (!won) {
+        stored = await loadRun(db, verified.claims.id);
+        verdict = evaluateStoredRun(stored, verified.claims, value, now);
+        if (!verdict.ok || !verdict.duplicate) {
+          return json({ error: verdict.error || 'Run already submitted' }, 400, request);
+        }
+      }
+    }
+
+    const dup = verdict.duplicate ? { ts: stored?.consumedAt || now } : await findDuplicate(db, value, key, now);
     const board = boardQueryForPost(value);
     if (dup) {
       await touchSubmit(db, key, now);
@@ -417,4 +562,5 @@ export async function handleApi(request, db) {
 /** Test helper: schema flag is per-isolate; reset between memory databases. */
 export function resetSchemaForTests() {
   schemaReady = false;
+  cachedRunSecret = null;
 }

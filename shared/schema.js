@@ -6,6 +6,8 @@
  * Orbit Drift stores game='drift', Orbit Pulse stores game='pulse', Orbit Jet stores game='jet', Orbit Dash stores game='dash', Orbit Hunt stores game='hunt', and Orbit Mahjong stores game='mahjong' in that same TEXT column. No further migration.
  * migrations/0004_aerger_rooms.sql adds aerger_rooms (Orbit Ärger). Scores stay untouched.
  * migrations/0005_duel_rooms.sql adds duel_rooms (Orbit Duel). Scores stay untouched.
+ * migrations/0006_run_tokens.sql adds app_secrets and runs for signed score runs.
+ * It does not alter scores. worker/api.js also CREATE IF NOT EXISTS those tables.
  * CREATE below is the full fresh schema. worker/api.js ALTERs legacy score columns.
  */
 
@@ -50,6 +52,23 @@ export const SCHEMA_STATEMENTS = [
     created_at INTEGER NOT NULL
   )`,
   `CREATE INDEX IF NOT EXISTS idx_duel_rooms_updated ON duel_rooms (updated_at)`,
+  `CREATE TABLE IF NOT EXISTS app_secrets (
+    id TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS runs (
+    run_id TEXT PRIMARY KEY,
+    game TEXT NOT NULL,
+    difficulty TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    daily_date TEXT,
+    started_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    consumed_at INTEGER,
+    fingerprint TEXT
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_runs_expires ON runs (expires_at)`,
 ];
 
 /** Applied after legacy tables gain client_id. Safe to run more than once. */

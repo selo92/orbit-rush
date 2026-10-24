@@ -9,6 +9,7 @@ import { fileURLToPath } from 'url';
 import { createMemoryDb } from '../worker/memory-db.js';
 import { handleApi, resetSchemaForTests } from '../worker/api.js';
 import { selectBoard } from '../shared/scores.js';
+import { readEnvRunSecret } from '../shared/run-token.js';
 import { isOwnRow } from '../src/identity.js';
 import { selfCheck } from '../shared/aerger.js';
 import { selfCheck as duelSelfCheck } from '../shared/duel.js';
@@ -52,11 +53,19 @@ selfCheck();
 duelSelfCheck();
 {
   const fresh = new DatabaseSync(':memory:');
-  for (const file of ['0001_init.sql', '0002_client_id.sql', '0003_game.sql', '0004_aerger_rooms.sql', '0005_duel_rooms.sql']) {
+  const migrationRun = fs.readFileSync(path.join(root, 'migrations', '0006_run_tokens.sql'), 'utf8');
+  assert(migrationRun.includes('CREATE TABLE IF NOT EXISTS runs'), 'run token migration');
+  assert(migrationRun.includes('app_secrets'), 'run secret migration');
+  assert(!/ALTER TABLE scores/i.test(migrationRun), 'run migration leaves scores alone');
+  assert(!/DELETE FROM scores/i.test(migrationRun), 'run migration does not delete scores');
+  for (const file of ['0001_init.sql', '0002_client_id.sql', '0003_game.sql', '0004_aerger_rooms.sql', '0005_duel_rooms.sql', '0006_run_tokens.sql']) {
     fresh.exec(fs.readFileSync(path.join(root, 'migrations', file), 'utf8'));
   }
   const tables = fresh.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((row) => row.name);
-  assert(tables.includes('scores') && tables.includes('aerger_rooms') && tables.includes('duel_rooms'), `migration tables ${tables}`);
+  assert(
+    tables.includes('scores') && tables.includes('aerger_rooms') && tables.includes('duel_rooms') && tables.includes('runs'),
+    `migration tables ${tables}`
+  );
   const scoreCols = fresh.prepare('PRAGMA table_info(scores)').all().map((col) => col.name);
   assert(scoreCols.includes('game') && scoreCols.includes('client_id'), 'score columns survive aerger migration');
   const roomCols = fresh.prepare('PRAGMA table_info(aerger_rooms)').all().map((col) => col.name);
@@ -139,7 +148,33 @@ async function api(pathname, { method = 'GET', body, ip = '203.0.113.10', header
   return { status: res.status, data, etag: res.headers.get('etag') };
 }
 
+async function openRun(body, ip, { ageMs } = {}) {
+  const start = await api('/api/run/start', {
+    method: 'POST',
+    ip,
+    body: {
+      game: body.game || 'rush',
+      difficulty: body.difficulty,
+      mode: body.mode,
+      dailyDate: body.dailyDate,
+    },
+  });
+  assert(start.status === 200 && start.data.token && start.data.runId, `run start ${start.status} ${JSON.stringify(start.data)}`);
+  const survival = Number(body.survivalMs || 0);
+  const age = ageMs == null ? (survival > 2_000 ? survival + 1_000 : 0) : ageMs;
+  if (age > 0) {
+    const info = db._sqlite.prepare('UPDATE runs SET started_at = ? WHERE run_id = ?').run(Date.now() - age, start.data.runId);
+    assert(info.changes === 1, 'backdated the server run clock');
+  }
+  return { ...body, runToken: start.data.token };
+}
+
 try {
+  assert(readEnvRunSecret({}).ok && readEnvRunSecret({}).secret == null, 'unset secret falls through to D1');
+  assert(readEnvRunSecret({ RUN_TOKEN_SECRET: '' }).secret == null, 'blank secret falls through to D1');
+  assert(!readEnvRunSecret({ RUN_TOKEN_SECRET: 'too-short' }).ok, 'short secret fails closed');
+  assert(readEnvRunSecret({ RUN_TOKEN_SECRET: 'x'.repeat(32) }).secret.length === 32, 'long secret is used');
+
   const health = await api('/api/health');
   assert(health.status === 200, 'health status');
   assert(health.data.version === '1.5', 'health version');
@@ -153,16 +188,19 @@ try {
 
   const post = await api('/api/scores', {
     method: 'POST',
-    body: {
-      name: '<b>Smoke Bot</b>',
-      score,
-      survivalMs,
-      orbs,
-      comboBonus,
-      nearMisses,
-      difficulty: 'schwer',
-      mode: 'normal',
-    },
+    body: await openRun(
+      {
+        name: '<b>Smoke Bot</b>',
+        score,
+        survivalMs,
+        orbs,
+        comboBonus,
+        nearMisses,
+        difficulty: 'schwer',
+        mode: 'normal',
+      },
+      '203.0.113.10'
+    ),
   });
   assert(post.status === 200, `post failed ${post.status} ${JSON.stringify(post.data)}`);
   assert(post.data.scores.some((s) => s.name === 'bSmoke Botb' && s.difficulty === 'schwer'), 'sanitized name');
@@ -219,16 +257,19 @@ try {
   const babaPost = await api('/api/scores', {
     method: 'POST',
     ip: '203.0.113.14',
-    body: {
-      name: 'BabaPilot',
-      score: babaScore,
-      survivalMs: 15000,
-      orbs: 1,
-      comboBonus: 0,
-      nearMisses: 0,
-      difficulty: 'baba',
-      mode: 'normal',
-    },
+    body: await openRun(
+      {
+        name: 'BabaPilot',
+        score: babaScore,
+        survivalMs: 15000,
+        orbs: 1,
+        comboBonus: 0,
+        nearMisses: 0,
+        difficulty: 'baba',
+        mode: 'normal',
+      },
+      '203.0.113.14'
+    ),
   });
   assert(babaPost.status === 200, `baba post ${JSON.stringify(babaPost.data)}`);
 
@@ -237,17 +278,20 @@ try {
   const dailyPost = await api('/api/scores', {
     method: 'POST',
     ip: '203.0.113.15',
-    body: {
-      name: 'DailyPilot',
-      score: dailyScore,
-      survivalMs: 20000,
-      orbs: 2,
-      comboBonus: 0,
-      nearMisses: 1,
-      difficulty: 'einfach',
-      mode: 'daily',
-      dailyDate,
-    },
+    body: await openRun(
+      {
+        name: 'DailyPilot',
+        score: dailyScore,
+        survivalMs: 20000,
+        orbs: 2,
+        comboBonus: 0,
+        nearMisses: 1,
+        difficulty: 'einfach',
+        mode: 'daily',
+        dailyDate,
+      },
+      '203.0.113.15'
+    ),
   });
   assert(dailyPost.status === 200, `daily post ${JSON.stringify(dailyPost.data)}`);
   assert(
@@ -321,7 +365,10 @@ try {
   const capPost = await api('/api/scores', {
     method: 'POST',
     ip: '203.0.113.40',
-    body: { name: 'CapPilot', score: capScore, survivalMs: 1000, orbs: 0, difficulty: 'einfach' },
+    body: await openRun(
+      { name: 'CapPilot', score: capScore, survivalMs: 1000, orbs: 0, difficulty: 'einfach' },
+      '203.0.113.40'
+    ),
   });
   assert(capPost.status === 200, `cap post ${JSON.stringify(capPost.data)}`);
   const after = db._sqlite.prepare('SELECT COUNT(*) AS n FROM scores').get().n;
@@ -348,16 +395,19 @@ try {
   const idPost = await api('/api/scores', {
     method: 'POST',
     ip: '203.0.113.60',
-    body: {
-      name: 'IdPilot',
-      score: idScore,
-      survivalMs: 8000,
-      orbs: 1,
-      comboBonus: 0,
-      nearMisses: 0,
-      difficulty: 'mittel',
-      clientId: pilotId,
-    },
+    body: await openRun(
+      {
+        name: 'IdPilot',
+        score: idScore,
+        survivalMs: 8000,
+        orbs: 1,
+        comboBonus: 0,
+        nearMisses: 0,
+        difficulty: 'mittel',
+        clientId: pilotId,
+      },
+      '203.0.113.60'
+    ),
   });
   assert(idPost.status === 200, `clientId post ${JSON.stringify(idPost.data)}`);
   assert(
@@ -390,10 +440,18 @@ try {
     difficulty: 'einfach',
     clientId: dupId,
   };
-  const dupFirst = await api('/api/scores', { method: 'POST', ip: '203.0.113.62', body: dupBody });
+  const dupFirst = await api('/api/scores', {
+    method: 'POST',
+    ip: '203.0.113.62',
+    body: await openRun(dupBody, '203.0.113.62'),
+  });
   assert(dupFirst.status === 200 && !dupFirst.data.duplicate, 'first dup pilot saved');
   await new Promise((r) => setTimeout(r, 2100));
-  const dupAgain = await api('/api/scores', { method: 'POST', ip: '203.0.113.62', body: dupBody });
+  const dupAgain = await api('/api/scores', {
+    method: 'POST',
+    ip: '203.0.113.62',
+    body: await openRun(dupBody, '203.0.113.62'),
+  });
   assert(dupAgain.status === 200 && dupAgain.data.duplicate === true, `duplicate flag ${JSON.stringify(dupAgain.data)}`);
 
   db._sqlite.exec('DROP INDEX IF EXISTS idx_scores_client_id');
@@ -403,13 +461,16 @@ try {
   const legacy = await api('/api/scores', {
     method: 'POST',
     ip: '203.0.113.77',
-    body: {
-      name: 'LegacyPilot',
-      score: legacyScore,
-      survivalMs: 2000,
-      orbs: 0,
-      clientId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
-    },
+    body: await openRun(
+      {
+        name: 'LegacyPilot',
+        score: legacyScore,
+        survivalMs: 2000,
+        orbs: 0,
+        clientId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+      },
+      '203.0.113.77'
+    ),
   });
   assert(legacy.status === 200, `legacy migrate post ${JSON.stringify(legacy.data)}`);
   assert(
@@ -435,7 +496,7 @@ try {
   const mirrorPost = await api('/api/scores', {
     method: 'POST',
     ip: '203.0.113.90',
-    body: mirrorBody,
+    body: await openRun(mirrorBody, '203.0.113.90'),
   });
   assert(mirrorPost.status === 200, `mirror post ${JSON.stringify(mirrorPost.data)}`);
   assert(mirrorPost.data.scores.every((s) => s.game === 'mirror'), 'mirror response is the mirror board');
@@ -444,7 +505,7 @@ try {
   const mirrorDup = await api('/api/scores', {
     method: 'POST',
     ip: '203.0.113.90',
-    body: mirrorBody,
+    body: await openRun(mirrorBody, '203.0.113.90'),
   });
   assert(mirrorDup.status === 200 && mirrorDup.data.duplicate === true, 'mirror duplicate is per game');
 
@@ -470,16 +531,19 @@ try {
   const driftPost = await api('/api/scores', {
     method: 'POST',
     ip: '203.0.113.96',
-    body: {
-      name: 'DriftPilot',
-      score: driftScore,
-      survivalMs: 8000,
-      orbs: 3,
-      comboBonus: 100,
-      nearMisses: 2,
-      game: 'drift',
-      clientId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
-    },
+    body: await openRun(
+      {
+        name: 'DriftPilot',
+        score: driftScore,
+        survivalMs: 8000,
+        orbs: 3,
+        comboBonus: 100,
+        nearMisses: 2,
+        game: 'drift',
+        clientId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+      },
+      '203.0.113.96'
+    ),
   });
   assert(driftPost.status === 200, `drift post ${JSON.stringify(driftPost.data)}`);
   assert(driftPost.data.scores.every((s) => s.game === 'drift'), 'drift response is the drift board');
@@ -506,17 +570,20 @@ try {
   const pulsePost = await api('/api/scores', {
     method: 'POST',
     ip: '203.0.113.110',
-    body: {
-      name: 'PulsePilot',
-      score: pulseScore,
-      survivalMs: 9000,
-      orbs: 4,
-      comboBonus: 100,
-      nearMisses: 1,
-      difficulty: 'baba',
-      game: 'pulse',
-      clientId: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
-    },
+    body: await openRun(
+      {
+        name: 'PulsePilot',
+        score: pulseScore,
+        survivalMs: 9000,
+        orbs: 4,
+        comboBonus: 100,
+        nearMisses: 1,
+        difficulty: 'baba',
+        game: 'pulse',
+        clientId: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
+      },
+      '203.0.113.110'
+    ),
   });
   assert(pulsePost.status === 200, `pulse post ${JSON.stringify(pulsePost.data)}`);
   assert(pulsePost.data.scores.every((s) => s.game === 'pulse'), 'pulse response is the pulse board');
@@ -534,17 +601,20 @@ try {
   const pulseDailyPost = await api('/api/scores', {
     method: 'POST',
     ip: '203.0.113.112',
-    body: {
-      name: 'PulseDaily',
-      score: pulseDailyScore,
-      survivalMs: 5000,
-      orbs: 2,
-      comboBonus: 0,
-      nearMisses: 1,
-      game: 'pulse',
-      mode: 'daily',
-      dailyDate: pulseDailyDate,
-    },
+    body: await openRun(
+      {
+        name: 'PulseDaily',
+        score: pulseDailyScore,
+        survivalMs: 5000,
+        orbs: 2,
+        comboBonus: 0,
+        nearMisses: 1,
+        game: 'pulse',
+        mode: 'daily',
+        dailyDate: pulseDailyDate,
+      },
+      '203.0.113.112'
+    ),
   });
   assert(pulseDailyPost.status === 200, `pulse daily post ${JSON.stringify(pulseDailyPost.data)}`);
   assert(
@@ -563,16 +633,19 @@ try {
   const jetPost = await api('/api/scores', {
     method: 'POST',
     ip: '203.0.113.114',
-    body: {
-      name: 'JetPilot',
-      score: jetScore,
-      survivalMs: 6000,
-      orbs: 3,
-      comboBonus: 50,
-      nearMisses: 1,
-      difficulty: 'schwer',
-      game: 'jet',
-    },
+    body: await openRun(
+      {
+        name: 'JetPilot',
+        score: jetScore,
+        survivalMs: 6000,
+        orbs: 3,
+        comboBonus: 50,
+        nearMisses: 1,
+        difficulty: 'schwer',
+        game: 'jet',
+      },
+      '203.0.113.114'
+    ),
   });
   assert(jetPost.status === 200, `jet post ${JSON.stringify(jetPost.data)}`);
   assert(jetPost.data.scores.every((s) => s.game === 'jet'), 'jet response is the jet board');
@@ -587,16 +660,19 @@ try {
   const dashPost = await api('/api/scores', {
     method: 'POST',
     ip: '203.0.113.116',
-    body: {
-      name: 'DashPilot',
-      score: dashScore,
-      survivalMs: 4000,
-      orbs: 2,
-      comboBonus: 50,
-      nearMisses: 1,
-      difficulty: 'einfach',
-      game: 'dash',
-    },
+    body: await openRun(
+      {
+        name: 'DashPilot',
+        score: dashScore,
+        survivalMs: 4000,
+        orbs: 2,
+        comboBonus: 50,
+        nearMisses: 1,
+        difficulty: 'einfach',
+        game: 'dash',
+      },
+      '203.0.113.116'
+    ),
   });
   assert(dashPost.status === 200, `dash post ${JSON.stringify(dashPost.data)}`);
   assert(dashPost.data.scores.every((s) => s.game === 'dash'), 'dash response is the dash board');
@@ -611,16 +687,19 @@ try {
   const huntPost = await api('/api/scores', {
     method: 'POST',
     ip: '203.0.113.118',
-    body: {
-      name: 'HuntPilot',
-      score: huntScore,
-      survivalMs: 90000,
-      orbs: 4,
-      comboBonus: 50,
-      nearMisses: 2,
-      difficulty: 'mittel',
-      game: 'hunt',
-    },
+    body: await openRun(
+      {
+        name: 'HuntPilot',
+        score: huntScore,
+        survivalMs: 90000,
+        orbs: 4,
+        comboBonus: 50,
+        nearMisses: 2,
+        difficulty: 'mittel',
+        game: 'hunt',
+      },
+      '203.0.113.118'
+    ),
   });
   assert(huntPost.status === 200, `hunt post ${JSON.stringify(huntPost.data)}`);
   assert(huntPost.data.scores.every((s) => s.game === 'hunt'), 'hunt response is the hunt board');
@@ -635,16 +714,19 @@ try {
   const mahjongPost = await api('/api/scores', {
     method: 'POST',
     ip: '203.0.113.131',
-    body: {
-      name: 'MahjongPilot',
-      score: mahjongScore,
-      survivalMs: 0,
-      orbs: 12,
-      comboBonus: 100,
-      nearMisses: 1,
-      difficulty: 'einfach',
-      game: 'mahjong',
-    },
+    body: await openRun(
+      {
+        name: 'MahjongPilot',
+        score: mahjongScore,
+        survivalMs: 0,
+        orbs: 12,
+        comboBonus: 100,
+        nearMisses: 1,
+        difficulty: 'einfach',
+        game: 'mahjong',
+      },
+      '203.0.113.131'
+    ),
   });
   assert(mahjongPost.status === 200, `mahjong post ${JSON.stringify(mahjongPost.data)}`);
   assert(mahjongPost.data.scores.every((s) => s.game === 'mahjong'), 'mahjong response is the mahjong board');
@@ -654,6 +736,174 @@ try {
   assert(mahjongBoard.data.scores.some((s) => s.name === 'MahjongPilot'), 'mahjong difficulty filter lists the pilot');
   const rushAfterMahjong = await api('/api/scores?game=rush', { ip: '203.0.113.132' });
   assert(!rushAfterMahjong.data.scores.some((s) => s.name === 'MahjongPilot'), 'mahjong score stays off rush');
+
+  const noToken = await api('/api/scores', {
+    method: 'POST',
+    ip: '203.0.113.150',
+    body: {
+      name: 'NoToken',
+      score: computeScore(1000, 0, 0, 0),
+      survivalMs: 1000,
+      orbs: 0,
+      game: 'rush',
+    },
+  });
+  assert(noToken.status === 400 && noToken.data.error === 'Run token required', `missing token ${JSON.stringify(noToken.data)}`);
+
+  const guarded = [
+    { game: 'rush', difficulty: 'mittel', survivalMs: 20000, orbs: 18, comboBonus: 400, nearMisses: 3 },
+    { game: 'mirror', difficulty: 'mittel', survivalMs: 18000, orbs: 12, comboBonus: 200, nearMisses: 2 },
+    { game: 'drift', difficulty: 'schwer', survivalMs: 25000, orbs: 20, comboBonus: 600, nearMisses: 4 },
+    { game: 'pulse', difficulty: 'mittel', survivalMs: 30000, orbs: 40, comboBonus: 500, nearMisses: 8 },
+    { game: 'jet', difficulty: 'baba', survivalMs: 22000, orbs: 30, comboBonus: 800, nearMisses: 6 },
+    { game: 'dash', difficulty: 'mittel', survivalMs: 16000, orbs: 10, comboBonus: 200, nearMisses: 3 },
+    { game: 'hunt', difficulty: 'einfach', survivalMs: 120000, orbs: 180, comboBonus: 6000, nearMisses: 30 },
+    { game: 'hunt', difficulty: 'mittel', survivalMs: 90000, orbs: 150, comboBonus: 8000, nearMisses: 40 },
+    { game: 'hunt', difficulty: 'schwer', survivalMs: 68000, orbs: 120, comboBonus: 4000, nearMisses: 20 },
+    { game: 'mahjong', difficulty: 'schwer', survivalMs: 4000, orbs: 36, comboBonus: 800, nearMisses: 6 },
+  ];
+  for (let i = 0; i < guarded.length; i++) {
+    const spec = guarded[i];
+    const score = computeScore(spec.survivalMs, spec.orbs, spec.comboBonus, spec.nearMisses);
+    const legitIp = `203.0.113.${160 + i}`;
+    const legitName = `L${i}${spec.game[0]}`;
+    const legit = await api('/api/scores', {
+      method: 'POST',
+      ip: legitIp,
+      body: await openRun({ name: legitName, score, ...spec }, legitIp),
+    });
+    assert(
+      legit.status === 200 && legit.data.scores.some((s) => s.name === legitName && s.game === spec.game),
+      `${spec.game}/${spec.difficulty} legit ${legit.status} ${JSON.stringify(legit.data)}`
+    );
+
+    const fastIp = `198.51.100.${10 + i}`;
+    const fastName = `F${i}${spec.game[0]}`;
+    const fast = await api('/api/scores', {
+      method: 'POST',
+      ip: fastIp,
+      body: await openRun({ name: fastName, score, ...spec }, fastIp, { ageMs: 0 }),
+    });
+    assert(
+      fast.status === 400 && fast.data.error === 'Run faster than the server clock',
+      `${spec.game}/${spec.difficulty} too fast ${fast.status} ${JSON.stringify(fast.data)}`
+    );
+    const fastStored = db._sqlite.prepare('SELECT COUNT(*) AS n FROM scores WHERE name = ?').get(fastName).n;
+    assert(fastStored === 0, `${fastName} too-fast row was stored`);
+
+    const replayIp = `198.51.100.${40 + i}`;
+    const replayName = `R${i}${spec.game[0]}`;
+    const replayBody = await openRun({ name: replayName, score, ...spec }, replayIp);
+    const replayFirst = await api('/api/scores', { method: 'POST', ip: replayIp, body: replayBody });
+    assert(replayFirst.status === 200, `${spec.game} replay setup ${JSON.stringify(replayFirst.data)}`);
+    await new Promise((r) => setTimeout(r, 2100));
+    const replayOrbs = spec.orbs + 1;
+    const replaySecond = await api('/api/scores', {
+      method: 'POST',
+      ip: replayIp,
+      body: {
+        ...replayBody,
+        orbs: replayOrbs,
+        score: computeScore(spec.survivalMs, replayOrbs, spec.comboBonus, spec.nearMisses),
+      },
+    });
+    assert(
+      replaySecond.status === 400 && replaySecond.data.error === 'Run already submitted',
+      `${spec.game}/${spec.difficulty} replay ${replaySecond.status} ${JSON.stringify(replaySecond.data)}`
+    );
+    const replayRows = db._sqlite.prepare('SELECT COUNT(*) AS n FROM scores WHERE name = ?').get(replayName).n;
+    assert(replayRows === 1, `${replayName} replay inserted another row`);
+  }
+
+  for (const [name, ip] of [
+    ['Jamix', '203.0.113.180'],
+    ['Jamix is best!', '203.0.113.181'],
+  ]) {
+    const forged = await api('/api/scores', {
+      method: 'POST',
+      ip,
+      body: await openRun(
+        {
+          name,
+          score: 58400,
+          survivalMs: 90000,
+          orbs: 450,
+          comboBonus: 8000,
+          nearMisses: 60,
+          difficulty: 'mittel',
+          game: 'hunt',
+        },
+        ip,
+        { ageMs: 95_000 }
+      ),
+    });
+    assert(forged.status === 400, `${name} forged hunt ${forged.status} ${JSON.stringify(forged.data)}`);
+    const stored = db._sqlite.prepare('SELECT COUNT(*) AS n FROM scores WHERE name = ?').get(name).n;
+    assert(stored === 0, `${name} forged row was stored`);
+  }
+
+  const mismatchedIp = '203.0.113.182';
+  const mismatched = await openRun(
+    {
+      name: 'Swap',
+      score: computeScore(8000, 4, 50, 1),
+      survivalMs: 8000,
+      orbs: 4,
+      comboBonus: 50,
+      nearMisses: 1,
+      game: 'rush',
+      difficulty: 'mittel',
+    },
+    mismatchedIp
+  );
+  const swapped = await api('/api/scores', {
+    method: 'POST',
+    ip: mismatchedIp,
+    body: { ...mismatched, game: 'hunt' },
+  });
+  assert(
+    swapped.status === 400 && swapped.data.error === 'Run does not match this score',
+    `game swap ${swapped.status} ${JSON.stringify(swapped.data)}`
+  );
+
+  const staleIp = '203.0.113.183';
+  const stale = await api('/api/scores', {
+    method: 'POST',
+    ip: staleIp,
+    body: await openRun(
+      {
+        name: 'Stale',
+        score: computeScore(1000, 0, 0, 0),
+        survivalMs: 1000,
+        orbs: 0,
+      },
+      staleIp,
+      { ageMs: 7 * 60 * 60 * 1000 }
+    ),
+  });
+  assert(stale.status === 400 && stale.data.error === 'Run expired', `stale run ${stale.status} ${JSON.stringify(stale.data)}`);
+
+  const dirty = await api('/api/scores', {
+    method: 'POST',
+    ip: '203.0.113.184',
+    body: await openRun(
+      {
+        name: 'A\u0000B\u200B',
+        score: computeScore(1000, 0, 0, 0),
+        survivalMs: 1000,
+        orbs: 0,
+      },
+      '203.0.113.184'
+    ),
+  });
+  assert(dirty.status === 200 && dirty.data.scores.some((s) => s.name === 'AB'), `control chars ${JSON.stringify(dirty.data)}`);
+
+  const negative = await api('/api/scores', {
+    method: 'POST',
+    ip: '203.0.113.185',
+    body: { name: 'Neg', score: 10, survivalMs: -5, orbs: 0 },
+  });
+  assert(negative.status === 400, `negative survival ${negative.status}`);
 
   const notAScore = await api('/api/scores', {
     method: 'POST',
@@ -819,15 +1069,18 @@ try {
   const mirrorAfter = await api('/api/scores', {
     method: 'POST',
     ip: '203.0.113.94',
-    body: {
-      name: 'MirrorAfter',
-      score: computeScore(3000, 1, 0, 0),
-      survivalMs: 3000,
-      orbs: 1,
-      comboBonus: 0,
-      nearMisses: 0,
-      game: 'mirror',
-    },
+    body: await openRun(
+      {
+        name: 'MirrorAfter',
+        score: computeScore(3000, 1, 0, 0),
+        survivalMs: 3000,
+        orbs: 1,
+        comboBonus: 0,
+        nearMisses: 0,
+        game: 'mirror',
+      },
+      '203.0.113.94'
+    ),
   });
   assert(mirrorAfter.status === 200, `mirror after heal ${JSON.stringify(mirrorAfter.data)}`);
   assert(mirrorAfter.data.scores.every((s) => s.game === 'mirror'), 'healed table still splits boards');

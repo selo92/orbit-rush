@@ -100,3 +100,17 @@ SQLite here has no `ADD COLUMN IF NOT EXISTS`. The migration runs once. The Work
 ## 9. Orbit Duel rooms
 
 `migrations/0005_duel_rooms.sql` creates `duel_rooms` the same way. It does not alter `scores` or `aerger_rooms`. The Worker creates the table on startup. Paddle posts and polls stay on this Worker: no Durable Object, no WebSocket, no second script. Do not submit Duel wins through `POST /api/scores`.
+
+## 10. Signed score runs
+
+`POST /api/scores` only stores a run that started with `POST /api/run/start`. The worker signs that run with HMAC. You do **not** have to create a secret by hand.
+
+If `RUN_TOKEN_SECRET` is unset, the worker generates a 32-byte key on first use and stores it in D1 table `app_secrets` (`id = run_hmac`). `migrations/0006_run_tokens.sql` creates `app_secrets` and `runs`. It does not change or delete `scores`. The worker also creates those tables on startup.
+
+Optional, if you want the key outside D1:
+
+```bash
+npx wrangler secret put RUN_TOKEN_SECRET
+```
+
+Paste a random string of at least 16 characters. A shorter value makes score submit and run start fail closed (`Run signing unavailable`) until you replace it or delete the secret. Do not commit the value. After `wrangler secret delete RUN_TOKEN_SECRET`, the worker goes back to the D1 key.

@@ -18,3 +18,8 @@ binding = "DB"
 database_name = "orbit-rush-scores"
 database_id = "ecd023bc-1557-4c28-b287-5f50f65ec8d9"
 migrations_dir = "migrations"
+
+# Optional HMAC key for score run tokens. Leave unset and the worker creates
+# app_secrets.run_hmac in D1 on first use (no manual step). To set one anyway:
+#   npx wrangler secret put RUN_TOKEN_SECRET
+# A value shorter than 16 characters fails closed. Do not commit the secret.

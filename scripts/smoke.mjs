@@ -2828,11 +2828,13 @@ assert(scoresMod.normalizeGame('Mirror') === 'mirror', 'normalize mirror');
   if (hadCancel) globalThis.cancelAnimationFrame = hadCancel;
 }
 
+const runsPath = path.join(root, 'data', `runs-smoke-${PORT}.json`);
 const env = {
   ...process.env,
   PORT: String(PORT),
   AERGER_FILE: path.join(root, 'data', `aerger-smoke-${PORT}.json`),
   DUEL_FILE: path.join(root, 'data', `duel-smoke-${PORT}.json`),
+  RUNS_FILE: runsPath,
 };
 const scoresPath = path.join(root, 'data', 'scores.json');
 const backup = fs.existsSync(scoresPath) ? fs.readFileSync(scoresPath, 'utf8') : '[]';
@@ -2853,6 +2855,31 @@ child.stderr.on('data', (d) => {
 
 try {
   await waitHealth(`http://127.0.0.1:${PORT}/api/health`);
+
+  async function scoreBody(fields, { ageMs } = {}) {
+    const start = await fetch(`http://127.0.0.1:${PORT}/api/run/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        game: fields.game || 'rush',
+        difficulty: fields.difficulty,
+        mode: fields.mode,
+        dailyDate: fields.dailyDate,
+      }),
+    });
+    const started = await start.json();
+    assert(start.ok && started.token && started.runId, `run start ${start.status} ${JSON.stringify(started)}`);
+    const survival = Number(fields.survivalMs || 0);
+    const age = ageMs == null ? (survival > 2_000 ? survival + 1_500 : 0) : ageMs;
+    if (age > 0) {
+      const store = JSON.parse(fs.readFileSync(runsPath, 'utf8'));
+      assert(store.runs[started.runId], 'express stored the run');
+      store.runs[started.runId].startedAt = Date.now() - age;
+      fs.writeFileSync(runsPath, JSON.stringify(store));
+    }
+    return { ...fields, runToken: started.token };
+  }
+
   const health = await fetch(`http://127.0.0.1:${PORT}/api/health`).then((r) => r.json());
   assert(health.version === '1.5' || health.version === '1.5.0', 'api version 1.5');
 
@@ -2865,16 +2892,18 @@ try {
   const post = await fetch(`http://127.0.0.1:${PORT}/api/scores`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      name: 'SmokeBot',
-      score,
-      survivalMs,
-      orbs,
-      comboBonus,
-      nearMisses,
-      difficulty: 'schwer',
-      mode: 'normal',
-    }),
+    body: JSON.stringify(
+      await scoreBody({
+        name: 'SmokeBot',
+        score,
+        survivalMs,
+        orbs,
+        comboBonus,
+        nearMisses,
+        difficulty: 'schwer',
+        mode: 'normal',
+      })
+    ),
   });
   const body = await post.json();
   assert(post.ok, `post failed: ${JSON.stringify(body)}`);
@@ -2899,16 +2928,18 @@ try {
   const post2 = await fetch(`http://127.0.0.1:${PORT}/api/scores`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      name: 'SmokeBot',
-      score,
-      survivalMs,
-      orbs,
-      comboBonus,
-      nearMisses,
-      difficulty: 'schwer',
-      mode: 'normal',
-    }),
+    body: JSON.stringify(
+      await scoreBody({
+        name: 'SmokeBot',
+        score,
+        survivalMs,
+        orbs,
+        comboBonus,
+        nearMisses,
+        difficulty: 'schwer',
+        mode: 'normal',
+      })
+    ),
   });
   assert(post2.status === 429 || post2.ok, 'double submit handled');
 
@@ -2941,17 +2972,19 @@ try {
   const babaPost = await fetch(`http://127.0.0.1:${PORT}/api/scores`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      name: 'BabaPilot',
-      score: babaScore,
-      survivalMs: 15000,
-      orbs: 1,
-      comboBonus: 0,
-      nearMisses: 0,
-      difficulty: 'baba',
-      mode: 'normal',
-      clientId: 'D4E5F6A7-B8C9-4D01-8ABC-DEF012345678',
-    }),
+    body: JSON.stringify(
+      await scoreBody({
+        name: 'BabaPilot',
+        score: babaScore,
+        survivalMs: 15000,
+        orbs: 1,
+        comboBonus: 0,
+        nearMisses: 0,
+        difficulty: 'baba',
+        mode: 'normal',
+        clientId: 'D4E5F6A7-B8C9-4D01-8ABC-DEF012345678',
+      })
+    ),
   });
   const babaBody = await babaPost.json();
   assert(babaPost.ok, `baba post failed: ${JSON.stringify(babaBody)}`);
@@ -2969,17 +3002,19 @@ try {
   const dailyPost = await fetch(`http://127.0.0.1:${PORT}/api/scores`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      name: 'DailyPilot',
-      score: dailyScore,
-      survivalMs: 20000,
-      orbs: 2,
-      comboBonus: 0,
-      nearMisses: 1,
-      difficulty: 'schwer',
-      mode: 'daily',
-      dailyDate,
-    }),
+    body: JSON.stringify(
+      await scoreBody({
+        name: 'DailyPilot',
+        score: dailyScore,
+        survivalMs: 20000,
+        orbs: 2,
+        comboBonus: 0,
+        nearMisses: 1,
+        difficulty: 'schwer',
+        mode: 'daily',
+        dailyDate,
+      })
+    ),
   });
   const dailyBody = await dailyPost.json();
   assert(dailyPost.ok, `daily post failed: ${JSON.stringify(dailyBody)}`);
@@ -3028,16 +3063,18 @@ try {
   const mirrorPost = await fetch(`http://127.0.0.1:${PORT}/api/scores`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      name: 'MirrorPilot',
-      score: mirrorScore,
-      survivalMs: 12000,
-      orbs: 2,
-      comboBonus: 50,
-      nearMisses: 1,
-      game: 'mirror',
-      clientId: 'd4e5f6a7-b8c9-4d01-8abc-def012345678',
-    }),
+    body: JSON.stringify(
+      await scoreBody({
+        name: 'MirrorPilot',
+        score: mirrorScore,
+        survivalMs: 12000,
+        orbs: 2,
+        comboBonus: 50,
+        nearMisses: 1,
+        game: 'mirror',
+        clientId: 'd4e5f6a7-b8c9-4d01-8abc-def012345678',
+      })
+    ),
   });
   const mirrorBody = await mirrorPost.json();
   assert(mirrorPost.ok, `mirror post failed: ${JSON.stringify(mirrorBody)}`);
@@ -3059,16 +3096,18 @@ try {
   const driftPost = await fetch(`http://127.0.0.1:${PORT}/api/scores`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      name: 'DriftPilot',
-      score: driftScore,
-      survivalMs: 8000,
-      orbs: 3,
-      comboBonus: 100,
-      nearMisses: 2,
-      game: 'drift',
-      clientId: 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d',
-    }),
+    body: JSON.stringify(
+      await scoreBody({
+        name: 'DriftPilot',
+        score: driftScore,
+        survivalMs: 8000,
+        orbs: 3,
+        comboBonus: 100,
+        nearMisses: 2,
+        game: 'drift',
+        clientId: 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d',
+      })
+    ),
   });
   const driftBody = await driftPost.json();
   assert(driftPost.ok, `drift post failed: ${JSON.stringify(driftBody)}`);
@@ -3096,17 +3135,19 @@ try {
   const pulsePost = await fetch(`http://127.0.0.1:${PORT}/api/scores`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      name: 'PulsePilot',
-      score: pulseScore,
-      survivalMs: 9000,
-      orbs: 4,
-      comboBonus: 100,
-      nearMisses: 1,
-      difficulty: 'baba',
-      game: 'pulse',
-      clientId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
-    }),
+    body: JSON.stringify(
+      await scoreBody({
+        name: 'PulsePilot',
+        score: pulseScore,
+        survivalMs: 9000,
+        orbs: 4,
+        comboBonus: 100,
+        nearMisses: 1,
+        difficulty: 'baba',
+        game: 'pulse',
+        clientId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      })
+    ),
   });
   const pulseApi = await pulsePost.json();
   assert(pulsePost.ok, `pulse post failed: ${JSON.stringify(pulseApi)}`);
@@ -3120,18 +3161,20 @@ try {
   const pulseDailyPost = await fetch(`http://127.0.0.1:${PORT}/api/scores`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      name: 'PulseDaily',
-      score: pulseDailyScore,
-      survivalMs: 5000,
-      orbs: 2,
-      comboBonus: 0,
-      nearMisses: 1,
-      game: 'pulse',
-      mode: 'daily',
-      dailyDate: pulseDailyDate,
-      difficulty: 'einfach',
-    }),
+    body: JSON.stringify(
+      await scoreBody({
+        name: 'PulseDaily',
+        score: pulseDailyScore,
+        survivalMs: 5000,
+        orbs: 2,
+        comboBonus: 0,
+        nearMisses: 1,
+        game: 'pulse',
+        mode: 'daily',
+        dailyDate: pulseDailyDate,
+        difficulty: 'einfach',
+      })
+    ),
   });
   const pulseDailyApi = await pulseDailyPost.json();
   assert(pulseDailyPost.ok, `pulse daily post failed: ${JSON.stringify(pulseDailyApi)}`);
@@ -3154,17 +3197,19 @@ try {
   const jetPost = await fetch(`http://127.0.0.1:${PORT}/api/scores`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      name: 'JetPilot',
-      score: jetScore,
-      survivalMs: 6000,
-      orbs: 3,
-      comboBonus: 50,
-      nearMisses: 1,
-      difficulty: 'schwer',
-      game: 'jet',
-      clientId: 'c1c1c1c1-c1c1-4c1c-8c1c-c1c1c1c1c1c1',
-    }),
+    body: JSON.stringify(
+      await scoreBody({
+        name: 'JetPilot',
+        score: jetScore,
+        survivalMs: 6000,
+        orbs: 3,
+        comboBonus: 50,
+        nearMisses: 1,
+        difficulty: 'schwer',
+        game: 'jet',
+        clientId: 'c1c1c1c1-c1c1-4c1c-8c1c-c1c1c1c1c1c1',
+      })
+    ),
   });
   const jetApi = await jetPost.json();
   assert(jetPost.ok, `jet post failed: ${JSON.stringify(jetApi)}`);
@@ -3177,17 +3222,19 @@ try {
   const dashPost = await fetch(`http://127.0.0.1:${PORT}/api/scores`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      name: 'DashPilot',
-      score: dashScore,
-      survivalMs: 4000,
-      orbs: 2,
-      comboBonus: 50,
-      nearMisses: 1,
-      difficulty: 'einfach',
-      game: 'dash',
-      clientId: 'd1d1d1d1-d1d1-4d1d-8d1d-d1d1d1d1d1d1',
-    }),
+    body: JSON.stringify(
+      await scoreBody({
+        name: 'DashPilot',
+        score: dashScore,
+        survivalMs: 4000,
+        orbs: 2,
+        comboBonus: 50,
+        nearMisses: 1,
+        difficulty: 'einfach',
+        game: 'dash',
+        clientId: 'd1d1d1d1-d1d1-4d1d-8d1d-d1d1d1d1d1d1',
+      })
+    ),
   });
   const dashApi = await dashPost.json();
   assert(dashPost.ok, `dash post failed: ${JSON.stringify(dashApi)}`);
@@ -3203,17 +3250,19 @@ try {
   const huntPost = await fetch(`http://127.0.0.1:${PORT}/api/scores`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      name: 'HuntPilot',
-      score: huntScore,
-      survivalMs: 90000,
-      orbs: 4,
-      comboBonus: 50,
-      nearMisses: 2,
-      difficulty: 'mittel',
-      game: 'hunt',
-      clientId: 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1',
-    }),
+    body: JSON.stringify(
+      await scoreBody({
+        name: 'HuntPilot',
+        score: huntScore,
+        survivalMs: 90000,
+        orbs: 4,
+        comboBonus: 50,
+        nearMisses: 2,
+        difficulty: 'mittel',
+        game: 'hunt',
+        clientId: 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1',
+      })
+    ),
   });
   const huntApi = await huntPost.json();
   assert(huntPost.ok, `hunt post failed: ${JSON.stringify(huntApi)}`);
@@ -3228,16 +3277,18 @@ try {
   const mahjongPost = await fetch(`http://127.0.0.1:${PORT}/api/scores`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      name: 'MahjongPilot',
-      score: mahjongScore,
-      survivalMs: 0,
-      orbs: 12,
-      comboBonus: 100,
-      nearMisses: 1,
-      difficulty: 'einfach',
-      game: 'mahjong',
-    }),
+    body: JSON.stringify(
+      await scoreBody({
+        name: 'MahjongPilot',
+        score: mahjongScore,
+        survivalMs: 0,
+        orbs: 12,
+        comboBonus: 100,
+        nearMisses: 1,
+        difficulty: 'einfach',
+        game: 'mahjong',
+      })
+    ),
   });
   const mahjongApi = await mahjongPost.json();
   assert(mahjongPost.ok, `mahjong post failed: ${JSON.stringify(mahjongApi)}`);
