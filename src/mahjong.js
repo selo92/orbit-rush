@@ -927,6 +927,19 @@ export function writeBest(layoutId, difficulty, score) {
   return { best: next, record: true };
 }
 
+/** Compact clear log: layout, then matches `m id,id,elapsedMs`, undo `u`, shuffle `s`. */
+export function encodeMahjongLog(layout, ops) {
+  const head = normalizeLayout(layout);
+  const body = [];
+  for (const op of ops || []) {
+    if (!op || typeof op !== 'object') continue;
+    if (op.t === 'm') body.push(`m${op.a|0},${op.b|0},${Math.max(0, op.ms|0)}`);
+    else if (op.t === 'u') body.push('u');
+    else if (op.t === 's') body.push('s');
+  }
+  return [head, ...body].join(';');
+}
+
 function cloneTile(tile) {
   return {
     id: tile.id,
@@ -966,6 +979,7 @@ export class MahjongGame {
     this.paused = false;
     this.undoStack = [];
     this.opening = 0;
+    this.replayOps = [];
   }
 
   /**
@@ -1075,6 +1089,12 @@ export class MahjongGame {
     if (this.combo >= 2 && dt <= this.diff.blitzSec) this.blitzes += 1;
     this.pairs += 1;
     this.lastMatchAt = this.elapsedMs;
+    this.replayOps.push({
+      t: 'm',
+      a: first.id,
+      b: tile.id,
+      ms: Math.max(0, Math.round(this.elapsedMs)),
+    });
     this.selectedId = null;
     this.refreshStuck();
     const packed = this.packed();
@@ -1116,6 +1136,7 @@ export class MahjongGame {
     this.won = false;
     this.running = true;
     this.refreshStuck();
+    this.replayOps.push({ t: 'u' });
     return { ok: true, score: this.packed().score };
   }
 
@@ -1152,6 +1173,7 @@ export class MahjongGame {
     this.selectedId = null;
     this.hintPair = null;
     this.refreshStuck();
+    this.replayOps.push({ t: 's' });
     return { ok: true, left: this.shufflesLeft, score: this.packed().score };
   }
 
@@ -1215,6 +1237,7 @@ export class MahjongGame {
       difficulty: this.difficultyId,
       layout: this.layoutId,
       layoutLabel: snap.layoutLabel,
+      mahjongLog: encodeMahjongLog(this.layoutId, this.replayOps),
       elapsedMs: this.elapsedMs,
       pairs: this.pairs,
       formula: formatMahjongFormula(

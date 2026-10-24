@@ -15,9 +15,14 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import {
-  STORE_CAP,
   MIN_MS_BETWEEN_SUBMITS,
+  pruneScores,
   START_RATE_MAX,
+  HOUR_MS,
+  START_HOUR_IP,
+  START_HOUR_CLIENT,
+  SUBMIT_HOUR_IP,
+  SUBMIT_HOUR_CLIENT,
   RUN_MAX_AGE_MS,
   RATE_WINDOW_MS,
   validatePostBody,
@@ -29,8 +34,10 @@ import {
   rankOf,
   hashClientKey,
   evaluateStoredRun,
+  normalizeClientId,
 } from '../shared/scores.js';
 import { signRunToken, verifyRunToken } from '../shared/run-token.js';
+import { applyReplay } from '../shared/replay.js';
 import { handleAerger } from '../worker/aerger-api.js';
 import { createFileAergerStore } from './aerger-file-store.js';
 import { handleDuel } from '../worker/duel-api.js';
@@ -46,15 +53,31 @@ if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 if (!fs.existsSync(SCORES_FILE)) fs.writeFileSync(SCORES_FILE, '[]', 'utf8');
 
 const app = express();
-app.set('trust proxy', 1);
+app.set('trust proxy', false);
+app.use((_req, res, next) => {
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.set('X-Frame-Options', 'DENY');
+  res.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  next();
+});
 app.use(cors({ origin: true }));
-app.use(express.json({ limit: '8kb' }));
+app.use(express.json({ limit: '16kb' }));
+
+/** Socket peer only. A client-supplied X-Forwarded-For must not open a new bucket. */
+function peerIp(req) {
+  const raw = req.socket?.remoteAddress || '';
+  const ip = String(raw).replace(/^::ffff:/, '').trim();
+  return ip || 'unknown';
+}
 
 const limiter = rateLimit({
   windowMs: 60_000,
   max: 30,
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: (req) => peerIp(req),
+  validate: { trustProxy: false, xForwardedForHeader: false },
   message: { error: 'Too many requests' },
 });
 // Ärger and Duel poll on their own in-memory limiters. The score limiter
@@ -100,9 +123,9 @@ function expressToRequest(req) {
   }
   headers.delete('content-length');
   headers.delete('transfer-encoding');
-  if (!headers.has('x-forwarded-for')) {
-    headers.set('x-forwarded-for', req.ip || req.socket?.remoteAddress || 'unknown');
-  }
+  headers.delete('cf-connecting-ip');
+  headers.delete('x-forwarded-for');
+  headers.set('cf-connecting-ip', peerIp(req));
   const method = req.method || 'GET';
   const hasBody = method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS';
   return new Request(`http://127.0.0.1${req.originalUrl}`, {
@@ -163,6 +186,19 @@ function bumpStartLimit(ip, now) {
   return row.hits;
 }
 
+const hourHits = new Map();
+
+function bumpHour(key, now, limit) {
+  const row = hourHits.get(key) || { start: now, hits: 0 };
+  if (now - row.start >= HOUR_MS) {
+    row.start = now;
+    row.hits = 0;
+  }
+  row.hits += 1;
+  hourHits.set(key, row);
+  return row.hits <= limit;
+}
+
 function readScores() {
   try {
     const raw = fs.readFileSync(SCORES_FILE, 'utf8');
@@ -200,10 +236,22 @@ app.post('/api/run/start', async (req, res) => {
   const parsed = normalizeRunRequest(req.body);
   if (!parsed.ok) return res.status(parsed.status).json({ error: parsed.error });
   const now = Date.now();
-  const ip = req.ip || req.socket?.remoteAddress || 'unknown';
+  const ip = peerIp(req);
   if (bumpStartLimit(ip, now) > START_RATE_MAX) {
     return res.status(429).json({ error: 'Too many requests' });
   }
+  const ipKey = await hashClientKey(ip);
+  const clientParsed = normalizeClientId(req.body?.clientId);
+  const clientId = clientParsed.ok ? clientParsed.clientId : '';
+  if (!bumpHour(`hs:${ipKey}`, now, START_HOUR_IP)) {
+    return res.status(429).json({ error: 'Too many requests' });
+  }
+  if (clientId && !bumpHour(`hc:${clientId}`, now, START_HOUR_CLIENT)) {
+    return res.status(429).json({ error: 'Too many requests' });
+  }
+  const seedBytes = new Uint32Array(1);
+  crypto.getRandomValues(seedBytes);
+  const seed = seedBytes[0];
   const store = readRunStore();
   for (const [id, row] of Object.entries(store.runs)) {
     if (Number(row.expiresAt) < now) delete store.runs[id];
@@ -229,8 +277,9 @@ app.post('/api/run/start', async (req, res) => {
       mode,
       dailyDate,
       startedAt: now,
+      seed,
     });
-    res.json({ ok: true, runId, token, game, difficulty, mode, dailyDate, startedAt: now });
+    res.json({ ok: true, runId, token, game, difficulty, mode, dailyDate, startedAt: now, seed });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Run signing unavailable' });
@@ -242,46 +291,60 @@ app.post('/api/scores', async (req, res) => {
   if (!parsed.ok) return res.status(parsed.status).json({ error: parsed.error });
   const value = parsed.value;
 
-  const key = await hashClientKey(req.ip || req.socket?.remoteAddress || 'unknown');
+  const key = await hashClientKey(peerIp(req));
   const now = Date.now();
   const last = recentSubmits.get(key) || 0;
   if (now - last < MIN_MS_BETWEEN_SUBMITS) {
     return res.status(429).json({ error: 'Slow down' });
+  }
+  if (!bumpHour(`ps:${key}`, now, SUBMIT_HOUR_IP)) {
+    return res.status(429).json({ error: 'Too many requests' });
+  }
+  if (value.clientId && !bumpHour(`pc:${value.clientId}`, now, SUBMIT_HOUR_CLIENT)) {
+    return res.status(429).json({ error: 'Too many requests' });
   }
 
   const store = readRunStore();
   const verified = await verifyRunToken(store.secret, req.body?.runToken);
   if (!verified.ok) return res.status(400).json({ error: verified.error });
   const row = store.runs[verified.claims.id] || null;
-  let verdict = evaluateStoredRun(row, verified.claims, value, now);
-  if (!verdict.ok) return res.status(verdict.status).json({ error: verdict.error });
-  if (!verdict.duplicate) {
+  let scored = value;
+  let verdict;
+  if (row?.consumedAt) {
+    verdict = evaluateStoredRun(row, verified.claims, value, now);
+    if (!verdict.ok || !verdict.duplicate) {
+      return res.status(verdict.status || 400).json({ error: verdict.error || 'Run already submitted' });
+    }
+  } else {
+    const replayed = applyReplay(verified.claims, req.body, value);
+    if (!replayed.ok) return res.status(replayed.status).json({ error: replayed.error });
+    scored = replayed.value;
+    verdict = evaluateStoredRun(row, verified.claims, scored, now);
+    if (!verdict.ok) return res.status(verdict.status).json({ error: verdict.error });
     if (row.consumedAt) return res.status(400).json({ error: 'Run already submitted' });
     row.consumedAt = now;
     row.fingerprint = verdict.fingerprint;
     writeRunStore(store);
   }
-
   const scores = readScores();
-  const board = boardQueryForPost(value);
+  const board = boardQueryForPost(scored);
   const dup = verdict.duplicate
     ? { ts: Number(row?.consumedAt) || now }
-    : findRecentDuplicate(scores, value, key, now);
+    : findRecentDuplicate(scores, scored, key, now);
   if (dup) {
     recentSubmits.set(key, now);
     const ranked = selectBoard(scores, board);
     return res.json({
       ok: true,
       duplicate: true,
-      rank: rankOf(ranked, { name: value.name, score: value.score, ts: dup.ts }),
+      rank: rankOf(ranked, { name: scored.name, score: scored.score, ts: dup.ts }),
       scores: ranked,
     });
   }
 
-  const entry = { ...value, ts: now, key };
+  const entry = { ...scored, ts: now, key };
   scores.push(entry);
-  scores.sort((a, b) => b.score - a.score || a.ts - b.ts);
-  const trimmed = scores.slice(0, STORE_CAP);
+  const trimmed = pruneScores(scores);
   writeScores(trimmed);
   recentSubmits.set(key, now);
 
@@ -292,7 +355,7 @@ app.post('/api/scores', async (req, res) => {
   const sameDiff = selectBoard(trimmed, board);
   res.json({
     ok: true,
-    rank: rankOf(sameDiff, { name: value.name, score: value.score, ts: entry.ts }),
+    rank: rankOf(sameDiff, { name: scored.name, score: scored.score, ts: entry.ts }),
     scores: sameDiff,
   });
 });

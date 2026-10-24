@@ -492,7 +492,13 @@ function stamp(state) {
   return `${state.status}|${state.phase}|${state.score?.[0]}|${state.score?.[1]}|${state.rally}|${state.winner}|${state.notice}`;
 }
 
-export function applyClock(state, now, rng = Math.random) {
+function cryptoDie() {
+  const buf = new Uint32Array(1);
+  crypto.getRandomValues(buf);
+  return buf[0] / 4294967296;
+}
+
+export function applyClock(state, now, rng = cryptoDie) {
   if (!state) return { dirty: false, state };
   const next = clone(state);
   let dirty = false;

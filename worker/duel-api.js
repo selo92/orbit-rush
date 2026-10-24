@@ -5,7 +5,15 @@
  * serves, forfeits, throttled paddle moves, and rare cleanup.
  * Rate limits live in this isolate's memory so a poll does not burn a D1 write.
  */
-import { sanitizeName } from '../shared/scores.js';
+import { sanitizeName, isBannedName } from '../shared/scores.js';
+import {
+  MAX_LIVE_ROOMS,
+  ROOM_CREATE_LIMIT,
+  SECURITY_HEADERS,
+  clientIpFromRequest,
+  normalizeSeatSecret,
+  readLimitedBody,
+} from '../shared/http.js';
 import {
   ROOM_TTL_MS,
   applyClock,
@@ -48,14 +56,6 @@ export function resetDuelRateLimits() {
   buckets.clear();
 }
 
-function clientIp(request) {
-  const cf = request.headers.get('CF-Connecting-IP');
-  if (cf) return cf.trim();
-  const xff = request.headers.get('x-forwarded-for');
-  if (xff) return xff.split(',')[0].trim();
-  return 'unknown';
-}
-
 function corsHeaders(request) {
   const origin = request.headers.get('Origin');
   return {
@@ -65,6 +65,7 @@ function corsHeaders(request) {
     'Access-Control-Expose-Headers': 'ETag',
     'Cache-Control': 'no-store',
     Vary: 'Origin',
+    ...SECURITY_HEADERS,
   };
 }
 
@@ -107,15 +108,28 @@ function randomCode() {
 }
 
 async function readJson(request) {
-  const len = Number(request.headers.get('content-length') || 0);
-  if (len > 4096) return { error: json({ error: 'too-large', message: 'Zu groß.' }, 413, request) };
+  const read = await readLimitedBody(request, 4096);
+  if (!read.ok) {
+    const tooLarge = read.status === 413;
+    return {
+      error: json(
+        { error: tooLarge ? 'too-large' : 'json', message: tooLarge ? 'Zu groß.' : 'Ungültiges JSON.' },
+        read.status,
+        request
+      ),
+    };
+  }
   try {
-    const text = await request.text();
-    if (text.length > 4096) return { error: json({ error: 'too-large', message: 'Zu groß.' }, 413, request) };
-    return { body: text ? JSON.parse(text) : {} };
+    return { body: read.text ? JSON.parse(read.text) : {} };
   } catch {
     return { error: json({ error: 'json', message: 'Ungültiges JSON.' }, 400, request) };
   }
+}
+
+function rejectedName(name, request) {
+  if (!name) return json({ error: 'name', message: 'Name fehlt (max. 16).' }, 400, request);
+  if (isBannedName(name)) return json({ error: 'name', message: 'Name nicht erlaubt.' }, 400, request);
+  return null;
 }
 
 function secretFrom(request, body) {
@@ -309,7 +323,7 @@ export async function handleDuel(request, store) {
   const route = routeOf(url.pathname);
   if (!route) return json({ error: 'not-found', message: 'Unbekannt.' }, 404, request);
 
-  const ip = clientIp(request);
+  const ip = clientIpFromRequest(request);
   const isPoll = request.method === 'GET' && route.action === 'room';
   if (isPoll) {
     if (!allow(`poll:${ip}`, POLL_LIMIT)) {
@@ -376,7 +390,22 @@ export async function handleDuel(request, store) {
   const secret = secretFrom(request, body);
 
   if (route.action === 'create') {
+    if (!allow(`create:${ip}`, ROOM_CREATE_LIMIT)) {
+      return json({ error: 'rate', message: 'Zu viele Räume.' }, 429, request);
+    }
     const name = sanitizeName(body.name || '');
+    const badName = rejectedName(name, request);
+    if (badName) return badName;
+    try {
+      await store.deleteExpired(Date.now() - ROOM_TTL_MS, MAX_LIVE_ROOMS);
+      const open = typeof store.count === 'function' ? Number(await store.count()) || 0 : 0;
+      if (open >= MAX_LIVE_ROOMS) {
+        return json({ error: 'full', message: 'Zu viele Räume. Später nochmal.' }, 429, request);
+      }
+    } catch (err) {
+      console.error('duel room cap', err);
+      return json({ error: 'server', message: 'Raum konnte nicht erstellt werden.' }, 500, request);
+    }
     const made = createLobby({ name, secret: randomHex(16), now: Date.now() });
     if (!made.ok) return json({ error: made.error, message: made.message }, made.status, request);
     const hostSecret = made.state.seats[0].secret;
@@ -408,7 +437,9 @@ export async function handleDuel(request, store) {
     const version = versionFrom(body);
     if (!version) return json({ error: 'version', message: 'Version fehlt.' }, 400, request);
     const name = sanitizeName(body.name || '');
-    const guestSecret = secret || randomHex(16);
+    const badName = rejectedName(name, request);
+    if (badName) return badName;
+    const guestSecret = normalizeSeatSecret(secret) || randomHex(16);
     const response = await commit(store, request, code, version, guestSecret, (state, now) =>
       applyJoin(state, { name, secret: guestSecret, now })
     );

@@ -404,13 +404,12 @@ async function sendPaddle() {
 }
 
 function requireName() {
-  const name = ($('duel-name')?.value || '').trim().slice(0, 16);
+  const name = savePlayerName($('duel-name')?.value || '');
   if (!name) {
-    setStatus('Name fehlt (max. 16).', 'error');
+    setStatus('Name fehlt oder ist nicht erlaubt (max. 16).', 'error');
     $('duel-name')?.focus();
     return '';
   }
-  savePlayerName(name);
   return name;
 }
 

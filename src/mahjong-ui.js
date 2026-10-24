@@ -14,6 +14,8 @@ import {
 } from './mahjong.js';
 import { faceLabel, tileSvg } from './mahjong-art.js';
 import { submitScore, sanitizeName, beginScoreRun } from './leaderboard.js';
+import { mulberry32 } from './rng.js';
+import { inspectName } from '../shared/scores.js';
 import { getOrCreateClientId, loadPlayerName, savePlayerName } from './identity.js';
 
 const LS_LAYOUT = 'orbit-mahjong-layout';
@@ -355,6 +357,7 @@ export function mountMahjong(hooks) {
         difficulty: result.difficulty,
         mode: 'normal',
         game: 'mahjong',
+        mahjongLog: result.mahjongLog,
       });
       if (status) status.textContent = germanStatus(res);
     } catch (err) {
@@ -425,11 +428,16 @@ export function mountMahjong(hooks) {
     raf = 0;
   }
 
-  function begin() {
+  async function begin() {
     audio.resume?.();
     audio.mahjongTap?.();
-    beginScoreRun({ game: 'mahjong', difficulty: difficultyId, mode: 'normal' });
-    game.start({ layout: layoutId, difficulty: difficultyId });
+    const run = await beginScoreRun({ game: 'mahjong', difficulty: difficultyId, mode: 'normal' });
+    const seed = Number.isInteger(run?.seed) ? run.seed : null;
+    game.start({
+      layout: layoutId,
+      difficulty: difficultyId,
+      ...(seed != null ? { rng: mulberry32(seed) } : {}),
+    });
     menu.classList.add('hidden');
     table.classList.remove('hidden');
     win.classList.add('hidden');
@@ -546,9 +554,10 @@ export function mountMahjong(hooks) {
   $('mj-win-form')?.addEventListener('submit', (event) => {
     event.preventDefault();
     const input = $('mj-win-name');
-    const clean = sanitizeName(input?.value || '');
+    const named = inspectName(input?.value || '');
+    const clean = named.ok ? named.name : '';
     if (!clean) {
-      $('mj-win-status').textContent = 'Name mit 1–16 Zeichen.';
+      $('mj-win-status').textContent = named.error === 'Name not allowed' ? 'Name nicht erlaubt.' : 'Name mit 1–16 Zeichen.';
       return;
     }
     savePlayerName(clean);

@@ -72,14 +72,19 @@ export function createFileAergerStore(filePath) {
       });
     },
 
-    async deleteExpired(cutoff) {
+    async count() {
+      return lock(() => Object.keys(rooms).length);
+    },
+
+    async deleteExpired(cutoff, limit = 4) {
+      const cap = Math.max(1, Math.min(500, Math.floor(Number(limit) || 4)));
       return lock(() => {
         let removed = 0;
         for (const [code, room] of Object.entries(rooms)) {
           if (room.updatedAt < cutoff) {
             delete rooms[code];
             removed += 1;
-            if (removed >= 4) break;
+            if (removed >= cap) break;
           }
         }
         if (removed) persist();
