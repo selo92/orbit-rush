@@ -75,14 +75,20 @@ export function createD1AergerStore(db) {
       await db.prepare(`DELETE FROM aerger_rooms WHERE code = ?`).bind(code).run();
     },
 
-    async deleteExpired(cutoff) {
+    async count() {
+      const row = await db.prepare(`SELECT COUNT(*) AS n FROM aerger_rooms`).first();
+      return Number(row?.n || 0);
+    },
+
+    async deleteExpired(cutoff, limit = 4) {
+      const n = Math.max(1, Math.min(500, Math.floor(Number(limit) || 4)));
       await db
         .prepare(
           `DELETE FROM aerger_rooms WHERE code IN (
-             SELECT code FROM aerger_rooms WHERE updated_at < ? LIMIT 4
+             SELECT code FROM aerger_rooms WHERE updated_at < ? LIMIT ?
            )`
         )
-        .bind(cutoff)
+        .bind(cutoff, n)
         .run();
     },
   };

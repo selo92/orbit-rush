@@ -7,8 +7,10 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createMemoryDb } from '../worker/memory-db.js';
-import { handleApi, resetSchemaForTests } from '../worker/api.js';
-import { selectBoard } from '../shared/scores.js';
+import worker from '../worker/index.js';
+import { handleApi, resetSchemaForTests, clientIpFromRequest } from '../worker/api.js';
+import { inspectName, pruneScores, selectBoard } from '../shared/scores.js';
+import { MAX_LIVE_ROOMS } from '../shared/http.js';
 import { readEnvRunSecret } from '../shared/run-token.js';
 import { isOwnRow } from '../src/identity.js';
 import { selfCheck } from '../shared/aerger.js';
@@ -274,7 +276,7 @@ try {
   assert(babaPost.status === 200, `baba post ${JSON.stringify(babaPost.data)}`);
 
   const dailyScore = computeScore(20000, 2, 0, 1);
-  const dailyDate = '2026-09-22';
+  const dailyDate = new Date().toISOString().slice(0, 10);
   const dailyPost = await api('/api/scores', {
     method: 'POST',
     ip: '203.0.113.15',
@@ -353,14 +355,29 @@ try {
   assert(listed.data.scores.some((s) => s.name === 'A') && !listed.data.scores.some((s) => s.name === 'C'), 'daily excluded');
   assert(expected[0].name === 'B', 'shared ranker agrees');
 
-  // Global cap keeps the highest 500; a new top score evicts the lowest.
+  // One client cannot fill a board, other games stay, owner rows are never pruned.
+  db._sqlite
+    .prepare(
+      `INSERT INTO scores (name, score, survival_ms, orbs, combo_bonus, near_misses, difficulty, mode, daily_date, ts, client_key, client_id, game)
+       VALUES ('OwnerLow', 1, 0, 0, 0, 0, 'einfach', 'normal', NULL, 1, 'owner-entry', 'owner-entry', 'rush')`
+    )
+    .run();
+  db._sqlite
+    .prepare(
+      `INSERT INTO scores (name, score, survival_ms, orbs, combo_bonus, near_misses, difficulty, mode, daily_date, ts, client_key, client_id, game)
+       VALUES ('OwnerId', 2, 0, 0, 0, 0, 'einfach', 'normal', NULL, 2, 'someone-else', 'owner-entry', 'rush')`
+    )
+    .run();
   const insertLow = db._sqlite.prepare(
-    `INSERT INTO scores (name, score, survival_ms, orbs, combo_bonus, near_misses, difficulty, mode, daily_date, ts, client_key)
-     VALUES (?, ?, 0, 0, 0, 0, 'einfach', 'normal', NULL, ?, 'cap')`
+    `INSERT INTO scores (name, score, survival_ms, orbs, combo_bonus, near_misses, difficulty, mode, daily_date, ts, client_key, game)
+     VALUES (?, ?, 0, 0, 0, 0, 'einfach', 'normal', NULL, ?, 'cap', 'rush')`
   );
-  for (let i = 0; i < 500; i += 1) insertLow.run(`L${i}`, 1, 10_000 + i);
-  const before = db._sqlite.prepare('SELECT COUNT(*) AS n FROM scores').get().n;
-  assert(before > 500, 'seeded over cap');
+  for (let i = 0; i < 200; i += 1) insertLow.run(`L${i}`, 1, 10_000 + i);
+  const insertHunt = db._sqlite.prepare(
+    `INSERT INTO scores (name, score, survival_ms, orbs, combo_bonus, near_misses, difficulty, mode, daily_date, ts, client_key, game)
+     VALUES (?, ?, 0, 0, 0, 0, 'mittel', 'normal', NULL, ?, 'hunt-farm', 'hunt')`
+  );
+  for (let i = 0; i < 30; i += 1) insertHunt.run(`H${i}`, 1000 + i, 20_000 + i);
   const capScore = computeScore(1000, 0, 0, 0);
   const capPost = await api('/api/scores', {
     method: 'POST',
@@ -372,12 +389,32 @@ try {
   });
   assert(capPost.status === 200, `cap post ${JSON.stringify(capPost.data)}`);
   const after = db._sqlite.prepare('SELECT COUNT(*) AS n FROM scores').get().n;
-  assert(after === 500, `store capped at 500, got ${after}`);
-  const stillTop = db._sqlite.prepare(`SELECT name FROM scores WHERE name = 'CapPilot'`).get();
-  assert(stillTop, 'new high score kept');
+  const floodLeft = db._sqlite.prepare(`SELECT COUNT(*) AS n FROM scores WHERE client_key = 'cap'`).get().n;
+  const huntLeft = db._sqlite.prepare(`SELECT COUNT(*) AS n FROM scores WHERE game = 'hunt' AND client_key = 'hunt-farm'`).get().n;
+  const ownerLeft = db._sqlite
+    .prepare(`SELECT COUNT(*) AS n FROM scores WHERE name IN ('OwnerLow', 'OwnerId')`)
+    .get().n;
+  assert(floodLeft <= 8, `flood client kept ${floodLeft}`);
+  assert(huntLeft === 8, `hunt farm trimmed to per-client cap, got ${huntLeft}`);
+  assert(ownerLeft === 2, 'owner-entry rows survive pruning');
+  assert(after < 500, `store no longer keeps a global 500 of junk, got ${after}`);
   const einfach = await api('/api/scores?difficulty=einfach');
-  assert(einfach.data.scores.length === 50, `top 50 einfach, got ${einfach.data.scores.length}`);
   assert(einfach.data.scores[0].name === 'CapPilot', 'highest einfach score ranks first');
+  assert(
+    pruneScores([
+      { name: 'Owner', score: 1, ts: 1, key: 'owner-entry', game: 'rush', mode: 'normal', difficulty: 'einfach' },
+      ...Array.from({ length: 20 }, (_, i) => ({
+        name: `N${i}`,
+        score: 10 + i,
+        ts: i,
+        key: 'same',
+        game: 'rush',
+        mode: 'normal',
+        difficulty: 'einfach',
+      })),
+    ]).some((row) => row.name === 'Owner'),
+    'shared prune keeps owner rows'
+  );
 
   // 31st request in the window is rejected.
   let limited = 0;
@@ -596,7 +633,7 @@ try {
   const rushAfterPulse = await api('/api/scores?game=rush', { ip: '203.0.113.111' });
   assert(!rushAfterPulse.data.scores.some((s) => s.name === 'PulsePilot'), 'pulse score stays off rush');
 
-  const pulseDailyDate = '2026-09-26';
+  const pulseDailyDate = new Date().toISOString().slice(0, 10);
   const pulseDailyScore = computeScore(5000, 2, 0, 1);
   const pulseDailyPost = await api('/api/scores', {
     method: 'POST',
@@ -1057,6 +1094,189 @@ try {
   assert(duelRows >= 1, 'duel room row stored');
   const scoresAfterDuel = db._sqlite.prepare('SELECT COUNT(*) AS n FROM scores').get().n;
   assert(scoresAfterDuel === scoreRows, 'duel does not write skill scores');
+
+  assert(
+    clientIpFromRequest(
+      new Request('http://game.test/api/health', {
+        headers: { 'CF-Connecting-IP': '203.0.113.9', 'X-Forwarded-For': '198.51.100.9' },
+      })
+    ) === '203.0.113.9',
+    'CF-Connecting-IP wins over X-Forwarded-For'
+  );
+  assert(
+    clientIpFromRequest(new Request('http://game.test/api/health', { headers: { 'X-Forwarded-For': '198.51.100.9' } })) ===
+      'unknown',
+    'X-Forwarded-For alone does not mint a rate-limit key'
+  );
+  const healthHeaders = await fetch(`${base}/api/health`, { headers: { 'CF-Connecting-IP': '203.0.113.231' } });
+  assert(healthHeaders.headers.get('x-content-type-options') === 'nosniff', 'api sends nosniff');
+  assert(healthHeaders.headers.get('x-frame-options') === 'DENY', 'api denies framing');
+  const shelled = await worker.fetch(new Request('http://game.test/'), {
+    ASSETS: {
+      fetch: async () =>
+        new Response('<!doctype html><script src="/assets/app.js"></script>', {
+          headers: { 'content-type': 'text/html; charset=utf-8' },
+        }),
+    },
+  });
+  const csp = shelled.headers.get('content-security-policy') || '';
+  assert(csp.includes("script-src 'self'") && csp.includes("frame-ancestors 'none'"), `document csp ${csp}`);
+  assert(shelled.headers.get('x-content-type-options') === 'nosniff', 'html sends nosniff');
+  assert(!csp.includes('unsafe-eval'), 'csp does not allow eval');
+
+  const oldDaily = await api('/api/run/start', {
+    method: 'POST',
+    ip: '203.0.113.232',
+    body: { game: 'rush', mode: 'daily', dailyDate: '2020-01-01' },
+  });
+  assert(
+    oldDaily.status === 400 && oldDaily.data.error === 'dailyDate is outside the play window',
+    `old daily ${JSON.stringify(oldDaily.data)}`
+  );
+
+  const homoglyph = inspectName('J\u0430mix');
+  assert(!homoglyph.ok, 'cyrillic homoglyph is rejected');
+  const slur = inspectName('shithead');
+  assert(!slur.ok && slur.error === 'Name not allowed', `slur ${JSON.stringify(slur)}`);
+  const umlaut = inspectName('Müller');
+  assert(umlaut.ok && umlaut.name === 'Müller', 'german umlaut stays');
+
+  const slurPost = await api('/api/scores', {
+    method: 'POST',
+    ip: '203.0.113.233',
+    body: await openRun(
+      { name: 'shithead', score: computeScore(1000, 0, 0, 0), survivalMs: 1000, orbs: 0 },
+      '203.0.113.233'
+    ),
+  });
+  assert(slurPost.status === 400 && slurPost.data.error === 'Name not allowed', `slur post ${JSON.stringify(slurPost.data)}`);
+
+  const instantScore = computeScore(0, 180, 180 * 200, 0);
+  const instant = await api('/api/scores', {
+    method: 'POST',
+    ip: '203.0.113.234',
+    body: await openRun(
+      {
+        name: 'Instant',
+        score: instantScore,
+        survivalMs: 0,
+        orbs: 180,
+        comboBonus: 180 * 200,
+        nearMisses: 0,
+        difficulty: 'mittel',
+        game: 'hunt',
+      },
+      '203.0.113.234',
+      { ageMs: 0 }
+    ),
+  });
+  assert(instant.status === 400, `instant hunt cap ${instant.status} ${JSON.stringify(instant.data)}`);
+  assert(db._sqlite.prepare(`SELECT COUNT(*) AS n FROM scores WHERE name = 'Instant'`).get().n === 0, 'instant row stored');
+
+  const tuned = computeScore(90000, 160, 25000, 40);
+  const tunedPost = await api('/api/scores', {
+    method: 'POST',
+    ip: '203.0.113.235',
+    body: await openRun(
+      {
+        name: 'Tuned',
+        score: tuned,
+        survivalMs: 90000,
+        orbs: 160,
+        comboBonus: 25000,
+        nearMisses: 40,
+        difficulty: 'mittel',
+        game: 'hunt',
+      },
+      '203.0.113.235',
+      { ageMs: 95_000 }
+    ),
+  });
+  assert(tunedPost.status === 200, `full-round hunt headroom ${tunedPost.status} ${JSON.stringify(tunedPost.data)}`);
+
+  const overCap = computeScore(90000, 190, 32000, 20);
+  const overPost = await api('/api/scores', {
+    method: 'POST',
+    ip: '203.0.113.236',
+    body: await openRun(
+      {
+        name: 'OverCap',
+        score: overCap,
+        survivalMs: 90000,
+        orbs: 190,
+        comboBonus: 32000,
+        nearMisses: 20,
+        difficulty: 'mittel',
+        game: 'hunt',
+      },
+      '203.0.113.236',
+      { ageMs: 95_000 }
+    ),
+  });
+  assert(overPost.status === 400, `hunt above cap ${overPost.status} ${overCap} ${JSON.stringify(overPost.data)}`);
+  assert(db._sqlite.prepare(`SELECT COUNT(*) AS n FROM scores WHERE name = 'OverCap'`).get().n === 0, 'over-cap row stored');
+
+  const raceIp = '203.0.113.237';
+  const raceBody = await openRun(
+    { name: 'Race', score: computeScore(4000, 1, 0, 0), survivalMs: 4000, orbs: 1, comboBonus: 0, nearMisses: 0 },
+    raceIp
+  );
+  const [raceA, raceB] = await Promise.all([
+    api('/api/scores', { method: 'POST', ip: raceIp, body: raceBody }),
+    api('/api/scores', { method: 'POST', ip: raceIp, body: raceBody }),
+  ]);
+  assert(raceA.status === 200 || raceB.status === 200, `race statuses ${raceA.status} ${raceB.status}`);
+  assert(
+    db._sqlite.prepare(`SELECT COUNT(*) AS n FROM scores WHERE name = 'Race'`).get().n === 1,
+    'parallel submit stored one row'
+  );
+
+  const hmac = db._sqlite.prepare(`SELECT value FROM app_secrets WHERE id = 'run_hmac'`).get();
+  assert(hmac?.value && hmac.value.length >= 32, 'd1 fallback secret exists');
+  const healthBody = await healthHeaders.json();
+  const leaked = `${JSON.stringify(healthBody)}${JSON.stringify(tunedPost.data)}`;
+  assert(!leaked.includes(hmac.value), 'run secret is not in API JSON');
+  const secretGet = await api('/api/secrets', { ip: '203.0.113.238' });
+  assert(secretGet.status === 404, 'no secrets endpoint');
+
+  const freshRoom = await api('/api/aerger/create', {
+    method: 'POST',
+    ip: '203.0.113.239',
+    body: { name: 'Host' },
+  });
+  assert(freshRoom.status === 200 && freshRoom.data.code, `fresh room ${JSON.stringify(freshRoom.data)}`);
+  const weakJoin = await api('/api/aerger/join', {
+    method: 'POST',
+    ip: '203.0.113.239',
+    body: { code: freshRoom.data.code, name: 'Weak', version: freshRoom.data.version, secret: 'a' },
+  });
+  assert(weakJoin.status === 200, `weak join ${weakJoin.status} ${JSON.stringify(weakJoin.data)}`);
+  assert(weakJoin.data.secret && weakJoin.data.secret !== 'a' && /^[0-9a-f]{32}$/.test(weakJoin.data.secret), 'weak seat secret replaced');
+  assert(!JSON.stringify(weakJoin.data.state).includes(weakJoin.data.secret), 'seat secret stays off public state');
+
+  const roomNow = Date.now();
+  const existingRooms = db._sqlite.prepare('SELECT COUNT(*) AS n FROM aerger_rooms').get().n;
+  let victim = null;
+  for (let i = existingRooms; i < MAX_LIVE_ROOMS; i += 1) {
+    victim = `T${String(i).padStart(5, '0')}`;
+    db._sqlite
+      .prepare(`INSERT INTO aerger_rooms (code, version, state, updated_at, created_at) VALUES (?, 1, '{}', ?, ?)`)
+      .run(victim, roomNow, roomNow);
+  }
+  const blockedRoom = await api('/api/aerger/create', {
+    method: 'POST',
+    ip: '203.0.113.240',
+    body: { name: 'Cap' },
+  });
+  assert(blockedRoom.status === 429, `room cap ${blockedRoom.status} ${JSON.stringify(blockedRoom.data)}`);
+  assert(victim, 'room cap seeded a dummy row');
+  db._sqlite.prepare(`UPDATE aerger_rooms SET updated_at = 0 WHERE code = ?`).run(victim);
+  const freedRoom = await api('/api/aerger/create', {
+    method: 'POST',
+    ip: '203.0.113.241',
+    body: { name: 'Cap2' },
+  });
+  assert(freedRoom.status === 200 && freedRoom.data.code, `expired room frees a slot ${freedRoom.status} ${JSON.stringify(freedRoom.data)}`);
 
   db._sqlite.exec('DROP INDEX IF EXISTS idx_scores_game_board');
   db._sqlite.exec('ALTER TABLE scores DROP COLUMN game');

@@ -28,6 +28,7 @@ import {
 } from './difficulty.js';
 import { AudioBus } from './audio.js';
 import { fetchScores, submitScore, sanitizeName, beginScoreRun } from './leaderboard.js';
+import { inspectName } from '../shared/scores.js';
 import { getOrCreateClientId, isOwnRow, loadPlayerName, savePlayerName } from './identity.js';
 import { utcDateString } from './rng.js';
 import {
@@ -968,10 +969,11 @@ function formatSubmitStatus(res) {
 
 async function sendScore(name, { auto = false } = {}) {
   if (!lastResult || submitting) return;
-  const clean = sanitizeName(name);
+  const named = inspectName(name);
+  const clean = named.ok ? named.name : '';
   const status = $('submit-status');
   if (!clean) {
-    status.textContent = 'Enter a name (max 16).';
+    status.textContent = named.error === 'Name not allowed' ? 'That name is not allowed.' : 'Enter a name (max 16).';
     status.classList.add('error');
     status.classList.remove('calm');
     $('over-identity').classList.add('hidden');
@@ -2769,9 +2771,10 @@ $('btn-change-name').addEventListener('click', () => {
 $('score-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   if (!lastResult || submitting) return;
-  const name = sanitizeName($('player-name').value);
+  const named = inspectName($('player-name').value);
+  const name = named.ok ? named.name : '';
   if (!name) {
-    $('submit-status').textContent = 'Enter a name (max 16).';
+    $('submit-status').textContent = named.error === 'Name not allowed' ? 'That name is not allowed.' : 'Enter a name (max 16).';
     $('submit-status').classList.add('error');
     $('submit-status').classList.remove('calm');
     return;

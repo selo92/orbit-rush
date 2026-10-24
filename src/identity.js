@@ -3,7 +3,7 @@
  * Shared by Orbit Rush, Orbit Mirror, Orbit Drift, and Orbit Pulse.
  * Name key stays `orbit-rush-name` so existing pilots are recognized.
  */
-import { sanitizeName } from '../shared/scores.js';
+import { inspectName, sanitizeName } from '../shared/scores.js';
 
 export const LS_NAME = 'orbit-rush-name';
 export const LS_CLIENT_ID = 'orbit-rush-client-id';
@@ -45,18 +45,23 @@ export function getOrCreateClientId() {
   }
 }
 
+function acceptedName(raw) {
+  const checked = inspectName(raw);
+  return checked.ok ? checked.name : '';
+}
+
 export function loadPlayerName() {
   try {
-    const saved = sanitizeName(localStorage.getItem(LS_NAME) || '');
+    const saved = acceptedName(localStorage.getItem(LS_NAME) || '');
     memoryName = saved;
     return saved;
   } catch {
-    return sanitizeName(memoryName);
+    return acceptedName(memoryName);
   }
 }
 
 export function savePlayerName(name) {
-  const clean = sanitizeName(name);
+  const clean = acceptedName(name);
   memoryName = clean;
   try {
     if (clean) localStorage.setItem(LS_NAME, clean);

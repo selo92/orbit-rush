@@ -21,15 +21,7 @@ function computeScore(survivalMs, orbs, comboBonus = 0, nearMisses = 0) {
   return t * 10 + o * 100 + cb + nm * NEAR_MISS_POINTS;
 }
 
-function sanitizeName(name) {
-  if (typeof name !== 'string') return '';
-  return name
-    .replace(/[<>&"'`\\/]/g, '')
-    .replace(/[\u0000-\u001F\u007F]/g, '')
-    .trim()
-    .replace(/\s+/g, ' ')
-    .slice(0, 16);
-}
+const { sanitizeName, inspectName } = await import(path.join(root, 'shared', 'scores.js'));
 
 function assert(cond, msg) {
   if (!cond) throw new Error(msg);
@@ -54,6 +46,9 @@ assert(computeScore(45000, 3) === 450 + 300, 'base score formula');
 assert(computeScore(32000, 2, 50, 1) === 320 + 200 + 50 + 75, 'combo + near-miss formula');
 assert(sanitizeName('<script>x</script>') === 'scriptxscript', 'sanitize strips tags-ish');
 assert(sanitizeName('  HELLO WORLD TOOLONGNAME!!! ').length <= 16, 'name max 16');
+assert(!inspectName('J\u0430mix').ok, 'cyrillic homoglyph rejected');
+assert(inspectName('shithead').error === 'Name not allowed', 'slur rejected');
+assert(inspectName('Müller').ok, 'umlaut allowed');
 assert(DIFFICULTY_ENUM.includes('baba') && DIFFICULTY_ENUM.includes('mittel'), 'difficulty enum');
 
 const diffMod = await import(path.join(root, 'src', 'difficulty.js'));
@@ -2998,7 +2993,7 @@ try {
   // Daily submit
   await new Promise((r) => setTimeout(r, 2100));
   const dailyScore = computeScore(20000, 2, 0, 1);
-  const dailyDate = '2026-09-22';
+  const dailyDate = new Date().toISOString().slice(0, 10);
   const dailyPost = await fetch(`http://127.0.0.1:${PORT}/api/scores`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -3156,7 +3151,7 @@ try {
   assert(!pulseApi.scores.some((s) => s.game !== 'pulse'), 'express pulse board stays separate');
 
   await new Promise((r) => setTimeout(r, 2100));
-  const pulseDailyDate = '2026-09-26';
+  const pulseDailyDate = new Date().toISOString().slice(0, 10);
   const pulseDailyScore = computeScore(5000, 2, 0, 1);
   const pulseDailyPost = await fetch(`http://127.0.0.1:${PORT}/api/scores`, {
     method: 'POST',

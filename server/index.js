@@ -15,8 +15,8 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import {
-  STORE_CAP,
   MIN_MS_BETWEEN_SUBMITS,
+  pruneScores,
   START_RATE_MAX,
   RUN_MAX_AGE_MS,
   RATE_WINDOW_MS,
@@ -46,15 +46,31 @@ if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 if (!fs.existsSync(SCORES_FILE)) fs.writeFileSync(SCORES_FILE, '[]', 'utf8');
 
 const app = express();
-app.set('trust proxy', 1);
+app.set('trust proxy', false);
+app.use((_req, res, next) => {
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.set('X-Frame-Options', 'DENY');
+  res.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  next();
+});
 app.use(cors({ origin: true }));
 app.use(express.json({ limit: '8kb' }));
+
+/** Socket peer only. A client-supplied X-Forwarded-For must not open a new bucket. */
+function peerIp(req) {
+  const raw = req.socket?.remoteAddress || '';
+  const ip = String(raw).replace(/^::ffff:/, '').trim();
+  return ip || 'unknown';
+}
 
 const limiter = rateLimit({
   windowMs: 60_000,
   max: 30,
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: (req) => peerIp(req),
+  validate: { trustProxy: false, xForwardedForHeader: false },
   message: { error: 'Too many requests' },
 });
 // Ärger and Duel poll on their own in-memory limiters. The score limiter
@@ -100,9 +116,9 @@ function expressToRequest(req) {
   }
   headers.delete('content-length');
   headers.delete('transfer-encoding');
-  if (!headers.has('x-forwarded-for')) {
-    headers.set('x-forwarded-for', req.ip || req.socket?.remoteAddress || 'unknown');
-  }
+  headers.delete('cf-connecting-ip');
+  headers.delete('x-forwarded-for');
+  headers.set('cf-connecting-ip', peerIp(req));
   const method = req.method || 'GET';
   const hasBody = method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS';
   return new Request(`http://127.0.0.1${req.originalUrl}`, {
@@ -200,7 +216,7 @@ app.post('/api/run/start', async (req, res) => {
   const parsed = normalizeRunRequest(req.body);
   if (!parsed.ok) return res.status(parsed.status).json({ error: parsed.error });
   const now = Date.now();
-  const ip = req.ip || req.socket?.remoteAddress || 'unknown';
+  const ip = peerIp(req);
   if (bumpStartLimit(ip, now) > START_RATE_MAX) {
     return res.status(429).json({ error: 'Too many requests' });
   }
@@ -242,7 +258,7 @@ app.post('/api/scores', async (req, res) => {
   if (!parsed.ok) return res.status(parsed.status).json({ error: parsed.error });
   const value = parsed.value;
 
-  const key = await hashClientKey(req.ip || req.socket?.remoteAddress || 'unknown');
+  const key = await hashClientKey(peerIp(req));
   const now = Date.now();
   const last = recentSubmits.get(key) || 0;
   if (now - last < MIN_MS_BETWEEN_SUBMITS) {
@@ -280,8 +296,7 @@ app.post('/api/scores', async (req, res) => {
 
   const entry = { ...value, ts: now, key };
   scores.push(entry);
-  scores.sort((a, b) => b.score - a.score || a.ts - b.ts);
-  const trimmed = scores.slice(0, STORE_CAP);
+  const trimmed = pruneScores(scores);
   writeScores(trimmed);
   recentSubmits.set(key, now);
 

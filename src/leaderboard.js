@@ -5,7 +5,7 @@
 
 import { normalizeDifficulty, DEFAULT_DIFFICULTY } from './difficulty.js';
 import { isValidDailyDate } from './rng.js';
-import { normalizeClientId, normalizeGame, sanitizeName } from '../shared/scores.js';
+import { inspectName, normalizeClientId, normalizeGame, sanitizeName } from '../shared/scores.js';
 
 export { sanitizeName };
 
@@ -193,8 +193,9 @@ export async function submitScore({
   game = 'rush',
   runToken,
 }) {
-  const clean = sanitizeName(name);
-  if (!clean) throw new Error('Name required');
+  const named = inspectName(name);
+  if (!named.ok) throw new Error(named.error);
+  const clean = named.name;
   const normalizedMode = normalizeMode(mode);
   const normalizedGame = normalizeGame(game);
   const payload = {

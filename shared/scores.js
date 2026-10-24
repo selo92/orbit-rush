@@ -6,7 +6,14 @@
 export const MAX_SCORE = 750_000;
 export const MAX_NAME = 16;
 export const TOP_N = 50;
+/** Legacy global ceiling. Retention is per board now; this stays as a hard backstop. */
 export const STORE_CAP = 500;
+/** Visible boards are 50 deep. Keep a cushion, then drop the rest on the next submit. */
+export const BOARD_KEEP = 120;
+/** One network can post a household of scores, not the whole board. */
+export const PER_CLIENT_KEEP = 8;
+/** Direct D1 rows. Never pruned. client_key or client_id may carry this marker. */
+export const OWNER_CLIENT_KEY = 'owner-entry';
 export const MIN_MS_BETWEEN_SUBMITS = 2_000;
 export const RATE_WINDOW_MS = 60_000;
 export const RATE_MAX = 30;
@@ -47,17 +54,142 @@ export function isValidDailyDate(s) {
   return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d;
 }
 
-/** Strip HTML and control chars (C0, C1, bidi/zero-width), trim, max length. */
+/** UTC calendar day. Daily submits may be yesterday, today, or tomorrow. */
+export function utcDay(now = Date.now()) {
+  return new Date(now).toISOString().slice(0, 10);
+}
+
+export function dailyDateAllowed(dailyDate, now = Date.now()) {
+  if (!isValidDailyDate(dailyDate)) return false;
+  const today = utcDay(now);
+  return (
+    dailyDate === today ||
+    dailyDate === utcDay(now - 86_400_000) ||
+    dailyDate === utcDay(now + 86_400_000)
+  );
+}
+
+export function isOwnerScore(entry) {
+  if (!entry || typeof entry !== 'object') return false;
+  const key = entry.key || entry.client_key || '';
+  const id = entry.clientId || entry.client_id || '';
+  return key === OWNER_CLIENT_KEY || id === OWNER_CLIENT_KEY;
+}
+
+/** Board identity used for retention. Daily boards ignore difficulty. */
+export function boardPartition(entry) {
+  const game = normalizeGame(entry?.game);
+  const mode = normalizeMode(entry?.mode);
+  const daily = mode === 'daily' ? String(entry?.dailyDate || entry?.daily_date || '') : '';
+  const difficulty = mode === 'daily' ? '' : normalizeDifficulty(entry?.difficulty);
+  return `${game}|${mode}|${difficulty}|${daily}`;
+}
+
+function byScoreThenTime(a, b) {
+  return b.score - a.score || a.ts - b.ts;
+}
+
+/**
+ * Drop flooded rows. Owner markers stay. Each client keeps a few best scores
+ * per board, and each board keeps BOARD_KEEP non-owner rows.
+ * @param {object[]} scores
+ */
+export function pruneScores(scores) {
+  const list = Array.isArray(scores) ? scores : [];
+  const owners = [];
+  const rest = [];
+  for (const entry of list) {
+    if (isOwnerScore(entry)) owners.push(entry);
+    else rest.push(entry);
+  }
+  const byClient = new Map();
+  for (const entry of rest) {
+    const ck = `${entry.key || entry.client_key || ''}|${boardPartition(entry)}`;
+    if (!byClient.has(ck)) byClient.set(ck, []);
+    byClient.get(ck).push(entry);
+  }
+  const capped = [];
+  for (const rows of byClient.values()) {
+    rows.sort(byScoreThenTime);
+    capped.push(...rows.slice(0, PER_CLIENT_KEEP));
+  }
+  const byBoard = new Map();
+  for (const entry of capped) {
+    const bk = boardPartition(entry);
+    if (!byBoard.has(bk)) byBoard.set(bk, []);
+    byBoard.get(bk).push(entry);
+  }
+  const kept = [...owners];
+  for (const rows of byBoard.values()) {
+    rows.sort(byScoreThenTime);
+    kept.push(...rows.slice(0, BOARD_KEEP));
+  }
+  return kept;
+}
+
+const BANNED_NAME_FRAGMENTS = [
+  'fuck',
+  'shit',
+  'bitch',
+  'nigger',
+  'nigga',
+  'faggot',
+  'retard',
+  'cunt',
+  'whore',
+  'ficken',
+  'hurensohn',
+  'wichser',
+  'schlampe',
+  'fotze',
+  'arschloch',
+  'scheisse',
+  'hitler',
+  'nazi',
+  'nutte',
+];
+
+/**
+ * Strip HTML, controls, bidi/zero-width, and lookalike format chars.
+ * Only Latin letters, digits, and a little punctuation remain, so a Cyrillic
+ * homoglyph cannot impersonate a Latin name. Empty means "reject this name".
+ */
 export function sanitizeName(name) {
   if (typeof name !== 'string') return '';
-  let s = name
+  let s = name.normalize('NFKC');
+  s = s
     .replace(/[<>&"'`\\/]/g, '')
     .replace(/[\u0000-\u001F\u007F-\u009F]/g, '')
-    .replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u206F\uFEFF]/g, '')
+    .replace(/[\u00AD\u034F\u061C\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u206F\uFE00-\uFE0F\uFEFF]/g, '')
+    .replace(/\p{M}/gu, '')
+    .replace(/\s+/g, ' ')
     .trim()
     .slice(0, MAX_NAME);
-  s = s.replace(/\s+/g, ' ');
+  if (!s) return '';
+  if (!/^[\p{Script=Latin}\p{Nd} .'_!?+-]+$/u.test(s)) return '';
+  if (!/[\p{Script=Latin}\p{Nd}]/u.test(s)) return '';
   return s;
+}
+
+/** Lowercased letters only, so "f.u.c.k" and "SCHLAMPE" still match. */
+export function isBannedName(name) {
+  const flat = String(name || '')
+    .toLowerCase()
+    .replace(/ß/g, 'ss')
+    .replace(/[^a-z0-9]/g, '');
+  if (!flat) return false;
+  return BANNED_NAME_FRAGMENTS.some((word) => flat.includes(word));
+}
+
+/**
+ * @param {unknown} raw
+ * @returns {{ ok: true, name: string } | { ok: false, error: string }}
+ */
+export function inspectName(raw) {
+  const name = sanitizeName(typeof raw === 'string' ? raw : '');
+  if (!name) return { ok: false, error: 'Name required (1–16 chars)' };
+  if (isBannedName(name)) return { ok: false, error: 'Name not allowed' };
+  return { ok: true, name };
 }
 
 export function normalizeDifficulty(d) {
@@ -164,8 +296,11 @@ export function validateScoresQuery(searchParams) {
 /**
  * Spawn-rate ceilings from the client, with headroom so a real round still
  * submits. Hunt is not endless: einfach 120s, mittel 90s, schwer 68s
- * (src/hunt.js HUNT_DIFFICULTIES). Observed human Hunt tops are ~30–40k
- * and ~120–160 orbs; the forged 58400 / 450-orb posts sit above these caps.
+ * (src/hunt.js HUNT_DIFFICULTIES). Live Mittel tops are about 43k (owner
+ * 43247, next human 40725) with roughly 120–160 orbs. Absolute caps are the
+ * ceiling for a full round; orbs and points also scale with survivalMs so a
+ * fresh token cannot be cashed as a max-cap score. The forged 58400 / 450-orb
+ * posts sit above these caps.
  *
  * Rush/Mirror orb timers bottom out around 0.35–0.55s (src/game.js, src/mirror.js).
  * Drift rings are every 84 units at a baba speed cap near 112 (src/drift.js).
@@ -176,9 +311,42 @@ export function validateScoresQuery(searchParams) {
  * exceed a 144-tile set (src/mahjong.js validatePositions).
  */
 const HUNT_CAPS = {
-  einfach: { maxSurvivalMs: 120_750, maxOrbs: 240, maxNear: 170, maxScore: 64_000 },
-  mittel: { maxSurvivalMs: 90_750, maxOrbs: 200, maxNear: 140, maxScore: 56_000 },
-  schwer: { maxSurvivalMs: 68_750, maxOrbs: 180, maxNear: 130, maxScore: 48_000 },
+  einfach: {
+    maxSurvivalMs: 120_750,
+    orbsPerSec: 1.9,
+    orbGrace: 18,
+    nearPerSec: 1.3,
+    nearGrace: 12,
+    scorePerSec: 500,
+    scoreGrace: 2800,
+    maxOrbs: 220,
+    maxNear: 150,
+    maxScore: 58_000,
+  },
+  mittel: {
+    maxSurvivalMs: 90_750,
+    orbsPerSec: 2.05,
+    orbGrace: 16,
+    nearPerSec: 1.35,
+    nearGrace: 12,
+    scorePerSec: 560,
+    scoreGrace: 3000,
+    maxOrbs: 200,
+    maxNear: 130,
+    maxScore: 52_000,
+  },
+  schwer: {
+    maxSurvivalMs: 68_750,
+    orbsPerSec: 2.3,
+    orbGrace: 14,
+    nearPerSec: 1.5,
+    nearGrace: 10,
+    scorePerSec: 640,
+    scoreGrace: 2400,
+    maxOrbs: 170,
+    maxNear: 110,
+    maxScore: 46_000,
+  },
 };
 
 const PULSE_MAX_SURVIVAL_MS = {
@@ -201,7 +369,8 @@ const RATE_CAPS = {
 const MAHJONG_CAPS = {
   maxSurvivalMs: 60_000,
   maxOrbs: 72,
-  maxScore: 36_000,
+  /** A full 72-pair clear tops out near 28k in the shared formula. */
+  maxScore: 30_000,
 };
 
 function rateCap(seconds, perSec, grace) {
@@ -217,9 +386,15 @@ export function plausibilityError(value) {
   if (value.game === 'hunt') {
     const cap = HUNT_CAPS[value.difficulty] || HUNT_CAPS.mittel;
     if (value.survivalMs > cap.maxSurvivalMs) return 'Survival too long';
-    if (value.orbs > cap.maxOrbs) return 'Orb count too high';
-    if (value.nearMisses > cap.maxNear) return 'Near-miss count too high';
-    if (value.score > cap.maxScore) return 'Score too high for this run';
+    if (value.orbs > Math.min(cap.maxOrbs, rateCap(sec, cap.orbsPerSec, cap.orbGrace))) {
+      return 'Orb count too high';
+    }
+    if (value.nearMisses > Math.min(cap.maxNear, rateCap(sec, cap.nearPerSec, cap.nearGrace))) {
+      return 'Near-miss count too high';
+    }
+    if (value.score > Math.min(cap.maxScore, rateCap(sec, cap.scorePerSec, cap.scoreGrace))) {
+      return 'Score too high for this run';
+    }
   } else if (value.game === 'mahjong') {
     if (value.survivalMs > MAHJONG_CAPS.maxSurvivalMs) return 'Survival too long';
     if (value.orbs > MAHJONG_CAPS.maxOrbs) return 'Orb count too high';
@@ -304,6 +479,9 @@ export function normalizeRunRequest(body) {
     if (!isValidDailyDate(rawDate)) {
       return { ok: false, status: 400, error: 'dailyDate required for daily mode (YYYY-MM-DD)' };
     }
+    if (!dailyDateAllowed(rawDate)) {
+      return { ok: false, status: 400, error: 'dailyDate is outside the play window' };
+    }
     dailyDate = rawDate;
     difficulty = 'schwer';
   }
@@ -322,10 +500,9 @@ export function validatePostBody(body) {
     return { ok: false, status: 400, error: 'Invalid clientId' };
   }
 
-  const name = sanitizeName(reqBody.name);
-  if (!name || name.length < 1) {
-    return { ok: false, status: 400, error: 'Name required (1–16 chars)' };
-  }
+  const named = inspectName(reqBody.name);
+  if (!named.ok) return { ok: false, status: 400, error: named.error };
+  const name = named.name;
 
   const scoreParsed = readCount(reqBody.score, 'score', { required: true });
   if (!scoreParsed.ok) return { ok: false, status: 400, error: 'Invalid score' };

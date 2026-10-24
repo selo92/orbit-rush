@@ -14,6 +14,7 @@ import {
 } from './mahjong.js';
 import { faceLabel, tileSvg } from './mahjong-art.js';
 import { submitScore, sanitizeName, beginScoreRun } from './leaderboard.js';
+import { inspectName } from '../shared/scores.js';
 import { getOrCreateClientId, loadPlayerName, savePlayerName } from './identity.js';
 
 const LS_LAYOUT = 'orbit-mahjong-layout';
@@ -546,9 +547,10 @@ export function mountMahjong(hooks) {
   $('mj-win-form')?.addEventListener('submit', (event) => {
     event.preventDefault();
     const input = $('mj-win-name');
-    const clean = sanitizeName(input?.value || '');
+    const named = inspectName(input?.value || '');
+    const clean = named.ok ? named.name : '';
     if (!clean) {
-      $('mj-win-status').textContent = 'Name mit 1–16 Zeichen.';
+      $('mj-win-status').textContent = named.error === 'Name not allowed' ? 'Name nicht erlaubt.' : 'Name mit 1–16 Zeichen.';
       return;
     }
     savePlayerName(clean);

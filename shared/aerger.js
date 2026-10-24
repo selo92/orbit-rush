@@ -88,9 +88,15 @@ export function normalizeRoomCode(raw) {
   return CODE_RE.test(code) ? code : '';
 }
 
-export function rollDie(rng = Math.random) {
+function cryptoDie() {
+  const buf = new Uint32Array(1);
+  crypto.getRandomValues(buf);
+  return buf[0] / 4294967296;
+}
+
+export function rollDie(rng = cryptoDie) {
   const n = Number(rng());
-  const unit = Number.isFinite(n) ? Math.min(0.999999, Math.max(0, n)) : Math.random();
+  const unit = Number.isFinite(n) ? Math.min(0.999999, Math.max(0, n)) : cryptoDie();
   return 1 + Math.floor(unit * 6);
 }
 
@@ -372,7 +378,7 @@ function passTurn(state, now, notice) {
   advanceTurn(state, now);
 }
 
-export function applyRoll(state, secret, now, rng = Math.random) {
+export function applyRoll(state, secret, now, rng = cryptoDie) {
   if (!state || state.status !== 'playing') return fail(409, 'not-playing', 'Runde läuft nicht.');
   const who = findSeat(state, secret);
   if (!who) return fail(403, 'not-seated', 'Du sitzt nicht in diesem Raum.');

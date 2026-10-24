@@ -12,7 +12,9 @@ import {
   START_RATE_MAX,
   RATE_WINDOW_MS,
   MIN_MS_BETWEEN_SUBMITS,
-  STORE_CAP,
+  BOARD_KEEP,
+  PER_CLIENT_KEEP,
+  OWNER_CLIENT_KEY,
   RUN_MAX_AGE_MS,
   validatePostBody,
   validateScoresQuery,
@@ -24,6 +26,9 @@ import {
   evaluateStoredRun,
 } from '../shared/scores.js';
 import { readEnvRunSecret, signRunToken, verifyRunToken } from '../shared/run-token.js';
+import { SECURITY_HEADERS, clientIpFromRequest, readLimitedBody } from '../shared/http.js';
+
+export { clientIpFromRequest };
 
 let schemaReady = false;
 let cachedRunSecret = null;
@@ -34,6 +39,7 @@ function corsHeaders(request) {
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Accept',
     Vary: 'Origin',
+    ...SECURITY_HEADERS,
   };
   if (origin) headers['Access-Control-Allow-Origin'] = origin;
   else headers['Access-Control-Allow-Origin'] = '*';
@@ -53,14 +59,6 @@ function json(body, status, request) {
 
 function empty(status, request) {
   return new Response(null, { status, headers: corsHeaders(request) });
-}
-
-export function clientIpFromRequest(request) {
-  const cf = request.headers.get('CF-Connecting-IP');
-  if (cf) return cf.trim();
-  const xff = request.headers.get('x-forwarded-for');
-  if (xff) return xff.split(',')[0].trim();
-  return 'unknown';
 }
 
 function rowsOf(result) {
@@ -267,16 +265,38 @@ async function insertAndTrim(db, value, key, now) {
       value.clientId || null,
       normalizeGame(value.game)
     );
-  const trim = db.prepare(
-    `DELETE FROM scores WHERE id NOT IN (
-       SELECT id FROM scores ORDER BY score DESC, ts ASC LIMIT ${STORE_CAP}
+  const keepOwner = `client_key != '${OWNER_CLIENT_KEY}' AND COALESCE(client_id, '') != '${OWNER_CLIENT_KEY}'`;
+  const partition = `COALESCE(game, 'rush'), mode, CASE WHEN mode = 'daily' THEN COALESCE(daily_date, '') ELSE difficulty END`;
+  const trimClients = db.prepare(
+    `DELETE FROM scores WHERE id IN (
+       SELECT id FROM (
+         SELECT id, ROW_NUMBER() OVER (
+           PARTITION BY client_key, ${partition}
+           ORDER BY score DESC, ts ASC
+         ) AS rn
+         FROM scores
+         WHERE ${keepOwner}
+       ) WHERE rn > ${PER_CLIENT_KEEP}
+     )`
+  );
+  const trimBoards = db.prepare(
+    `DELETE FROM scores WHERE id IN (
+       SELECT id FROM (
+         SELECT id, ROW_NUMBER() OVER (
+           PARTITION BY ${partition}
+           ORDER BY score DESC, ts ASC
+         ) AS rn
+         FROM scores
+         WHERE ${keepOwner}
+       ) WHERE rn > ${BOARD_KEEP}
      )`
   );
   if (typeof db.batch === 'function') {
-    await db.batch([insert, trim]);
+    await db.batch([insert, trimClients, trimBoards]);
   } else {
     await insert.run();
-    await trim.run();
+    await trimClients.run();
+    await trimBoards.run();
   }
 }
 
@@ -356,12 +376,16 @@ async function consumeRun(db, runId, now, fingerprint) {
 }
 
 async function readJsonBody(request, limit = 8192) {
-  const len = Number(request.headers.get('content-length') || 0);
-  if (len > limit) return { ok: false, status: 413, error: 'Payload too large' };
+  const read = await readLimitedBody(request, limit);
+  if (!read.ok) {
+    return {
+      ok: false,
+      status: read.status,
+      error: read.status === 413 ? 'Payload too large' : 'Invalid JSON',
+    };
+  }
   try {
-    const text = await request.text();
-    if (text.length > limit) return { ok: false, status: 413, error: 'Payload too large' };
-    return { ok: true, body: text ? JSON.parse(text) : {} };
+    return { ok: true, body: read.text ? JSON.parse(read.text) : {} };
   } catch {
     return { ok: false, status: 400, error: 'Invalid JSON' };
   }
